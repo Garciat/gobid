@@ -1148,6 +1148,35 @@ func (c *Checker) Unify(rels []Relation, subst Subst) {
 			panic("unreachable")
 		}
 	}
+
+	// TODO is there a principled way to do this?
+
+	paramSupers := map[TypeParam][]*InterfaceType{}
+	for _, rel := range rels {
+		switch rel := rel.(type) {
+		case RelationSubtype:
+			tyParam, ok := c.Resolve(rel.Sub).(*TypeParam)
+			if !ok {
+				continue
+			}
+			superInter, ok := c.Resolve(rel.Super).(*InterfaceType)
+			if !ok {
+				continue
+			}
+			paramSupers[*tyParam] = append(paramSupers[*tyParam], superInter)
+		}
+	}
+
+	for tyParam, supers := range paramSupers {
+		if len(supers) > 1 {
+			inter := &InterfaceType{Methods: nil, Constraints: nil}
+			for _, super := range supers {
+				inter.Methods = append(inter.Methods, super.Methods...)
+				inter.Constraints = append(inter.Constraints, super.Constraints...)
+			}
+			c.UnifySubtype(&tyParam, inter, subst)
+		}
+	}
 }
 
 func (c *Checker) UnifyEq(left, right Type, subst Subst) {
@@ -1205,24 +1234,28 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 
 	switch super := super.(type) {
 	case *InterfaceType:
-		if sub, ok := c.Resolve(sub).(*TypeParam); ok {
-			for _, rel := range c.TyCtx.Relations {
-				switch rel := rel.(type) {
-				case RelationEq:
-					if c.Identical(sub, rel.Left) {
-						c.UnifySubtype(rel.Right, super, subst)
-					}
-					if c.Identical(sub, rel.Right) {
-						c.UnifySubtype(rel.Left, super, subst)
-					}
-				case RelationSubtype:
-					if c.Identical(sub, rel.Super) {
-						c.UnifySubtype(rel.Sub, super, subst)
-					}
-				}
-			}
-			return
-		}
+		// if sub, ok := c.Resolve(sub).(*TypeParam); ok {
+		// 	for _, rel := range c.TyCtx.Relations {
+
+		// 		switch rel := rel.(type) {
+		// 		case RelationEq:
+		// 			if c.Identical(sub, rel.Left) {
+		// 				c.UnifySubtype(rel.Right, super, subst)
+		// 			}
+		// 			if c.Identical(sub, rel.Right) {
+		// 				c.UnifySubtype(rel.Left, super, subst)
+		// 			}
+		// 		case RelationSubtype:
+		// 			if c.Identical(sub, rel.Super) {
+		// 				c.UnifySubtype(rel.Sub, super, subst)
+		// 			}
+		// 			if c.Identical(sub, rel.Sub) {
+		// 				c.UnifySubtype(rel.Super, super, subst)
+		// 			}
+		// 		}
+		// 	}
+		// 	return
+		// }
 		super = c.SimplifyInterface(super)
 		if super.IsEmpty() {
 			return
@@ -1234,8 +1267,14 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 		if len(super.Methods) > 0 {
 			panic("TODO")
 		}
-		union := c.FlattenInterfaceUnion(super)
-		for _, term := range union {
+		typeset := c.InterfaceTypeSet(super)
+		if typeset.Universe {
+			panic("TODO") // check methods
+		}
+		if len(typeset.Types) == 0 {
+			panic("cannot satisfy empty set")
+		}
+		for _, term := range typeset.Types {
 			if !c.IsConcreteType(term) {
 				panic("cannot make union of non-concrete types")
 			}
@@ -1244,6 +1283,10 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 				return
 			}
 		}
+		if c.IsTypeParam(sub) {
+			return // nothing to add?
+		}
+		spew.Dump(sub, super)
 		panic("TODO")
 	case *TypeName:
 		superTy, ok := c.VarCtx.Lookup(super.Name)
@@ -1272,6 +1315,15 @@ func (c *Checker) Resolve(ty Type) Type {
 		return c.Resolve(under)
 	default:
 		return ty
+	}
+}
+
+func (c *Checker) IsTypeParam(ty Type) bool {
+	switch c.Resolve(ty).(type) {
+	case *TypeParam:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1345,6 +1397,32 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 	}
 }
 
+func (c *Checker) InterfaceTypeSet(ty *InterfaceType) TypeSet {
+	// TODO: reference other interfaces?
+	if len(ty.Methods) != 0 {
+		return TypeSet{Universe: true}
+	}
+	if len(ty.Constraints) == 0 {
+		return TypeSet{Types: []Type{EmptyInterface()}}
+	}
+	if len(ty.Constraints) == 1 {
+		return c.TypeSet(ty.Constraints[0])
+	}
+	intersection := c.TypeSet(ty.Constraints[0]).Types
+	for _, constraint := range ty.Constraints[1:] {
+		next := []Type{}
+		for _, ty := range c.TypeSet(constraint).Types {
+			for _, elem := range intersection {
+				if c.Identical(ty, elem) {
+					next = append(next, ty) // SLOW!?
+				}
+			}
+		}
+		intersection = next
+	}
+	return TypeSet{Types: intersection}
+}
+
 func (c *Checker) SimplifyInterface(ty *InterfaceType) *InterfaceType {
 	if single, ok := IsSingleTypeUnion(ty); ok {
 		switch single := single.(type) {
@@ -1361,17 +1439,6 @@ func (c *Checker) SimplifyInterface(ty *InterfaceType) *InterfaceType {
 		}
 	}
 	return ty
-}
-
-func (c *Checker) FlattenInterfaceUnion(ty *InterfaceType) []Type {
-	// TODO reference to other interfaces
-	union := []Type{}
-	for _, constraint := range ty.Constraints {
-		for _, term := range constraint.TypeElem.Union {
-			union = append(union, term.Type)
-		}
-	}
-	return union
 }
 
 func IsSingleTypeUnion(ty *InterfaceType) (Type, bool) {
