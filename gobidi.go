@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"slices"
 	"strings"
 
 	"github.com/davecgh/go-spew/spew"
@@ -71,8 +72,8 @@ func (t *TypeParam) String() string {
 
 type TypeApplication struct {
 	TypeBase
-	Name   Identifier
-	Params []Type
+	Name Identifier
+	Args []Type
 }
 
 type ArrayType struct {
@@ -138,6 +139,7 @@ type InterfaceType struct {
 	TypeBase
 	Methods     []MethodElem
 	Constraints []TypeConstraint
+	// TODO: embedded interfaces
 }
 
 func (t *InterfaceType) String() string {
@@ -184,6 +186,12 @@ type ChannelType struct {
 	TypeBase
 	ElemType Type
 	Dir      ChannelDir
+}
+
+type GenericType struct {
+	TypeBase
+	TypeParams TypeParamList
+	Type       Type
 }
 
 type ChannelDir int
@@ -649,7 +657,68 @@ func (c *Checker) CheckConstDecl(decl *ConstDecl) {
 }
 
 func (c *Checker) CheckTypeDecl(decl *TypeDecl) {
-	c.VarCtx.Def(decl.Name, decl.Type)
+	fmt.Printf("=== CheckTypeDecl(%v) ===\n", decl.Name)
+
+	scope := c.BeginScope()
+
+	for _, tyParam := range decl.TypeParams.Params {
+		sub := &TypeName{Name: tyParam.Name}
+		super := &InterfaceType{Methods: nil, Constraints: []TypeConstraint{tyParam.Constraint}}
+		scope.TyCtx.AddRelation(RelationSubtype{Sub: sub, Super: super})
+		scope.VarCtx.Def(tyParam.Name, &TypeParam{Name: tyParam.Name})
+	}
+
+	scope.CheckTypeDeclType(decl.Type)
+
+	subst := scope.Verify()
+
+	scope.CheckSubst(decl.TypeParams, subst)
+
+	if len(decl.TypeParams.Params) > 0 {
+		c.VarCtx.Def(decl.Name, &GenericType{TypeParams: decl.TypeParams, Type: decl.Type})
+	} else {
+		c.VarCtx.Def(decl.Name, decl.Type)
+	}
+}
+
+func (c *Checker) CheckTypeDeclType(ty Type) {
+	switch ty := ty.(type) {
+	case *TypeName:
+		under, ok := c.VarCtx.Lookup(ty.Name)
+		if !ok {
+			panic("undefined type")
+		}
+		c.CheckTypeDeclType(under)
+	case *TypeBuiltin:
+		// nothing to do
+	case *TypeParam:
+		// nothing to do
+	case *TypeApplication:
+		under, ok := c.VarCtx.Lookup(ty.Name)
+		if !ok {
+			panic("undefined type")
+		}
+		gen, ok := under.(*GenericType)
+		if !ok {
+			panic("not a generic type")
+		}
+		if len(gen.TypeParams.Params) != len(ty.Args) {
+			panic("wrong number of type arguments")
+		}
+		for i, tyArg := range ty.Args {
+			tyParam := gen.TypeParams.Params[i]
+			super := &InterfaceType{Methods: nil, Constraints: []TypeConstraint{tyParam.Constraint}}
+			c.TyCtx.AddRelation(RelationSubtype{Sub: tyArg, Super: super})
+			c.CheckTypeDeclType(tyArg)
+		}
+	case *StructType:
+		for _, field := range ty.Fields {
+			c.CheckTypeDeclType(field.Type)
+		}
+	default:
+		spew.Dump(ty)
+		panic("TODO")
+	}
 }
 
 func (c *Checker) CheckAliasDecl(decl *AliasDecl) {
@@ -661,6 +730,8 @@ func (c *Checker) CheckVarDecl(decl *VarDecl) {
 }
 
 func (c *Checker) CheckFunctionDecl(decl *FunctionDecl) {
+	fmt.Printf("=== CheckFunctionDecl(%v) ===\n", decl.Name)
+
 	scope := c.BeginFunctionScope(decl)
 
 	for _, tyParam := range decl.Signature.TypeParams.Params {
@@ -680,8 +751,8 @@ func (c *Checker) CheckFunctionDecl(decl *FunctionDecl) {
 
 	scope.CheckStatementList(decl.Body)
 
-	fmt.Printf("=== %v ===\n", decl.Name)
-	scope.Verify()
+	subst := scope.Verify()
+	scope.CheckSubst(decl.Signature.TypeParams, subst)
 
 	c.VarCtx.Def(decl.Name, &FunctionType{Signature: decl.Signature})
 }
@@ -710,7 +781,8 @@ func (c *Checker) CheckStatement(stmt Statement) {
 func (c *Checker) CheckSimpleStmt(stmt SimpleStmt) {
 	switch stmt := stmt.(type) {
 	case *ExpressionStmt:
-		c.CheckExpr(stmt.Expr, nil)
+		c.Synth(stmt.Expr) // ???
+		panic("TODO")
 	case *EmptyStmt:
 		// do nothing
 	case *ShortVarDecl:
@@ -735,7 +807,46 @@ func (c *Checker) CheckIfStmt(stmt *IfStmt) {
 		scope.CheckSimpleStmt(*stmt.Init)
 	}
 
-	c.CheckExpr(stmt.Cond, nil)
+	c.CheckExpr(stmt.Cond, c.Builtin("bool"))
+}
+
+// ========================
+
+type TypeSet struct {
+	Types    []Type
+	Universe bool
+}
+
+func (c *Checker) CheckSubst(list TypeParamList, subst Subst) {
+	for _, tyParam := range list.Params {
+		tySub, ok := subst[tyParam.Name]
+		if !ok {
+			continue // TODO: is this ok?
+		}
+		set := c.TypeSet(tyParam.Constraint)
+		if set.Universe {
+			panic("TODO")
+		}
+		found := false
+		for _, ty := range set.Types {
+			found = found || c.Identical(ty, tySub)
+		}
+		if !found {
+			panic(fmt.Sprintf("type parameter %v with constraints %v does not satisfy %v", tyParam.Name, tyParam.Constraint, tySub))
+		}
+	}
+}
+
+func (c *Checker) TypeSet(con TypeConstraint) TypeSet {
+	// TODO very incomplete
+	var types []Type
+	for _, term := range con.TypeElem.Union {
+		if term.Tilde {
+			panic("TODO")
+		}
+		types = append(types, term.Type)
+	}
+	return TypeSet{Types: types, Universe: false}
 }
 
 // ========================
@@ -951,11 +1062,11 @@ func (c *Checker) ApplySubst(ty Type, subst Subst) Type {
 		}
 		return ty
 	case *TypeApplication:
-		params := make([]Type, len(ty.Params))
-		for i, param := range ty.Params {
-			params[i] = c.ApplySubst(param, subst)
+		args := make([]Type, len(ty.Args))
+		for i, arg := range ty.Args {
+			args[i] = c.ApplySubst(arg, subst)
 		}
-		return &TypeApplication{Name: ty.Name, Params: params}
+		return &TypeApplication{Name: ty.Name, Args: args}
 	case *ArrayType:
 		return &ArrayType{
 			ElemType: c.ApplySubst(ty.ElemType, subst),
@@ -1014,7 +1125,7 @@ func (c *Checker) ApplySubstParameterList(list ParameterList, subst Subst) Param
 
 // ========================
 
-func (c *Checker) Verify() {
+func (c *Checker) Verify() Subst {
 	subst := Subst{}
 
 	fmt.Println(c.TyCtx)
@@ -1022,6 +1133,8 @@ func (c *Checker) Verify() {
 	c.Unify(c.TyCtx.Relations, subst)
 
 	fmt.Println(subst)
+
+	return subst
 }
 
 func (c *Checker) Unify(rels []Relation, subst Subst) {
@@ -1069,6 +1182,13 @@ func (c *Checker) UnifyEq(left, right Type, subst Subst) {
 			c.UnifyEq(left.ElemType, right.ElemType, subst)
 			return
 		}
+	case *InterfaceType:
+		left = c.SimplifyInterface(left)
+		if single, ok := IsSingleTypeUnion(left); ok {
+			c.UnifyEq(single, right, subst)
+			return
+		}
+		panic("TODO")
 	default:
 		spew.Dump(left, right)
 		panic("TODO")
@@ -1085,6 +1205,24 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 
 	switch super := super.(type) {
 	case *InterfaceType:
+		if sub, ok := c.Resolve(sub).(*TypeParam); ok {
+			for _, rel := range c.TyCtx.Relations {
+				switch rel := rel.(type) {
+				case RelationEq:
+					if c.Identical(sub, rel.Left) {
+						c.UnifySubtype(rel.Right, super, subst)
+					}
+					if c.Identical(sub, rel.Right) {
+						c.UnifySubtype(rel.Left, super, subst)
+					}
+				case RelationSubtype:
+					if c.Identical(sub, rel.Super) {
+						c.UnifySubtype(rel.Sub, super, subst)
+					}
+				}
+			}
+			return
+		}
 		super = c.SimplifyInterface(super)
 		if super.IsEmpty() {
 			return
@@ -1092,6 +1230,19 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 		if single, ok := IsSingleTypeUnion(super); ok {
 			c.UnifySubtype(sub, single, subst)
 			return
+		}
+		if len(super.Methods) > 0 {
+			panic("TODO")
+		}
+		union := c.FlattenInterfaceUnion(super)
+		for _, term := range union {
+			if !c.IsConcreteType(term) {
+				panic("cannot make union of non-concrete types")
+			}
+			if c.Identical(sub, term) {
+				c.UnifyEq(sub, term, subst) // necessary?
+				return
+			}
 		}
 		panic("TODO")
 	case *TypeName:
@@ -1108,6 +1259,19 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 		}
 	default:
 		panic(fmt.Sprintf("TODO: %T", super))
+	}
+}
+
+func (c *Checker) Resolve(ty Type) Type {
+	switch ty.(type) {
+	case *TypeName:
+		under, ok := c.VarCtx.Lookup(ty.(*TypeName).Name)
+		if !ok {
+			panic("undefined type")
+		}
+		return c.Resolve(under)
+	default:
+		return ty
 	}
 }
 
@@ -1199,6 +1363,17 @@ func (c *Checker) SimplifyInterface(ty *InterfaceType) *InterfaceType {
 	return ty
 }
 
+func (c *Checker) FlattenInterfaceUnion(ty *InterfaceType) []Type {
+	// TODO reference to other interfaces
+	union := []Type{}
+	for _, constraint := range ty.Constraints {
+		for _, term := range constraint.TypeElem.Union {
+			union = append(union, term.Type)
+		}
+	}
+	return union
+}
+
 func IsSingleTypeUnion(ty *InterfaceType) (Type, bool) {
 	if len(ty.Methods) == 0 && len(ty.Constraints) == 1 && len(ty.Constraints[0].TypeElem.Union) == 1 {
 		return ty.Constraints[0].TypeElem.Union[0].Type, true
@@ -1261,7 +1436,7 @@ func ReadTypeDecl(decl *ast.GenDecl) []Decl {
 		spec := spec.(*ast.TypeSpec)
 		decls = append(decls, &TypeDecl{
 			Name:       NewIdentifier(spec.Name.Name),
-			TypeParams: TypeParamList{},
+			TypeParams: ReadTypeParamList(spec.TypeParams),
 			Type:       ReadType(spec.Type),
 			Methods:    nil,
 		})
@@ -1297,6 +1472,9 @@ func ReadFuncDecl(decl *ast.FuncDecl) []Decl {
 }
 
 func ReadTypeParamList(list *ast.FieldList) TypeParamList {
+	if list == nil {
+		return TypeParamList{}
+	}
 	var params []TypeParamDecl
 	for _, field := range list.List {
 		params = append(params, TypeParamDecl{
@@ -1315,7 +1493,25 @@ func ReadTypeElem(expr ast.Expr) TypeElem {
 	switch expr := expr.(type) {
 	case *ast.Ident:
 		return TypeElem{Union: []TypeTerm{{Type: &TypeName{Name: NewIdentifier(expr.Name)}}}}
+	case *ast.BinaryExpr:
+		if expr.Op != token.OR {
+			panic("Expected OR")
+		}
+		terms := []TypeTerm{}
+		cur := expr
+		for {
+			terms = append(terms, TypeTerm{Type: ReadType(cur.Y)})
+			if next, ok := cur.X.(*ast.BinaryExpr); ok {
+				cur = next
+			} else {
+				terms = append(terms, TypeTerm{Type: ReadType(cur.X)})
+				break
+			}
+		}
+		slices.Reverse(terms)
+		return TypeElem{Union: terms}
 	default:
+		spew.Dump(expr)
 		panic("unreachable")
 	}
 }
@@ -1509,9 +1705,39 @@ func ReadType(expr ast.Expr) Type {
 			return &SliceType{ElemType: ReadType(expr.Elt)}
 		}
 		panic("TODO")
+	case *ast.StructType:
+		fields := []FieldDecl{}
+		for _, field := range expr.Fields.List {
+			for _, name := range field.Names {
+				fields = append(fields, FieldDecl{
+					Name: NewIdentifier(name.Name),
+					Type: ReadType(field.Type),
+				})
+			}
+		}
+		return &StructType{Fields: fields}
+	case *ast.IndexExpr:
+		return &TypeApplication{
+			Name: NewIdentifier(expr.X.(*ast.Ident).Name),
+			Args: []Type{ReadType(expr.Index)},
+		}
+	case *ast.IndexListExpr:
+		return &TypeApplication{
+			Name: NewIdentifier(expr.X.(*ast.Ident).Name),
+			Args: ReadTypeList(expr.Indices),
+		}
 	default:
+		spew.Dump(expr)
 		panic("unreachable")
 	}
+}
+
+func ReadTypeList(exprs []ast.Expr) []Type {
+	var result []Type
+	for _, expr := range exprs {
+		result = append(result, ReadType(expr))
+	}
+	return result
 }
 
 // ========================
@@ -1539,6 +1765,20 @@ func firstIndex[T any](x []T) T {
 
 func cast[T U, U any](x T) U {
 	return x
+}
+
+type Hello[T string|int] struct{
+	Value T
+}
+
+type HelloInt struct{
+	Value Hello[int]
+}
+
+// TODO should break
+type TwoHello[T string|int|bool] struct{
+	Value1 Hello[T]
+	Value2 Hello[T]
 }
 `
 
