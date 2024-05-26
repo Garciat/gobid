@@ -77,10 +77,26 @@ type TypeApplication struct {
 	Args []Type
 }
 
+func (t *TypeApplication) String() string {
+	parts := []string{}
+	for _, arg := range t.Args {
+		parts = append(parts, fmt.Sprintf("%v", arg))
+	}
+	return fmt.Sprintf("%s[%s]", t.Name.Name, strings.Join(parts, ", "))
+}
+
 type ArrayType struct {
 	TypeBase
 	ElemType Type
 	Len      Expr
+}
+
+type BuiltinMakeType struct {
+	TypeBase
+}
+
+type BuiltinNewType struct {
+	TypeBase
 }
 
 type FunctionType struct {
@@ -90,6 +106,12 @@ type FunctionType struct {
 
 func (t *FunctionType) String() string {
 	return fmt.Sprintf("func%v", t.Signature)
+}
+
+// special for function return types
+type TupleType struct {
+	TypeBase
+	Elems []Type
 }
 
 type Signature struct {
@@ -135,6 +157,10 @@ type FieldDecl struct {
 type PointerType struct {
 	TypeBase
 	BaseType Type
+}
+
+func (t *PointerType) String() string {
+	return fmt.Sprintf("*%v", t.BaseType)
 }
 
 type InterfaceType struct {
@@ -748,7 +774,7 @@ func (c *VarContext) Fork() VarContext {
 }
 
 type Checker struct {
-	Fresh int
+	Fresh *int
 
 	TyCtx    TypeContext
 	VarCtx   VarContext
@@ -761,12 +787,17 @@ type Checker struct {
 
 func NewChecker() *Checker {
 	builtins := VarContext{Types: map[Identifier]Type{
-		NewIdentifier("any"):    EmptyInterface(),
+		NewIdentifier("any"): EmptyInterface(),
+
 		NewIdentifier("int"):    &TypeBuiltin{Name: Identifier{Name: "int"}},
 		NewIdentifier("bool"):   &TypeBuiltin{Name: Identifier{Name: "bool"}},
 		NewIdentifier("string"): &TypeBuiltin{Name: Identifier{Name: "string"}},
+
+		NewIdentifier("make"): &BuiltinMakeType{},
+		NewIdentifier("new"):  &BuiltinNewType{},
 	}}
 	return &Checker{
+		Fresh:    Ptr(0),
 		TyCtx:    TypeContext{},
 		VarCtx:   builtins.Fork(),
 		Builtins: builtins,
@@ -774,8 +805,8 @@ func NewChecker() *Checker {
 }
 
 func (c *Checker) FreshTypeName() Identifier {
-	c.Fresh++
-	return Identifier{Name: fmt.Sprintf("@T%d", c.Fresh)}
+	*c.Fresh = *c.Fresh + 1
+	return Identifier{Name: fmt.Sprintf("@T%d", *c.Fresh)}
 }
 
 func (c *Checker) Builtin(name string) Type {
@@ -788,6 +819,7 @@ func (c *Checker) Builtin(name string) Type {
 
 func (c *Checker) BeginScope() *Checker {
 	return &Checker{
+		Fresh:    c.Fresh,
 		TyCtx:    c.TyCtx.Fork(),
 		VarCtx:   c.VarCtx.Fork(),
 		Builtins: c.Builtins,
@@ -798,6 +830,7 @@ func (c *Checker) BeginScope() *Checker {
 
 func (c *Checker) BeginTypeScope(decl *TypeDecl) *Checker {
 	return &Checker{
+		Fresh:    c.Fresh,
 		TyCtx:    c.TyCtx.Fork(),
 		VarCtx:   c.VarCtx.Fork(),
 		Builtins: c.Builtins,
@@ -808,6 +841,7 @@ func (c *Checker) BeginTypeScope(decl *TypeDecl) *Checker {
 
 func (c *Checker) BeginFunctionScope(fn *FunctionDecl) *Checker {
 	return &Checker{
+		Fresh:    c.Fresh,
 		TyCtx:    c.TyCtx.Fork(),
 		VarCtx:   c.VarCtx.Fork(),
 		Builtins: c.Builtins,
@@ -972,14 +1006,16 @@ func (c *Checker) CheckStatement(stmt Statement) {
 		c.CheckDecl(stmt.Decl)
 	case *ExpressionStmt:
 		c.Synth(stmt.Expr) // ???
-		panic("TODO")
 	case *EmptyStmt:
 		// do nothing
 	case *ReturnStmt:
 		c.CheckReturnStmt(stmt)
 	case *IfStmt:
 		c.CheckIfStmt(stmt)
+	case *ShortVarDecl:
+		c.CheckShortVarDecl(stmt)
 	default:
+		spew.Dump(stmt)
 		panic("unreachable")
 	}
 }
@@ -993,13 +1029,18 @@ func (c *Checker) CheckReturnStmt(stmt *ReturnStmt) {
 }
 
 func (c *Checker) CheckIfStmt(stmt *IfStmt) {
-	scope := c.BeginScope()
+	panic("TODO")
+}
 
-	if stmt.Init != nil {
-		scope.CheckStatement(stmt.Init)
+func (c *Checker) CheckShortVarDecl(stmt *ShortVarDecl) {
+	if len(stmt.Names) != len(stmt.Exprs) {
+		// TODO tuple assignment
+		panic("wrong number of expressions")
 	}
-
-	c.CheckExpr(stmt.Cond, c.Builtin("bool"))
+	for i, name := range stmt.Names {
+		ty := c.Synth(stmt.Exprs[i])
+		c.VarCtx.Def(name, ty)
+	}
 }
 
 // ========================
@@ -1087,48 +1128,8 @@ func (c *Checker) CheckIndexExpr(expr *IndexExpr, ty Type) {
 }
 
 func (c *Checker) CheckCallExpr(expr *CallExpr, ty Type) {
-	var funcTy *FunctionType
-	var typeArgs []Type
-	if index, ok := expr.Func.(*IndexExpr); ok {
-		if indexTy, ok := c.Synth(index.Expr).(*FunctionType); ok {
-			funcTy = indexTy
-			for _, arg := range index.Indices {
-				typeArgs = append(typeArgs, c.Synth(arg))
-			}
-		}
-	}
-	if funcTy == nil {
-		var ok bool
-		funcTy, ok = c.Synth(expr.Func).(*FunctionType)
-		if !ok {
-			panic("not a function")
-		}
-	}
-	if len(expr.Args) != len(funcTy.Signature.Params.Params) {
-		panic("wrong number of arguments")
-	}
-	if len(typeArgs) > len(funcTy.Signature.TypeParams.Params) {
-		panic("too many type arguments")
-	}
-	if len(funcTy.Signature.TypeParams.Params) > 0 {
-
-	}
-	subst := Subst{}
-	for _, tyParam := range funcTy.Signature.TypeParams.Params {
-		subst[tyParam.Name] = &TypeParam{Name: c.FreshTypeName()}
-	}
-	funcTy = c.ApplySubst(funcTy, subst).(*FunctionType)
-	for i, tyArg := range typeArgs {
-		tyParam := funcTy.Signature.TypeParams.Params[i]
-		super := &InterfaceType{Constraints: []TypeConstraint{tyParam.Constraint}}
-		c.TyCtx.AddRelation(RelationSubtype{Sub: tyArg, Super: super})
-		c.TyCtx.AddEq(tyArg, subst[tyParam.Name])
-	}
-	for i, arg := range expr.Args {
-		c.CheckExpr(arg, funcTy.Signature.Params.Params[i].Type)
-	}
-	// TODO tuple return
-	c.CheckAssignableTo(funcTy.Signature.Results.Params[0].Type, ty)
+	callTy := c.Synth(expr)
+	c.CheckAssignableTo(callTy, ty)
 }
 
 func (c *Checker) CheckNameExpr(expr *NameExpr, ty Type) {
@@ -1173,7 +1174,7 @@ func (c *Checker) Synth(expr Expr) Type {
 	case *TypeAssertionExpr:
 		panic("TODO")
 	case *CallExpr:
-		panic("TODO")
+		return c.SynthCallExpr(expr)
 	case *NameExpr:
 		return c.SynthNameExpr(expr)
 	case *LiteralExpr:
@@ -1224,6 +1225,81 @@ func (c *Checker) SynthIndexExpr(expr *IndexExpr) Type {
 	default:
 		spew.Dump(exprTy)
 		panic("TODO")
+	}
+}
+
+func (c *Checker) SynthCallExpr(expr *CallExpr) Type {
+	var funcTy *FunctionType
+	var typeArgs []Type
+	if index, ok := expr.Func.(*IndexExpr); ok {
+		if gen, ok := c.Synth(index.Expr).(*FunctionType); ok {
+			funcTy = gen
+			for _, arg := range index.Indices {
+				typeArgs = append(typeArgs, c.Synth(arg))
+			}
+		}
+	}
+	if funcTy == nil {
+		switch ty := c.Synth(expr.Func).(type) {
+		case *FunctionType:
+			funcTy = ty
+		case *BuiltinNewType:
+			if len(expr.Args) != 1 {
+				panic("builtin new() takes exactly one argument")
+			}
+			return &PointerType{BaseType: c.Synth(expr.Args[0])}
+		case *BuiltinMakeType:
+			if len(expr.Args) == 0 {
+				panic("builtin make() takes at least one argument")
+			}
+			elemTy := c.Synth(expr.Args[0])
+			switch elemTy.(type) {
+			case *SliceType:
+			case *MapType:
+			case *ChannelType:
+			default:
+				panic("make() with non-slice, non-map, non-channel type")
+			}
+			for _, arg := range expr.Args[1:] {
+				c.CheckExpr(arg, c.Builtin("int"))
+			}
+			return elemTy
+		default:
+			panic("not a function")
+		}
+	}
+	if len(expr.Args) != len(funcTy.Signature.Params.Params) {
+		panic("wrong number of arguments")
+	}
+	if len(typeArgs) > len(funcTy.Signature.TypeParams.Params) {
+		panic("too many type arguments")
+	}
+	subst := Subst{}
+	for _, tyParam := range funcTy.Signature.TypeParams.Params {
+		subst[tyParam.Name] = &TypeParam{Name: c.FreshTypeName()}
+	}
+	funcTy = c.ApplySubst(funcTy, subst).(*FunctionType)
+	fmt.Printf("subst FunctionType: %v\n", funcTy)
+	for i, tyArg := range typeArgs {
+		tyParam := funcTy.Signature.TypeParams.Params[i]
+		super := &InterfaceType{Constraints: []TypeConstraint{tyParam.Constraint}}
+		c.TyCtx.AddRelation(RelationSubtype{Sub: tyArg, Super: super})
+		c.TyCtx.AddEq(tyArg, subst[tyParam.Name])
+	}
+	for i, arg := range expr.Args {
+		c.CheckExpr(arg, funcTy.Signature.Params.Params[i].Type)
+	}
+	returns := []Type{}
+	for _, result := range funcTy.Signature.Results.Params {
+		returns = append(returns, result.Type)
+	}
+	switch len(returns) {
+	case 0:
+		return &TupleType{Elems: []Type{}}
+	case 1:
+		return returns[0]
+	default:
+		return &TupleType{Elems: returns}
 	}
 }
 
@@ -1303,6 +1379,8 @@ func (c *Checker) ApplySubst(ty Type, subst Subst) Type {
 			}
 		}
 		return &StructType{Fields: fields}
+	case *PointerType:
+		return &PointerType{BaseType: c.ApplySubst(ty.BaseType, subst)}
 	default:
 		spew.Dump(ty)
 		panic("TODO")
@@ -1320,8 +1398,14 @@ func (c *Checker) ApplySubstSignature(sig Signature, subst Subst) Signature {
 func (c *Checker) ApplySubstTypeParamList(list TypeParamList, subst Subst) TypeParamList {
 	params := make([]TypeParamDecl, len(list.Params))
 	for i, param := range list.Params {
+		var name Identifier
+		if substTy, ok := subst[param.Name]; ok {
+			name = substTy.(*TypeParam).Name
+		} else {
+			name = param.Name
+		}
 		params[i] = TypeParamDecl{
-			Name:       param.Name,
+			Name:       name,
 			Constraint: c.ApplySubstTypeConstraint(param.Constraint, subst),
 		}
 	}
@@ -1453,6 +1537,26 @@ func (c *Checker) UnifyEq(left, right Type, subst Subst) {
 			return
 		}
 		panic("TODO")
+	case *TypeApplication:
+		if right, ok := right.(*TypeApplication); ok {
+			if left.Name != right.Name {
+				panic(fmt.Sprintf("cannot unify: %v = %v", left, right))
+			}
+			if len(left.Args) != len(right.Args) {
+				panic(fmt.Sprintf("cannot unify: %v = %v", left, right))
+			}
+			for i, leftArg := range left.Args {
+				c.UnifyEq(leftArg, right.Args[i], subst)
+			}
+			return
+		}
+		panic(fmt.Sprintf("cannot unify: %v = %v", left, right))
+	case *PointerType:
+		if right, ok := right.(*PointerType); ok {
+			c.UnifyEq(left.BaseType, right.BaseType, subst)
+			return
+		}
+		c.UnifyEq(right, left, subst) // TODO weird?
 	default:
 		spew.Dump(left, right)
 		panic("TODO")
@@ -1463,6 +1567,13 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 	fmt.Printf("? %v <: %v %v\n", sub, super, subst)
 
 	if c.IsConcreteType(super) {
+		c.UnifyEq(sub, super, subst)
+		return
+	}
+
+	// special cases???
+	switch sub := c.Resolve(sub).(type) {
+	case *PointerType:
 		c.UnifyEq(sub, super, subst)
 		return
 	}
@@ -1608,7 +1719,7 @@ func (c *Checker) IsConcreteType(ty Type) bool {
 	case *TypeParam:
 		under, ok := c.VarCtx.Lookup(ty.Name)
 		if !ok {
-			panic("undefined type") // maybe unbound?
+			return false // ???
 		}
 		if s, ok := under.(*TypeParam); ok {
 			if s.Name == ty.Name {
@@ -1643,7 +1754,7 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 		}
 		return ty1.Name == ty.Name
 	case *TypeParam:
-		if ty2, ok := ty2.(*TypeParam); ok {
+		if ty2, ok := c.Resolve(ty2).(*TypeParam); ok {
 			return ty1.Name == ty2.Name
 		}
 		return false
@@ -1661,6 +1772,22 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 	case *PointerType:
 		if ty2, ok := ty2.(*PointerType); ok {
 			return c.Identical(ty1.BaseType, ty2.BaseType)
+		}
+		return false
+	case *TypeApplication:
+		if ty2, ok := ty2.(*TypeApplication); ok {
+			if ty1.Name != ty2.Name {
+				return false
+			}
+			if len(ty1.Args) != len(ty2.Args) {
+				return false
+			}
+			for i, arg := range ty1.Args {
+				if !c.Identical(arg, ty2.Args[i]) {
+					return false
+				}
+			}
+			return true
 		}
 		return false
 	default:
@@ -2507,17 +2634,36 @@ type HelloInt struct{
 	Value Hello[int]
 }
 
-// TODO should break
 type TwoHello[T string] struct{
 	Value1 Hello[T]
 	Value2 Hello[int]
+}
+
+type Vec[T any] struct{}
+
+func MakeVec[T any]() Vec[T] {}
+
+func Append[T any](v Vec[T], x T) {}
+
+func Ptr[T any](x T) *T {
+	return &x
+}
+
+func useVec() {
+	v := MakeVec()
+	Append(v, Nil())
+	Append(v, Ptr(32))
+}
+
+func alloc[T any]() *T {
+	return new(T)
 }
 `
 
 	_ = src
 
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, parser.ParseComments)
+	f, err := parser.ParseFile(fset, "main.go", src, parser.ParseComments)
 	if err != nil {
 		panic(err)
 	}
