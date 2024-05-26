@@ -91,12 +91,24 @@ type ArrayType struct {
 	Len      Expr
 }
 
+func (t *ArrayType) String() string {
+	return fmt.Sprintf("[%v]%v", t.Len, t.ElemType)
+}
+
 type BuiltinMakeType struct {
 	TypeBase
 }
 
+func (t *BuiltinMakeType) String() string {
+	return "make()"
+}
+
 type BuiltinNewType struct {
 	TypeBase
+}
+
+func (t *BuiltinNewType) String() string {
+	return "new()"
 }
 
 type FunctionType struct {
@@ -112,6 +124,14 @@ func (t *FunctionType) String() string {
 type TupleType struct {
 	TypeBase
 	Elems []Type
+}
+
+func (t *TupleType) String() string {
+	parts := []string{}
+	for _, elem := range t.Elems {
+		parts = append(parts, fmt.Sprintf("%v", elem))
+	}
+	return fmt.Sprintf("(%v)", strings.Join(parts, ", "))
 }
 
 type Signature struct {
@@ -147,6 +167,14 @@ type StructType struct {
 	TypeBase
 	Fields []FieldDecl
 	// TODO: embedded fields
+}
+
+func (t *StructType) String() string {
+	parts := []string{}
+	for _, field := range t.Fields {
+		parts = append(parts, fmt.Sprintf("%v %v", field.Name, field.Type))
+	}
+	return fmt.Sprintf("struct{%v}", strings.Join(parts, "; "))
 }
 
 type FieldDecl struct {
@@ -204,10 +232,18 @@ type SliceType struct {
 	ElemType Type
 }
 
+func (t *SliceType) String() string {
+	return fmt.Sprintf("[]%v", t.ElemType)
+}
+
 type MapType struct {
 	TypeBase
 	KeyType  Type
 	ElemType Type
+}
+
+func (t *MapType) String() string {
+	return fmt.Sprintf("map[%v]%v", t.KeyType, t.ElemType)
 }
 
 type ChannelType struct {
@@ -216,10 +252,27 @@ type ChannelType struct {
 	Dir      ChannelDir
 }
 
+func (t *ChannelType) String() string {
+	dir := ""
+	switch t.Dir {
+	case ChannelDirSend:
+		dir = "<-chan"
+	case ChannelDirRecv:
+		dir = "chan<-"
+	case ChannelDirBoth:
+		dir = "chan"
+	}
+	return fmt.Sprintf("%v %v", dir, t.ElemType)
+}
+
 type GenericType struct {
 	TypeBase
 	TypeParams TypeParamList
 	Type       Type
+}
+
+func (t *GenericType) String() string {
+	return fmt.Sprintf("∀[%v]%v", t.TypeParams, t.Type)
 }
 
 type ChannelDir int
@@ -1050,36 +1103,19 @@ type TypeSet struct {
 	Universe bool
 }
 
-func (c *Checker) CheckSubst(list TypeParamList, subst Subst) {
-	for _, tyParam := range list.Params {
+func (c *Checker) CheckSubst(tyParams TypeParamList, subst Subst) {
+	for _, tyParam := range tyParams.Params {
 		tySub, ok := subst[tyParam.Name]
 		if !ok {
 			continue // TODO: is this ok?
 		}
-		set := c.TypeSet(tyParam.Constraint)
-		if set.Universe {
-			panic("TODO")
+		if len(tyParam.Constraint.TypeElem.Union) != 1 {
+			panic(fmt.Sprintf("type param %v with constraint %v cannot be %v", tyParam.Name, tyParam.Constraint, tySub))
 		}
-		found := false
-		for _, ty := range set.Types {
-			found = found || c.Identical(ty, tySub)
-		}
-		if !found {
-			panic(fmt.Sprintf("type parameter %v with constraints %v does not satisfy %v", tyParam.Name, tyParam.Constraint, tySub))
+		if !c.Identical(tySub, tyParam.Constraint.TypeElem.Union[0].Type) {
+			panic(fmt.Sprintf("type param %v with constraint %v cannot be %v", tyParam.Name, tyParam.Constraint, tySub))
 		}
 	}
-}
-
-func (c *Checker) TypeSet(con TypeConstraint) TypeSet {
-	// TODO very incomplete
-	var types []Type
-	for _, term := range con.TypeElem.Union {
-		if term.Tilde {
-			panic("TODO")
-		}
-		types = append(types, term.Type)
-	}
-	return TypeSet{Types: types, Universe: false}
 }
 
 // ========================
@@ -1181,6 +1217,8 @@ func (c *Checker) Synth(expr Expr) Type {
 		return c.SynthLiteralExpr(expr)
 	case *TypeAppExpr:
 		panic("TODO")
+	case *TypeExpr:
+		return expr.Type
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
@@ -1381,6 +1419,37 @@ func (c *Checker) ApplySubst(ty Type, subst Subst) Type {
 		return &StructType{Fields: fields}
 	case *PointerType:
 		return &PointerType{BaseType: c.ApplySubst(ty.BaseType, subst)}
+	case *InterfaceType:
+		methods := make([]MethodElem, len(ty.Methods))
+		for i, method := range ty.Methods {
+			methods[i] = MethodElem{
+				Name: method.Name,
+				Type: c.ApplySubst(method.Type, subst).(*FunctionType),
+			}
+		}
+		constraints := make([]TypeConstraint, len(ty.Constraints))
+		for i, constraint := range ty.Constraints {
+			constraints[i] = TypeConstraint{TypeElem: c.ApplySubstTypeElem(constraint.TypeElem, subst)}
+		}
+		return &InterfaceType{Methods: methods, Constraints: constraints}
+	case *SliceType:
+		return &SliceType{ElemType: c.ApplySubst(ty.ElemType, subst)}
+	case *MapType:
+		return &MapType{
+			KeyType:  c.ApplySubst(ty.KeyType, subst),
+			ElemType: c.ApplySubst(ty.ElemType, subst),
+		}
+	case *ChannelType:
+		return &ChannelType{
+			ElemType: c.ApplySubst(ty.ElemType, subst),
+			Dir:      ty.Dir,
+		}
+	case *TupleType:
+		elems := make([]Type, len(ty.Elems))
+		for i, elem := range ty.Elems {
+			elems[i] = c.ApplySubst(elem, subst)
+		}
+		return &TupleType{Elems: elems}
 	default:
 		spew.Dump(ty)
 		panic("TODO")
@@ -1437,13 +1506,91 @@ func (c *Checker) ApplySubstParameterList(list ParameterList, subst Subst) Param
 
 // ========================
 
+func (c *Checker) Simplify(subst Subst) {
+	for k, v := range subst {
+		cur := v
+		for {
+			if param, ok := cur.(*TypeParam); ok {
+				if k.Name == param.Name.Name {
+					panic("circular substitution?")
+				}
+				if next, ok := subst[param.Name]; ok {
+					cur = next
+					continue
+				} else {
+					break
+				}
+			}
+			break
+		}
+		subst[k] = cur
+	}
+}
+
+func (c *Checker) Merge(lhs, rhs Subst) Subst {
+	result := Subst{}
+	for k, v := range lhs {
+		result[k] = v
+	}
+	for k, v := range rhs {
+		if _, ok := result[k]; ok {
+			if !c.Identical(result[k], v) {
+				spew.Dump(k, v)
+				panic("incompatible substitutions")
+			}
+		}
+		result[k] = v
+	}
+	return result
+}
+
 func (c *Checker) Verify() Subst {
 	subst := Subst{}
 
+	fmt.Println("=== Verify ===")
 	fmt.Println(c.TyCtx)
 
-	c.Unify(c.TyCtx.Relations, subst)
+	rels := c.TyCtx.Relations
 
+	for i := 0; i < 10; i++ {
+		fmt.Printf("=== iteration %d ===\n", i)
+		fmt.Println(rels)
+
+		learned := Subst{}
+
+		c.Unify(rels, learned)
+		c.Simplify(learned)
+
+		fmt.Printf("learned: %v\n", learned)
+
+		next := []Relation{}
+
+		for _, rel := range rels {
+			switch rel := rel.(type) {
+			case RelationEq:
+				next = append(next, RelationEq{
+					Left:  c.ApplySubst(rel.Left, learned),
+					Right: c.ApplySubst(rel.Right, learned),
+				})
+			case RelationSubtype:
+				next = append(next, RelationSubtype{
+					Sub:   c.ApplySubst(rel.Sub, learned),
+					Super: c.ApplySubst(rel.Super, learned),
+				})
+			default:
+				panic("unreachable")
+			}
+		}
+
+		rels = next
+		subst = c.Merge(subst, learned)
+
+		if len(learned) == 0 {
+			break
+		}
+	}
+
+	fmt.Println("=== subst ===")
 	fmt.Println(subst)
 
 	return subst
@@ -1571,6 +1718,17 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 		return
 	}
 
+	if sub, ok := c.Resolve(sub).(*TypeParam); ok {
+		if !c.Identical(sub, super) && c.ContainsTypeParam(super, sub) {
+			panic(fmt.Sprintf("circular constraint: %v <: %v", sub, super))
+		}
+	}
+	if super, ok := c.Resolve(super).(*TypeParam); ok {
+		if !c.Identical(sub, super) && c.ContainsTypeParam(sub, super) {
+			panic(fmt.Sprintf("circular constraint: %v <: %v", sub, super))
+		}
+	}
+
 	// special cases???
 	switch sub := c.Resolve(sub).(type) {
 	case *PointerType:
@@ -1621,10 +1779,18 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 			panic("cannot satisfy empty set")
 		}
 		if tyPar, ok := c.Resolve(sub).(*TypeParam); ok {
-			c.UnifySubtype(tyPar.Bound, super, subst)
+
+			var bound Type = tyPar.Bound
+			if tyPar.Bound == nil {
+				bound = EmptyInterface()
+			}
+			c.UnifySubtype(bound, super, subst)
 			return
 		}
 		if sub, ok := c.Resolve(sub).(*InterfaceType); ok {
+			if sub.IsEmpty() {
+				return
+			}
 			// TODO check methods
 			subtypeset := c.InterfaceTypeSet(sub)
 			if subtypeset.Universe {
@@ -1660,7 +1826,7 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 		}
 		c.UnifySubtype(sub, superTy, subst)
 	case *TypeParam:
-		if subTy, ok := sub.(*TypeParam); ok {
+		if subTy, ok := c.Resolve(sub).(*TypeParam); ok {
 			if subTy.Name == super.Name {
 				return
 			}
@@ -1679,19 +1845,76 @@ func (c *Checker) Resolve(ty Type) Type {
 			panic(fmt.Sprintf("undefined type: %v", ty.Name))
 		}
 		return c.Resolve(under)
-	// case *TypeParam:
-	// 	under, ok := c.VarCtx.Lookup(ty.Name)
-	// 	if !ok {
-	// 		return ty // unbound???
-	// 	}
-	// 	if s, ok := under.(*TypeParam); ok {
-	// 		if s.Name == ty.Name {
-	// 			return ty
-	// 		}
-	// 	}
-	// 	return c.Resolve(under)
 	default:
 		return ty
+	}
+}
+
+func (c *Checker) ContainsTypeParam(ty Type, tyParam *TypeParam) bool {
+	switch ty := c.Resolve(ty).(type) {
+	case *TypeParam:
+		return ty.Name == tyParam.Name
+	case *TypeApplication:
+		for _, arg := range ty.Args {
+			if c.ContainsTypeParam(arg, tyParam) {
+				return true
+			}
+		}
+		return false
+	case *PointerType:
+		return c.ContainsTypeParam(ty.BaseType, tyParam)
+	case *StructType:
+		for _, field := range ty.Fields {
+			if c.ContainsTypeParam(field.Type, tyParam) {
+				return true
+			}
+		}
+		return false
+	case *InterfaceType:
+		for _, constraint := range ty.Constraints {
+			for _, term := range constraint.TypeElem.Union {
+				if c.ContainsTypeParam(term.Type, tyParam) {
+					return true
+				}
+			}
+		}
+		for _, method := range ty.Methods {
+			if c.ContainsTypeParam(method.Type, tyParam) {
+				return true
+			}
+		}
+		return false
+	case *SliceType:
+		return c.ContainsTypeParam(ty.ElemType, tyParam)
+	case *TypeBuiltin:
+		return false
+	case *ArrayType:
+		return c.ContainsTypeParam(ty.ElemType, tyParam)
+	case *FunctionType:
+		// could check signature type params, but no nested type params?
+		for _, param := range ty.Signature.Params.Params {
+			if c.ContainsTypeParam(param.Type, tyParam) {
+				return true
+			}
+		}
+		for _, result := range ty.Signature.Results.Params {
+			if c.ContainsTypeParam(result.Type, tyParam) {
+				return true
+			}
+		}
+		return false
+	case *GenericType:
+		// cannot nest generic types?
+		return false
+	case *TupleType:
+		for _, elem := range ty.Elems {
+			if c.ContainsTypeParam(elem, tyParam) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
 	}
 }
 
@@ -1705,30 +1928,20 @@ func (c *Checker) IsTypeParam(ty Type) bool {
 }
 
 func (c *Checker) IsConcreteType(ty Type) bool {
-	switch ty := ty.(type) {
+	switch ty := c.Resolve(ty).(type) {
 	case *TypeBuiltin:
 		return true
 	case *InterfaceType:
 		return false
-	case *TypeName:
-		under, ok := c.VarCtx.Lookup(ty.Name)
-		if !ok {
-			panic("undefined type")
-		}
-		return c.IsConcreteType(under)
 	case *TypeParam:
-		under, ok := c.VarCtx.Lookup(ty.Name)
-		if !ok {
-			return false // ???
-		}
-		if s, ok := under.(*TypeParam); ok {
-			if s.Name == ty.Name {
-				return false
-			}
-		}
-		return c.IsConcreteType(under)
+		return false
 	case *PointerType:
-		// that's it?
+		return true
+	case *SliceType:
+		return true
+	case *ArrayType:
+		return true
+	case *StructType:
 		return true
 	default:
 		spew.Dump(ty)
@@ -1790,6 +2003,35 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 			return true
 		}
 		return false
+	case *ArrayType:
+		if ty2, ok := ty2.(*ArrayType); ok {
+			if ty1.Len != ty2.Len {
+				return false
+			}
+			return c.Identical(ty1.ElemType, ty2.ElemType)
+		}
+		return false
+	case *StructType:
+		if ty2, ok := ty2.(*StructType); ok {
+			if len(ty1.Fields) != len(ty2.Fields) {
+				return false
+			}
+			for i, field := range ty1.Fields {
+				if field.Name != ty2.Fields[i].Name {
+					return false
+				}
+				if !c.Identical(field.Type, ty2.Fields[i].Type) {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	case *SliceType:
+		if ty2, ok := ty2.(*SliceType); ok {
+			return c.Identical(ty1.ElemType, ty2.ElemType)
+		}
+		return false
 	default:
 		spew.Dump(ty1, ty2)
 		panic("TODO")
@@ -1820,6 +2062,18 @@ func (c *Checker) InterfaceTypeSet(ty *InterfaceType) TypeSet {
 		intersection = next
 	}
 	return TypeSet{Types: intersection}
+}
+
+func (c *Checker) TypeSet(con TypeConstraint) TypeSet {
+	// TODO very incomplete
+	var types []Type
+	for _, term := range con.TypeElem.Union {
+		if term.Tilde {
+			panic("TODO")
+		}
+		types = append(types, term.Type)
+	}
+	return TypeSet{Types: types, Universe: false}
 }
 
 func (c *Checker) SimplifyInterface(ty *InterfaceType) *InterfaceType {
@@ -2645,6 +2899,8 @@ func MakeVec[T any]() Vec[T] {}
 
 func Append[T any](v Vec[T], x T) {}
 
+func ReadVec[T any](v Vec[T]) T {}
+
 func Ptr[T any](x T) *T {
 	return &x
 }
@@ -2657,6 +2913,16 @@ func useVec() {
 
 func alloc[T any]() *T {
 	return new(T)
+}
+
+func hello[T int]() []int {
+	return make([]T)
+}
+
+func inferStructField() int {
+	v := MakeVec()
+	Append(v, Nil())
+	return ReadVec(v)
 }
 `
 
