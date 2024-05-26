@@ -57,6 +57,12 @@ type TypeName struct {
 	Name Identifier
 }
 
+type NamedType struct {
+	TypeBase
+	Name Identifier
+	Type Type
+}
+
 func (t *TypeName) String() string {
 	return fmt.Sprintf("%sₙ", t.Name.Name)
 }
@@ -516,11 +522,6 @@ type CompositeLitElem struct {
 	Value Expr
 }
 
-type TypeAppExpr struct {
-	ExprBase
-	TypeApp TypeApplication
-}
-
 type Literal interface {
 	_Literal()
 }
@@ -688,7 +689,6 @@ type TypeDecl struct {
 	Name       Identifier
 	TypeParams TypeParamList
 	Type       Type
-	Methods    []MethodDecl
 }
 
 type AliasDecl struct {
@@ -714,7 +714,7 @@ type FunctionDecl struct {
 type MethodDecl struct {
 	DeclBase
 	Name      Identifier
-	Receiver  Type
+	Receiver  FieldDecl
 	Signature Signature
 	Body      StatementList
 }
@@ -834,7 +834,7 @@ type Checker struct {
 	Builtins VarContext
 
 	// this seems unprincipled
-	CurFn *FunctionDecl
+	CurFn *Signature
 	CurTy *TypeDecl
 }
 
@@ -892,7 +892,7 @@ func (c *Checker) BeginTypeScope(decl *TypeDecl) *Checker {
 	}
 }
 
-func (c *Checker) BeginFunctionScope(fn *FunctionDecl) *Checker {
+func (c *Checker) BeginFunctionScope(fn *Signature) *Checker {
 	return &Checker{
 		Fresh:    c.Fresh,
 		TyCtx:    c.TyCtx.Fork(),
@@ -903,7 +903,7 @@ func (c *Checker) BeginFunctionScope(fn *FunctionDecl) *Checker {
 	}
 }
 
-func (c *Checker) AssertInFunctionScope() *FunctionDecl {
+func (c *Checker) AssertInFunctionScope() *Signature {
 	if c.CurFn == nil {
 		panic("not in function scope")
 	}
@@ -931,8 +931,9 @@ func (c *Checker) CheckDecl(decl Decl) {
 	case *FunctionDecl:
 		c.CheckFunctionDecl(decl)
 	case *MethodDecl:
-		panic("TODO")
+		c.CheckMethodDecl(decl)
 	default:
+		spew.Dump(decl)
 		panic("unreachable")
 	}
 }
@@ -947,9 +948,7 @@ func (c *Checker) CheckTypeDecl(decl *TypeDecl) {
 	scope := c.BeginTypeScope(decl)
 
 	for _, tyParam := range decl.TypeParams.Params {
-		ty := &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint}
-		// scope.TyCtx.AddRelation(RelationSubtype{Sub: ty, Super: tyParam.Constraint})
-		scope.VarCtx.Def(tyParam.Name, ty)
+		scope.VarCtx.Def(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
 	}
 
 	scope.CheckTypeDeclType(decl.Type)
@@ -959,9 +958,9 @@ func (c *Checker) CheckTypeDecl(decl *TypeDecl) {
 	scope.CheckSubst(decl.TypeParams, subst)
 
 	if len(decl.TypeParams.Params) > 0 {
-		c.VarCtx.Def(decl.Name, &GenericType{TypeParams: decl.TypeParams, Type: decl.Type})
+		c.VarCtx.Def(decl.Name, &NamedType{Name: decl.Name, Type: &GenericType{TypeParams: decl.TypeParams, Type: decl.Type}})
 	} else {
-		c.VarCtx.Def(decl.Name, decl.Type)
+		c.VarCtx.Def(decl.Name, &NamedType{Name: decl.Name, Type: decl.Type})
 	}
 }
 
@@ -1036,15 +1035,57 @@ func (c *Checker) CheckVarDecl(decl *VarDecl) {
 	c.VarCtx.Def(decl.Name, decl.Type)
 }
 
+func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
+	fmt.Printf("=== CheckMethodDecl(%v) ===\n", decl.Name)
+
+	scope := c.BeginFunctionScope(&decl.Signature)
+
+	if app, ok := decl.Receiver.Type.(*TypeApplication); ok {
+		under, ok := c.VarCtx.Lookup(app.Name)
+		if !ok {
+			panic("undefined type")
+		}
+		gen, ok := c.Resolve(under).(*GenericType)
+		if !ok {
+			panic("not a generic type")
+		}
+		if len(gen.TypeParams.Params) != len(app.Args) {
+			panic("wrong number of type arguments")
+		}
+		for _, tyParam := range gen.TypeParams.Params {
+			scope.VarCtx.Def(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
+		}
+	}
+
+	for _, tyParam := range decl.Signature.TypeParams.Params {
+		scope.VarCtx.Def(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
+	}
+
+	scope.VarCtx.Def(decl.Receiver.Name, decl.Receiver.Type)
+
+	for _, param := range decl.Signature.Params.Params {
+		scope.VarCtx.Def(param.Name, param.Type)
+	}
+
+	for _, result := range decl.Signature.Results.Params {
+		scope.VarCtx.Def(result.Name, result.Type)
+	}
+
+	scope.CheckStatementList(decl.Body)
+
+	subst := scope.Verify()
+	scope.CheckSubst(decl.Signature.TypeParams, subst)
+
+	c.VarCtx.Def(decl.Name, &FunctionType{Signature: decl.Signature})
+}
+
 func (c *Checker) CheckFunctionDecl(decl *FunctionDecl) {
 	fmt.Printf("=== CheckFunctionDecl(%v) ===\n", decl.Name)
 
-	scope := c.BeginFunctionScope(decl)
+	scope := c.BeginFunctionScope(&decl.Signature)
 
 	for _, tyParam := range decl.Signature.TypeParams.Params {
-		ty := &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint}
-		// scope.TyCtx.AddRelation(RelationSubtype{Sub: ty, Super: tyParam.Constraint})
-		scope.VarCtx.Def(tyParam.Name, ty)
+		scope.VarCtx.Def(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
 	}
 
 	for _, param := range decl.Signature.Params.Params {
@@ -1091,13 +1132,13 @@ func (c *Checker) CheckStatement(stmt Statement) {
 
 func (c *Checker) CheckReturnStmt(stmt *ReturnStmt) {
 	fn := c.AssertInFunctionScope()
-	if len(stmt.Results) != len(fn.Signature.Results.Params) {
+	if len(stmt.Results) != len(fn.Results.Params) {
 		// TODO: tuple return
 		panic("wrong number of return values")
 	}
 	for i, result := range stmt.Results {
 		ty := c.Synth(result)
-		c.CheckAssignableTo(ty, fn.Signature.Results.Params[i].Type)
+		c.CheckAssignableTo(ty, fn.Results.Params[i].Type)
 	}
 }
 
@@ -1161,8 +1202,6 @@ func (c *Checker) CheckExpr(expr Expr, ty Type) {
 		c.CheckNameExpr(expr, ty)
 	case *LiteralExpr:
 		c.CheckLiteralExpr(expr, ty)
-	case *TypeAppExpr:
-		panic("TODO")
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
@@ -1244,8 +1283,6 @@ func (c *Checker) Synth(expr Expr) Type {
 		return c.SynthNameExpr(expr)
 	case *LiteralExpr:
 		return c.SynthLiteralExpr(expr)
-	case *TypeAppExpr:
-		panic("TODO")
 	case *TypeExpr:
 		return expr.Type
 	case *CompositeLitExpr:
@@ -1417,24 +1454,13 @@ func (c *Checker) SynthLiteralExpr(expr *LiteralExpr) Type {
 }
 
 func (c *Checker) SynthCompositeLitExpr(expr *CompositeLitExpr) Type {
-	var structTy *StructType
-
-	switch ty := c.Resolve(expr.Type).(type) {
-	case *StructType:
-		structTy = ty
-	case *TypeApplication:
-		applied := c.TypeApplication(ty)
-		if ty, ok := applied.(*StructType); ok {
-			structTy = ty
-		}
-	}
-
-	if structTy == nil {
+	structTy, ok := c.Resolve(expr.Type).(*StructType)
+	if !ok {
 		panic("composite literal with non-struct type")
 	}
 
 	if len(expr.Elems) == 0 {
-		return structTy
+		return expr.Type
 	}
 
 	ordered := expr.Elems[0].Key == nil
@@ -1466,7 +1492,7 @@ func (c *Checker) SynthCompositeLitExpr(expr *CompositeLitExpr) Type {
 		}
 	}
 
-	return structTy
+	return expr.Type
 }
 
 func (c *Checker) TypeApplication(app *TypeApplication) Type {
@@ -1474,22 +1500,16 @@ func (c *Checker) TypeApplication(app *TypeApplication) Type {
 	if !ok {
 		panic("undefined type")
 	}
-	gen, ok := under.(*GenericType)
+	gen, ok := c.Resolve(under).(*GenericType)
 	if !ok {
 		panic("not a generic type")
 	}
 	if len(gen.TypeParams.Params) != len(app.Args) {
 		panic("wrong number of type arguments")
 	}
-	rename := Subst{}
-	for _, tyParam := range gen.TypeParams.Params {
-		rename[tyParam.Name] = &TypeParam{Name: c.FreshTypeName(), Bound: tyParam.Constraint}
-	}
-	gen = c.ApplySubst(gen, rename).(*GenericType)
 	subst := Subst{}
 	for i, tyArg := range app.Args {
 		tyParam := gen.TypeParams.Params[i]
-		c.TyCtx.AddRelation(RelationSubtype{Sub: tyArg, Super: tyParam.Constraint}) // Resolve?
 		subst[tyParam.Name] = tyArg
 	}
 	return c.ApplySubst(gen.Type, subst)
@@ -1976,6 +1996,11 @@ func (c *Checker) Resolve(ty Type) Type {
 			panic(fmt.Sprintf("undefined type: %v", ty.Name))
 		}
 		return c.Resolve(under)
+	case *TypeApplication:
+		// TODO: pre apply?
+		return c.TypeApplication(ty) // TODO crazy?
+	case *NamedType:
+		return c.Resolve(ty.Type)
 	default:
 		return ty
 	}
@@ -2323,7 +2348,6 @@ func ReadTypeDecl(decl *ast.GenDecl) []Decl {
 			Name:       NewIdentifier(spec.Name.Name),
 			TypeParams: ReadTypeParamList(spec.TypeParams),
 			Type:       ReadType(spec.Type),
-			Methods:    nil,
 		})
 	}
 	return decls
@@ -2349,11 +2373,31 @@ func ReadVarDecl(decl *ast.GenDecl) []Decl {
 }
 
 func ReadFuncDecl(decl *ast.FuncDecl) []Decl {
-	return []Decl{&FunctionDecl{
-		Name:      NewIdentifier(decl.Name.Name),
-		Signature: ReadSignature(decl.Type),
-		Body:      ReadBlockStmt(decl.Body),
-	}}
+	if decl.Recv == nil {
+		return []Decl{&FunctionDecl{
+			Name:      NewIdentifier(decl.Name.Name),
+			Signature: ReadSignature(decl.Type),
+			Body:      ReadBlockStmt(decl.Body),
+		}}
+	} else {
+		return []Decl{&MethodDecl{
+			Receiver:  ReadReceiver(decl.Recv.List[0]),
+			Name:      NewIdentifier(decl.Name.Name),
+			Signature: ReadSignature(decl.Type),
+			Body:      ReadBlockStmt(decl.Body),
+		}}
+
+	}
+}
+
+func ReadReceiver(field *ast.Field) FieldDecl {
+	if len(field.Names) != 1 {
+		panic("expected one name")
+	}
+	return FieldDecl{
+		Name: NewIdentifier(field.Names[0].Name),
+		Type: ReadType(field.Type),
+	}
 }
 
 func ReadTypeParamList(list *ast.FieldList) TypeParamList {
@@ -3137,6 +3181,19 @@ type Pair[T, U any] struct{
 
 func makePair[T, U any](x T, y U) Pair[T, U] {
 	return Pair[T, U]{First: x, Second: y}
+}
+
+type TyEq[T, U any] interface{
+	Apply(T) U
+}
+
+type TyEqImpl[T any] struct{}
+func (_ TyEqImpl[T]) Apply(x T) T {
+	return x
+}
+
+func Refl[T any]() TyEq[T, T] {
+	return TyEqImpl[T]{}
 }
 `
 
