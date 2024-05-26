@@ -63,7 +63,8 @@ func (t *TypeName) String() string {
 
 type TypeParam struct {
 	TypeBase
-	Name Identifier
+	Name  Identifier
+	Bound *InterfaceType
 }
 
 func (t *TypeParam) String() string {
@@ -247,6 +248,17 @@ const (
 	// TODO: div, mod, etc.
 )
 
+type UnaryOp int
+
+const (
+	UnaryOpPos UnaryOp = iota
+	UnaryOpNeg
+	UnaryOpNot
+	UnaryOpBitNot
+	UnaryOpAddr
+	UnaryOpDeref
+)
+
 // ========================
 
 type Expr interface {
@@ -257,14 +269,28 @@ type ExprBase struct{}
 
 func (ExprBase) _Expr() {}
 
-type ExprBinaryExpr struct {
+type BinaryExpr struct {
 	ExprBase
 	Op    BinaryOp
 	Left  Expr
 	Right Expr
 }
 
-// TODO: UnaryExpr
+type UnaryExpr struct {
+	ExprBase
+	Op   UnaryOp
+	Expr Expr
+}
+
+type StarExpr struct {
+	ExprBase
+	Expr Expr
+}
+
+type AddressExpr struct {
+	ExprBase
+	Expr Expr
+}
 
 type ConversionExpr struct {
 	ExprBase
@@ -309,6 +335,17 @@ type NameExpr struct {
 type LiteralExpr struct {
 	ExprBase
 	Literal Literal
+}
+
+type CompositeLitExpr struct {
+	ExprBase
+	Type  Type
+	Elems []CompositeLitElem
+}
+
+type CompositeLitElem struct {
+	Key   Expr
+	Value Expr
 }
 
 type TypeAppExpr struct {
@@ -566,11 +603,15 @@ func (c *VarContext) Fork() VarContext {
 }
 
 type Checker struct {
+	Fresh int
+
 	TyCtx    TypeContext
 	VarCtx   VarContext
 	Builtins VarContext
-	CurFn    *FunctionDecl
-	Fresh    int
+
+	// this seems unprincipled
+	CurFn *FunctionDecl
+	CurTy *TypeDecl
 }
 
 func NewChecker() *Checker {
@@ -606,6 +647,17 @@ func (c *Checker) BeginScope() *Checker {
 		VarCtx:   c.VarCtx.Fork(),
 		Builtins: c.Builtins,
 		CurFn:    c.CurFn,
+		CurTy:    c.CurTy,
+	}
+}
+
+func (c *Checker) BeginTypeScope(decl *TypeDecl) *Checker {
+	return &Checker{
+		TyCtx:    c.TyCtx.Fork(),
+		VarCtx:   c.VarCtx.Fork(),
+		Builtins: c.Builtins,
+		CurFn:    c.CurFn,
+		CurTy:    decl,
 	}
 }
 
@@ -615,6 +667,7 @@ func (c *Checker) BeginFunctionScope(fn *FunctionDecl) *Checker {
 		VarCtx:   c.VarCtx.Fork(),
 		Builtins: c.Builtins,
 		CurFn:    fn,
+		CurTy:    c.CurTy,
 	}
 }
 
@@ -659,13 +712,13 @@ func (c *Checker) CheckConstDecl(decl *ConstDecl) {
 func (c *Checker) CheckTypeDecl(decl *TypeDecl) {
 	fmt.Printf("=== CheckTypeDecl(%v) ===\n", decl.Name)
 
-	scope := c.BeginScope()
+	scope := c.BeginTypeScope(decl)
 
 	for _, tyParam := range decl.TypeParams.Params {
 		sub := &TypeName{Name: tyParam.Name}
 		super := &InterfaceType{Methods: nil, Constraints: []TypeConstraint{tyParam.Constraint}}
 		scope.TyCtx.AddRelation(RelationSubtype{Sub: sub, Super: super})
-		scope.VarCtx.Def(tyParam.Name, &TypeParam{Name: tyParam.Name})
+		scope.VarCtx.Def(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: super})
 	}
 
 	scope.CheckTypeDeclType(decl.Type)
@@ -705,10 +758,15 @@ func (c *Checker) CheckTypeDeclType(ty Type) {
 		if len(gen.TypeParams.Params) != len(ty.Args) {
 			panic("wrong number of type arguments")
 		}
+		subst := Subst{}
+		for _, tyParam := range gen.TypeParams.Params {
+			subst[tyParam.Name] = &TypeParam{Name: c.FreshTypeName()}
+		}
+		gen = c.ApplySubst(gen, subst).(*GenericType)
 		for i, tyArg := range ty.Args {
 			tyParam := gen.TypeParams.Params[i]
 			super := &InterfaceType{Methods: nil, Constraints: []TypeConstraint{tyParam.Constraint}}
-			c.TyCtx.AddRelation(RelationSubtype{Sub: tyArg, Super: super})
+			c.TyCtx.AddRelation(RelationSubtype{Sub: tyArg, Super: super}) // Resolve?
 			c.CheckTypeDeclType(tyArg)
 		}
 	case *StructType:
@@ -853,7 +911,7 @@ func (c *Checker) TypeSet(con TypeConstraint) TypeSet {
 
 func (c *Checker) CheckExpr(expr Expr, ty Type) {
 	switch expr := expr.(type) {
-	case *ExprBinaryExpr:
+	case *BinaryExpr:
 		c.CheckBinaryExpr(expr, ty)
 	case *ConversionExpr:
 		panic("TODO")
@@ -876,7 +934,7 @@ func (c *Checker) CheckExpr(expr Expr, ty Type) {
 	}
 }
 
-func (c *Checker) CheckBinaryExpr(expr *ExprBinaryExpr, ty Type) {
+func (c *Checker) CheckBinaryExpr(expr *BinaryExpr, ty Type) {
 	c.CheckExpr(expr.Left, ty)
 	c.CheckExpr(expr.Right, ty)
 }
@@ -968,7 +1026,7 @@ func (c *Checker) CheckAssignableTo(src, dst Type) {
 
 func (c *Checker) Synth(expr Expr) Type {
 	switch expr := expr.(type) {
-	case *ExprBinaryExpr:
+	case *BinaryExpr:
 		return c.SynthBinaryExpr(expr)
 	case *ConversionExpr:
 		panic("TODO")
@@ -991,7 +1049,7 @@ func (c *Checker) Synth(expr Expr) Type {
 	}
 }
 
-func (c *Checker) SynthBinaryExpr(expr *ExprBinaryExpr) Type {
+func (c *Checker) SynthBinaryExpr(expr *BinaryExpr) Type {
 	tyLeft := c.Synth(expr.Left)
 	tyRight := c.Synth(expr.Right)
 	c.TyCtx.AddEq(tyLeft, tyRight)
@@ -1076,7 +1134,22 @@ func (c *Checker) ApplySubst(ty Type, subst Subst) Type {
 		return &FunctionType{
 			Signature: c.ApplySubstSignature(ty.Signature, subst),
 		}
+	case *GenericType:
+		return &GenericType{
+			TypeParams: c.ApplySubstTypeParamList(ty.TypeParams, subst),
+			Type:       c.ApplySubst(ty.Type, subst),
+		}
+	case *StructType:
+		fields := make([]FieldDecl, len(ty.Fields))
+		for i, field := range ty.Fields {
+			fields[i] = FieldDecl{
+				Name: field.Name,
+				Type: c.ApplySubst(field.Type, subst),
+			}
+		}
+		return &StructType{Fields: fields}
 	default:
+		spew.Dump(ty)
 		panic("TODO")
 	}
 }
@@ -1151,32 +1224,39 @@ func (c *Checker) Unify(rels []Relation, subst Subst) {
 
 	// TODO is there a principled way to do this?
 
-	paramSupers := map[TypeParam][]*InterfaceType{}
-	for _, rel := range rels {
-		switch rel := rel.(type) {
-		case RelationSubtype:
-			tyParam, ok := c.Resolve(rel.Sub).(*TypeParam)
-			if !ok {
-				continue
-			}
-			superInter, ok := c.Resolve(rel.Super).(*InterfaceType)
-			if !ok {
-				continue
-			}
-			paramSupers[*tyParam] = append(paramSupers[*tyParam], superInter)
-		}
-	}
+	// params := map[Identifier]*TypeParam{}
+	// paramSupers := map[Identifier][]*InterfaceType{}
+	// for _, rel := range rels {
+	// 	switch rel := rel.(type) {
+	// 	case RelationSubtype:
+	// 		tyParam, ok := c.Resolve(rel.Sub).(*TypeParam)
+	// 		if !ok {
+	// 			continue
+	// 		}
+	// 		superInter, ok := c.Resolve(rel.Super).(*InterfaceType)
+	// 		if !ok {
+	// 			continue
+	// 		}
+	// 		params[tyParam.Name] = tyParam
+	// 		paramSupers[tyParam.Name] = append(paramSupers[tyParam.Name], superInter)
+	// 	}
+	// }
 
-	for tyParam, supers := range paramSupers {
-		if len(supers) > 1 {
-			inter := &InterfaceType{Methods: nil, Constraints: nil}
-			for _, super := range supers {
-				inter.Methods = append(inter.Methods, super.Methods...)
-				inter.Constraints = append(inter.Constraints, super.Constraints...)
-			}
-			c.UnifySubtype(&tyParam, inter, subst)
-		}
+	// for tyParam, supers := range paramSupers {
+	// 	if len(supers) > 1 {
+	// 		inter := IntersectInterfaces(supers...)
+	// 		c.UnifySubtype(params[tyParam], inter, subst)
+	// 	}
+	// }
+}
+
+func IntersectInterfaces(elems ...*InterfaceType) *InterfaceType {
+	inter := &InterfaceType{Methods: nil, Constraints: nil}
+	for _, elem := range elems {
+		inter.Methods = append(inter.Methods, elem.Methods...)
+		inter.Constraints = append(inter.Constraints, elem.Constraints...)
 	}
+	return inter
 }
 
 func (c *Checker) UnifyEq(left, right Type, subst Subst) {
@@ -1267,14 +1347,37 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 		if len(super.Methods) > 0 {
 			panic("TODO")
 		}
-		typeset := c.InterfaceTypeSet(super)
-		if typeset.Universe {
+		supertypeset := c.InterfaceTypeSet(super)
+		if supertypeset.Universe {
 			panic("TODO") // check methods
 		}
-		if len(typeset.Types) == 0 {
+		if len(supertypeset.Types) == 0 {
 			panic("cannot satisfy empty set")
 		}
-		for _, term := range typeset.Types {
+		if tyPar, ok := c.Resolve(sub).(*TypeParam); ok {
+			c.UnifySubtype(tyPar.Bound, super, subst)
+			return
+		}
+		if sub, ok := c.Resolve(sub).(*InterfaceType); ok {
+			// TODO check methods
+			subtypeset := c.InterfaceTypeSet(sub)
+			if subtypeset.Universe {
+				panic("TODO")
+			}
+			for _, term := range subtypeset.Types {
+				found := false
+				for _, superTerm := range supertypeset.Types {
+					if c.Identical(term, superTerm) {
+						found = true
+					}
+				}
+				if !found {
+					panic(fmt.Sprintf("interface %v does not satisfy %v", sub, super))
+				}
+			}
+			return
+		}
+		for _, term := range supertypeset.Types {
 			if !c.IsConcreteType(term) {
 				panic("cannot make union of non-concrete types")
 			}
@@ -1283,11 +1386,7 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 				return
 			}
 		}
-		if c.IsTypeParam(sub) {
-			return // nothing to add?
-		}
-		spew.Dump(sub, super)
-		panic("TODO")
+		panic(fmt.Sprintf("type %v does not satisfy %v", sub, super))
 	case *TypeName:
 		superTy, ok := c.VarCtx.Lookup(super.Name)
 		if !ok {
@@ -1306,13 +1405,24 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 }
 
 func (c *Checker) Resolve(ty Type) Type {
-	switch ty.(type) {
+	switch ty := ty.(type) {
 	case *TypeName:
-		under, ok := c.VarCtx.Lookup(ty.(*TypeName).Name)
+		under, ok := c.VarCtx.Lookup(ty.Name)
 		if !ok {
-			panic("undefined type")
+			panic(fmt.Sprintf("undefined type: %v", ty.Name))
 		}
 		return c.Resolve(under)
+	// case *TypeParam:
+	// 	under, ok := c.VarCtx.Lookup(ty.Name)
+	// 	if !ok {
+	// 		return ty // unbound???
+	// 	}
+	// 	if s, ok := under.(*TypeParam); ok {
+	// 		if s.Name == ty.Name {
+	// 			return ty
+	// 		}
+	// 	}
+	// 	return c.Resolve(under)
 	default:
 		return ty
 	}
@@ -1356,6 +1466,7 @@ func (c *Checker) IsConcreteType(ty Type) bool {
 }
 
 func (c *Checker) Identical(ty1, ty2 Type) bool {
+	// fmt.Printf("== Identical(%v, %v) ==\n", ty1, ty2)
 	// TODO recursive types?
 	switch ty1 := ty1.(type) {
 	case *TypeName:
@@ -1364,13 +1475,9 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 				return true
 			}
 		}
-		ty, ok := c.VarCtx.Lookup(ty1.Name)
-		if !ok {
-			panic("undefined type")
-		}
-		return c.Identical(ty2, ty)
+		return c.Identical(ty2, c.Resolve(ty1))
 	case *TypeBuiltin:
-		ty, ok := ty2.(*TypeBuiltin)
+		ty, ok := c.Resolve(ty2).(*TypeBuiltin)
 		if !ok {
 			return false
 		}
@@ -1477,7 +1584,10 @@ func ReadGenDecl(decl *ast.GenDecl) []Decl {
 		return ReadTypeDecl(decl)
 	case token.VAR:
 		return ReadVarDecl(decl)
+	case token.IMPORT:
+		return nil
 	default:
+		spew.Dump(decl)
 		panic("unreachable")
 	}
 }
@@ -1685,6 +1795,8 @@ func ReadExpr(expr ast.Expr) Expr {
 	switch expr := expr.(type) {
 	case *ast.BinaryExpr:
 		return ReadBinaryExpr(expr)
+	case *ast.UnaryExpr:
+		return ReadUnaryExpr(expr)
 	case *ast.CallExpr:
 		return ReadCallExpr(expr)
 	case *ast.Ident:
@@ -1701,7 +1813,22 @@ func ReadExpr(expr ast.Expr) Expr {
 			Expr:    ReadExpr(expr.X),
 			Indices: ReadExprList(expr.Indices),
 		}
+	case *ast.StarExpr:
+		return &UnaryExpr{
+			Op:   UnaryOpDeref,
+			Expr: ReadExpr(expr.X),
+		}
+	case *ast.ParenExpr:
+		return ReadExpr(expr.X)
+	case *ast.CompositeLit:
+		return ReadCompositeLit(expr)
+	case *ast.SelectorExpr:
+		return &SelectorExpr{
+			Expr: ReadExpr(expr.X),
+			Sel:  NewIdentifier(expr.Sel.Name),
+		}
 	default:
+		spew.Dump(expr)
 		panic("unreachable")
 	}
 }
@@ -1715,10 +1842,17 @@ func ReadExprList(exprs []ast.Expr) []Expr {
 }
 
 func ReadBinaryExpr(expr *ast.BinaryExpr) Expr {
-	return &ExprBinaryExpr{
+	return &BinaryExpr{
 		Op:    ReadBinaryOp(expr.Op),
 		Left:  ReadExpr(expr.X),
 		Right: ReadExpr(expr.Y),
+	}
+}
+
+func ReadUnaryExpr(expr *ast.UnaryExpr) Expr {
+	return &UnaryExpr{
+		Op:   ReadUnaryOp(expr.Op),
+		Expr: ReadExpr(expr.X),
 	}
 }
 
@@ -1727,6 +1861,22 @@ func ReadBinaryOp(op token.Token) BinaryOp {
 	case token.ADD:
 		return BinaryOpAdd
 	default:
+		panic("unreachable")
+	}
+}
+
+func ReadUnaryOp(op token.Token) UnaryOp {
+	switch op {
+	case token.SUB:
+		return UnaryOpNeg
+	case token.NOT:
+		return UnaryOpNot
+	case token.AND:
+		return UnaryOpAddr
+	case token.MUL:
+		return UnaryOpDeref
+	default:
+		spew.Dump(op)
 		panic("unreachable")
 	}
 }
@@ -1746,6 +1896,32 @@ func ReadNameExpr(expr *ast.Ident) Expr {
 	return &NameExpr{Name: NewIdentifier(expr.Name)}
 }
 
+func ReadCompositeLit(expr *ast.CompositeLit) Expr {
+	return &CompositeLitExpr{
+		Type:  ReadType(expr.Type),
+		Elems: ReadCompositeLitElems(expr.Elts),
+	}
+}
+
+func ReadCompositeLitElems(exprs []ast.Expr) []CompositeLitElem {
+	var elems []CompositeLitElem
+	for _, expr := range exprs {
+		switch expr := expr.(type) {
+		case *ast.KeyValueExpr:
+			elems = append(elems, CompositeLitElem{
+				Key:   ReadExpr(expr.Key),
+				Value: ReadExpr(expr.Value),
+			})
+		default:
+			elems = append(elems, CompositeLitElem{
+				Key:   nil,
+				Value: ReadExpr(expr),
+			})
+		}
+	}
+	return elems
+}
+
 func ReadLiteral(lit *ast.BasicLit) Literal {
 	switch lit.Kind {
 	case token.INT:
@@ -1758,6 +1934,9 @@ func ReadLiteral(lit *ast.BasicLit) Literal {
 }
 
 func ReadType(expr ast.Expr) Type {
+	if expr == nil {
+		return nil
+	}
 	switch expr := expr.(type) {
 	case *ast.Ident:
 		return &TypeName{Name: NewIdentifier(expr.Name)}
@@ -1793,6 +1972,8 @@ func ReadType(expr ast.Expr) Type {
 			Name: NewIdentifier(expr.X.(*ast.Ident).Name),
 			Args: ReadTypeList(expr.Indices),
 		}
+	case *ast.StarExpr:
+		return &PointerType{BaseType: ReadType(expr.X)}
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
@@ -1843,14 +2024,16 @@ type HelloInt struct{
 }
 
 // TODO should break
-type TwoHello[T string|int|bool] struct{
+type TwoHello[T string] struct{
 	Value1 Hello[T]
-	Value2 Hello[T]
+	Value2 Hello[int]
 }
 `
 
+	_ = src
+
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "src.go", src, parser.ParseComments)
+	f, err := parser.ParseFile(fset, "main.go", src, parser.ParseComments)
 	if err != nil {
 		panic(err)
 	}
