@@ -116,8 +116,9 @@ func (p ParameterList) String() string {
 }
 
 type ParameterDecl struct {
-	Name Identifier
-	Type Type
+	Name     Identifier
+	Type     Type
+	Variadic bool // only for last parameter :')
 }
 
 type StructType struct {
@@ -164,12 +165,12 @@ func EmptyInterface() Type {
 }
 
 type MethodElem struct {
-	Name      Identifier
-	Signature Signature
+	Name Identifier
+	Type *FunctionType
 }
 
 func (m MethodElem) String() string {
-	return fmt.Sprintf("%v%v", m.Name, m.Signature)
+	return fmt.Sprintf("%v%v", m.Name, m.Type.Signature)
 }
 
 type SliceType struct {
@@ -179,8 +180,8 @@ type SliceType struct {
 
 type MapType struct {
 	TypeBase
-	KeyType   Type
-	ValueType Type
+	KeyType  Type
+	ElemType Type
 }
 
 type ChannelType struct {
@@ -245,8 +246,58 @@ const (
 	BinaryOpAdd BinaryOp = iota
 	BinaryOpSub
 	BinaryOpMul
+
+	BinaryOpEq
+	BinaryOpNeq
+	BinaryOpLt
+	BinaryOpLte
+	BinaryOpGt
+	BinaryOpGte
+
+	BinaryOpAnd
+	BinaryOpOr
+
+	BinaryOpLAnd
+	BinaryOpLOr
+
+	BinaryOpArrow
 	// TODO: div, mod, etc.
 )
+
+func (op BinaryOp) String() string {
+	switch op {
+	case BinaryOpAdd:
+		return "+"
+	case BinaryOpSub:
+		return "-"
+	case BinaryOpMul:
+		return "*"
+	case BinaryOpEq:
+		return "=="
+	case BinaryOpNeq:
+		return "!="
+	case BinaryOpLt:
+		return "<"
+	case BinaryOpLte:
+		return "<="
+	case BinaryOpGt:
+		return ">"
+	case BinaryOpGte:
+		return ">="
+	case BinaryOpAnd:
+		return "&"
+	case BinaryOpOr:
+		return "|"
+	case BinaryOpLAnd:
+		return "&&"
+	case BinaryOpLOr:
+		return "||"
+	case BinaryOpArrow:
+		return "<-"
+	default:
+		panic("unreachable")
+	}
+}
 
 type UnaryOp int
 
@@ -255,9 +306,33 @@ const (
 	UnaryOpNeg
 	UnaryOpNot
 	UnaryOpBitNot
+
 	UnaryOpAddr
 	UnaryOpDeref
+
+	UnaryOpArrow
 )
+
+func (op UnaryOp) String() string {
+	switch op {
+	case UnaryOpPos:
+		return "+"
+	case UnaryOpNeg:
+		return "-"
+	case UnaryOpNot:
+		return "!"
+	case UnaryOpBitNot:
+		return "^"
+	case UnaryOpAddr:
+		return "&"
+	case UnaryOpDeref:
+		return "*"
+	case UnaryOpArrow:
+		return "<-"
+	default:
+		panic("unreachable")
+	}
+}
 
 // ========================
 
@@ -312,6 +387,14 @@ type IndexExpr struct {
 	Indices []Expr
 }
 
+type SliceExpr struct {
+	ExprBase
+	Expr Expr
+	Low  Expr
+	High Expr
+	Max  Expr
+}
+
 // TODO: SliceExpr
 
 type TypeAssertionExpr struct {
@@ -335,6 +418,12 @@ type NameExpr struct {
 type LiteralExpr struct {
 	ExprBase
 	Literal Literal
+}
+
+type FuncLitExpr struct {
+	ExprBase
+	Signature Signature
+	Body      StatementList
 }
 
 type CompositeLitExpr struct {
@@ -376,6 +465,12 @@ type LiteralString struct {
 	Value string
 }
 
+// for things like make() and new()
+type TypeExpr struct {
+	ExprBase
+	Type Type
+}
+
 // ========================
 
 type Statement interface {
@@ -391,51 +486,101 @@ type DeclStmt struct {
 	Decl Decl
 }
 
-type StmtSimpleStmt struct {
-	StatementBase
-	SimpleStmt SimpleStmt
-}
-
 type ReturnStmt struct {
 	StatementBase
 	Results []Expr
 }
 
+type BranchStmt struct {
+	StatementBase
+	// TODO type
+}
+
 type IfStmt struct {
 	StatementBase
-	Init *SimpleStmt
+	Init Statement
 	Cond Expr
 	Body StatementList
 	Else *IfStmt // Cond==True for plain else
 }
 
-// TODO: ForStmt, SwitchStmt, SelectStmt, DeferStmt, GoStmt, LabeledStmt, BlockStmt
+// TODO: SelectStmt, LabeledStmt, BlockStmt
 
-type SimpleStmt interface {
-	_SimpleStmt()
+type GoStmt struct {
+	StatementBase
+	Call *CallExpr
 }
 
-type SimpleStmtBase struct{}
-
-func (SimpleStmtBase) _SimpleStmt() {}
+type DeferStmt struct {
+	StatementBase
+	Call *CallExpr
+}
 
 type ExpressionStmt struct {
-	SimpleStmtBase
+	StatementBase
 	Expr Expr
 }
 
 type EmptyStmt struct {
-	SimpleStmtBase
+	StatementBase
+}
+
+type IncDecStmt struct {
+	StatementBase
+	Expr Expr
+	Inc  bool
+}
+
+type AssignmentStmt struct {
+	StatementBase
+	LHS []Expr
+	RHS []Expr
 }
 
 type ShortVarDecl struct {
-	SimpleStmtBase
-	Vars []ShortVarDeclItem
+	StatementBase
+	Names []Identifier
+	Exprs []Expr
 }
 
-type ShortVarDeclItem struct {
-	Name Identifier
-	Expr Expr
+type RangeStmt struct {
+	StatementBase
+	Assign     bool
+	Key, Value Expr
+	X          Expr
+	Body       StatementList
+}
+
+type TypeSwitchStmt struct {
+	StatementBase
+	Init   Statement
+	Assign Statement
+	Body   []TypeSwitchCase
+}
+
+type TypeSwitchCase struct {
+	Types []Type
+	Body  StatementList
+}
+
+type SwitchStmt struct {
+	StatementBase
+	Init Statement
+	Tag  Expr // ???
+	Body []SwitchCase
+}
+
+type SwitchCase struct {
+	Exprs []Expr
+	Body  StatementList
+}
+
+type ForStmt struct {
+	StatementBase
+	Init Statement
+	Cond Expr
+	Post Statement
+	Body StatementList
 }
 
 type StatementList struct {
@@ -825,26 +970,15 @@ func (c *Checker) CheckStatement(stmt Statement) {
 	switch stmt := stmt.(type) {
 	case *DeclStmt:
 		c.CheckDecl(stmt.Decl)
-	case *StmtSimpleStmt:
-		c.CheckSimpleStmt(stmt.SimpleStmt)
-	case *ReturnStmt:
-		c.CheckReturnStmt(stmt)
-	case *IfStmt:
-		c.CheckIfStmt(stmt)
-	default:
-		panic("unreachable")
-	}
-}
-
-func (c *Checker) CheckSimpleStmt(stmt SimpleStmt) {
-	switch stmt := stmt.(type) {
 	case *ExpressionStmt:
 		c.Synth(stmt.Expr) // ???
 		panic("TODO")
 	case *EmptyStmt:
 		// do nothing
-	case *ShortVarDecl:
-		// TODO
+	case *ReturnStmt:
+		c.CheckReturnStmt(stmt)
+	case *IfStmt:
+		c.CheckIfStmt(stmt)
 	default:
 		panic("unreachable")
 	}
@@ -862,7 +996,7 @@ func (c *Checker) CheckIfStmt(stmt *IfStmt) {
 	scope := c.BeginScope()
 
 	if stmt.Init != nil {
-		scope.CheckSimpleStmt(*stmt.Init)
+		scope.CheckStatement(stmt.Init)
 	}
 
 	c.CheckExpr(stmt.Cond, c.Builtin("bool"))
@@ -1028,6 +1162,8 @@ func (c *Checker) Synth(expr Expr) Type {
 	switch expr := expr.(type) {
 	case *BinaryExpr:
 		return c.SynthBinaryExpr(expr)
+	case *UnaryExpr:
+		return c.SynthUnaryExpr(expr)
 	case *ConversionExpr:
 		panic("TODO")
 	case *SelectorExpr:
@@ -1045,6 +1181,7 @@ func (c *Checker) Synth(expr Expr) Type {
 	case *TypeAppExpr:
 		panic("TODO")
 	default:
+		spew.Dump(expr)
 		panic("unreachable")
 	}
 }
@@ -1054,6 +1191,24 @@ func (c *Checker) SynthBinaryExpr(expr *BinaryExpr) Type {
 	tyRight := c.Synth(expr.Right)
 	c.TyCtx.AddEq(tyLeft, tyRight)
 	return tyLeft
+}
+
+func (c *Checker) SynthUnaryExpr(expr *UnaryExpr) Type {
+	ty := c.Synth(expr.Expr)
+	switch expr.Op {
+	case UnaryOpAddr:
+		return &PointerType{BaseType: ty}
+	case UnaryOpDeref:
+		switch ty := ty.(type) {
+		case *PointerType:
+			return ty.BaseType
+		default:
+			panic("cannot dereference non-pointer")
+		}
+	default:
+		spew.Dump(expr)
+		panic("TODO")
+	}
 }
 
 func (c *Checker) SynthIndexExpr(expr *IndexExpr) Type {
@@ -1400,7 +1555,8 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 			}
 		}
 	default:
-		panic(fmt.Sprintf("TODO: %T", super))
+		spew.Dump(sub, super)
+		panic("TODO")
 	}
 }
 
@@ -1460,8 +1616,12 @@ func (c *Checker) IsConcreteType(ty Type) bool {
 			}
 		}
 		return c.IsConcreteType(under)
+	case *PointerType:
+		// that's it?
+		return true
 	default:
-		panic(fmt.Sprintf("TODO: %T", ty))
+		spew.Dump(ty)
+		panic("TODO")
 	}
 }
 
@@ -1496,6 +1656,11 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 				return false
 			}
 			panic("TODO")
+		}
+		return false
+	case *PointerType:
+		if ty2, ok := ty2.(*PointerType); ok {
+			return c.Identical(ty1.BaseType, ty2.BaseType)
 		}
 		return false
 	default:
@@ -1593,14 +1758,19 @@ func ReadGenDecl(decl *ast.GenDecl) []Decl {
 }
 
 func ReadConstDecl(decl *ast.GenDecl) []Decl {
+	// TODO iota?
 	var decls []Decl
 	for _, spec := range decl.Specs {
 		spec := spec.(*ast.ValueSpec)
 		for i, name := range spec.Names {
+			var value Expr
+			if spec.Values != nil {
+				value = ReadExpr(spec.Values[i])
+			}
 			decls = append(decls, &ConstDecl{
 				Name:  NewIdentifier(name.Name),
 				Type:  ReadType(spec.Type),
-				Value: ReadExpr(spec.Values[i]),
+				Value: value,
 			})
 		}
 	}
@@ -1702,12 +1872,24 @@ func ReadSignature(sig *ast.FuncType) Signature {
 }
 
 func ReadParameterList(list *ast.FieldList) ParameterList {
+	if list == nil {
+		return ParameterList{}
+	}
 	var params []ParameterDecl
 	for _, field := range list.List {
 		for _, name := range field.Names {
+			var ty Type
+			var variadic bool
+			if ellipsis, variadic := field.Type.(*ast.Ellipsis); variadic {
+				ty = &SliceType{ElemType: ReadType(ellipsis.Elt)}
+				variadic = true
+			} else {
+				ty = ReadType(field.Type)
+			}
 			params = append(params, ParameterDecl{
-				Name: NewIdentifier(name.Name),
-				Type: ReadType(field.Type),
+				Name:     NewIdentifier(name.Name),
+				Type:     ty,
+				Variadic: variadic,
 			})
 		}
 	}
@@ -1715,6 +1897,9 @@ func ReadParameterList(list *ast.FieldList) ParameterList {
 }
 
 func ReadResultsList(list *ast.FieldList) ParameterList {
+	if list == nil {
+		return ParameterList{}
+	}
 	var params []ParameterDecl
 	for _, field := range list.List {
 		params = append(params, ParameterDecl{
@@ -1743,9 +1928,38 @@ func ReadStmt(stmt ast.Stmt) Statement {
 		return ReadReturnStmt(stmt)
 	case *ast.IfStmt:
 		return ReadIfStmt(stmt)
+	case *ast.AssignStmt:
+		return ReadAssignStmt(stmt)
+	case *ast.EmptyStmt:
+		return &EmptyStmt{}
+	case *ast.RangeStmt:
+		return ReadRangeStmt(stmt)
+	case *ast.IncDecStmt:
+		return ReadIncDecStmt(stmt)
+	case *ast.TypeSwitchStmt:
+		return ReadTypeSwitchStmt(stmt)
+	case *ast.SwitchStmt:
+		return ReadSwitchStmt(stmt)
+	case *ast.BranchStmt:
+		return ReadBranchStmt(stmt)
+	case *ast.ForStmt:
+		return ReadForStmt(stmt)
+	case *ast.GoStmt:
+		return &GoStmt{Call: ReadCallExpr(stmt.Call).(*CallExpr)}
+	case *ast.DeferStmt:
+		return &DeferStmt{Call: ReadCallExpr(stmt.Call).(*CallExpr)}
 	default:
+		spew.Dump(stmt)
 		panic("unreachable")
 	}
+}
+
+func ReadStmtList(stmts []ast.Stmt) StatementList {
+	var result []Statement
+	for _, stmt := range stmts {
+		result = append(result, ReadStmt(stmt))
+	}
+	return StatementList{Stmts: result}
 }
 
 func ReadDeclStmt(stmt *ast.DeclStmt) Statement {
@@ -1753,7 +1967,7 @@ func ReadDeclStmt(stmt *ast.DeclStmt) Statement {
 }
 
 func ReadExprStmt(stmt *ast.ExprStmt) Statement {
-	return &StmtSimpleStmt{SimpleStmt: &ExpressionStmt{Expr: ReadExpr(stmt.X)}}
+	return &ExpressionStmt{Expr: ReadExpr(stmt.X)}
 }
 
 func ReadReturnStmt(stmt *ast.ReturnStmt) Statement {
@@ -1765,29 +1979,176 @@ func ReadReturnStmt(stmt *ast.ReturnStmt) Statement {
 }
 
 func ReadIfStmt(stmt *ast.IfStmt) Statement {
-	var init *SimpleStmt
+	var init Statement
 	if stmt.Init != nil {
-		init = Ptr(ReadSimpleStmt(stmt.Init))
+		init = ReadStmt(stmt.Init)
 	}
+	var elseStmt *IfStmt
 	if stmt.Else != nil {
-		panic("TODO")
+		elseStmt = ReadElseStmt(stmt.Else).(*IfStmt)
 	}
 	return &IfStmt{
 		Init: init,
 		Cond: ReadExpr(stmt.Cond),
 		Body: ReadBlockStmt(stmt.Body),
-		Else: nil, // TODO
+		Else: elseStmt, // TODO
 	}
 }
 
-func ReadSimpleStmt(stmt ast.Stmt) SimpleStmt {
+func ReadElseStmt(stmt ast.Stmt) Statement {
 	switch stmt := stmt.(type) {
-	case *ast.ExprStmt:
-		return &ExpressionStmt{Expr: ReadExpr(stmt.X)}
-	case *ast.AssignStmt:
-		panic("TODO")
+	case *ast.BlockStmt:
+		return &IfStmt{
+			Cond: nil,
+			Body: ReadBlockStmt(stmt),
+		}
+	case *ast.IfStmt:
+		return ReadIfStmt(stmt)
+	default:
+		spew.Dump(stmt)
+		panic("unreachable")
+	}
+}
+
+func ReadAssignStmt(stmt *ast.AssignStmt) Statement {
+	if stmt.Tok == token.DEFINE {
+		names := []Identifier{}
+		exprs := []Expr{}
+		for _, left := range stmt.Lhs {
+			switch left := left.(type) {
+			case *ast.Ident:
+				names = append(names, NewIdentifier(left.Name))
+			default:
+				panic("TODO")
+			}
+		}
+		for _, right := range stmt.Rhs {
+			exprs = append(exprs, ReadExpr(right))
+		}
+		return &ShortVarDecl{Names: names, Exprs: exprs}
+	} else {
+		var lhs []Expr
+		var rhs []Expr
+		for _, left := range stmt.Lhs {
+			lhs = append(lhs, ReadExpr(left))
+		}
+		for _, right := range stmt.Rhs {
+			rhs = append(rhs, ReadExpr(right))
+		}
+		return &AssignmentStmt{LHS: lhs, RHS: rhs}
+	}
+}
+
+func ReadRangeStmt(stmt *ast.RangeStmt) Statement {
+	return &RangeStmt{
+		Assign: stmt.Tok == token.DEFINE,
+		Key:    ReadExpr(stmt.Key),
+		Value:  ReadExpr(stmt.Value),
+		X:      ReadExpr(stmt.X),
+		Body:   ReadBlockStmt(stmt.Body),
+	}
+}
+
+func ReadIncDecStmt(stmt *ast.IncDecStmt) Statement {
+	return &IncDecStmt{
+		Expr: ReadExpr(stmt.X),
+		Inc:  stmt.Tok == token.INC,
+	}
+}
+
+func ReadTypeSwitchStmt(stmt *ast.TypeSwitchStmt) Statement {
+	var init Statement
+	if stmt.Init != nil {
+		init = ReadStmt(stmt.Init)
+	}
+	return &TypeSwitchStmt{
+		Init:   init,
+		Assign: ReadStmt(stmt.Assign),
+		Body:   ReadTypeSwitchCases(stmt.Body.List),
+	}
+}
+
+func ReadTypeSwitchCases(clauses []ast.Stmt) []TypeSwitchCase {
+	var cases []TypeSwitchCase
+	for _, clause := range clauses {
+		clause := clause.(*ast.CaseClause)
+		var types []Type
+		for _, expr := range clause.List {
+			types = append(types, ReadType(expr))
+		}
+		cases = append(cases, TypeSwitchCase{
+			Types: types,
+			Body:  ReadStmtList(clause.Body),
+		})
+	}
+	return cases
+}
+
+func ReadSwitchStmt(stmt *ast.SwitchStmt) Statement {
+	var init Statement
+	var tag Expr
+	if stmt.Init != nil {
+		init = ReadStmt(stmt.Init)
+	}
+	if stmt.Tag != nil {
+		tag = ReadExpr(stmt.Tag)
+	}
+	return &SwitchStmt{
+		Init: init,
+		Tag:  tag,
+		Body: ReadSwitchCases(stmt.Body.List),
+	}
+}
+
+func ReadSwitchCases(clauses []ast.Stmt) []SwitchCase {
+	var cases []SwitchCase
+	for _, clause := range clauses {
+		clause := clause.(*ast.CaseClause)
+		var exprs []Expr
+		for _, expr := range clause.List {
+			exprs = append(exprs, ReadExpr(expr))
+		}
+		cases = append(cases, SwitchCase{
+			Exprs: exprs,
+			Body:  ReadStmtList(clause.Body),
+		})
+	}
+	return cases
+}
+
+func ReadBranchStmt(stmt *ast.BranchStmt) Statement {
+	// TOOD matters?
+	switch stmt.Tok {
+	case token.BREAK:
+		return &BranchStmt{}
+	case token.CONTINUE:
+		return &BranchStmt{}
+	case token.FALLTHROUGH:
+		return &BranchStmt{}
+	case token.GOTO:
+		return &BranchStmt{}
 	default:
 		panic("unreachable")
+	}
+}
+
+func ReadForStmt(stmt *ast.ForStmt) Statement {
+	var init, post Statement
+	var cond Expr
+	if stmt.Init != nil {
+		init = ReadStmt(stmt.Init)
+	}
+	if stmt.Post != nil {
+		post = ReadStmt(stmt.Post)
+	}
+	if stmt.Cond != nil {
+		cond = ReadExpr(stmt.Cond)
+	}
+	return &ForStmt{
+		Init: init,
+		Cond: cond,
+		Post: post,
+		Body: ReadBlockStmt(stmt.Body),
 	}
 }
 
@@ -1827,10 +2188,57 @@ func ReadExpr(expr ast.Expr) Expr {
 			Expr: ReadExpr(expr.X),
 			Sel:  NewIdentifier(expr.Sel.Name),
 		}
+	case *ast.TypeAssertExpr:
+		return &TypeAssertionExpr{
+			Expr: ReadExpr(expr.X),
+			Type: ReadType(expr.Type),
+		}
+	case *ast.SliceExpr:
+		var low, high, max Expr
+		if expr.Low != nil {
+			low = ReadExpr(expr.Low)
+		}
+		if expr.High != nil {
+			high = ReadExpr(expr.High)
+		}
+		if expr.Max != nil {
+			max = ReadExpr(expr.Max)
+		}
+		return &SliceExpr{
+			Expr: ReadExpr(expr.X),
+			Low:  low,
+			High: high,
+			Max:  max,
+		}
+	case *ast.FuncLit:
+		return ReadFuncLit(expr)
 	default:
+		ty, err := Try(func() Expr {
+			return &TypeExpr{Type: ReadType(expr)}
+		})
+		if err == nil {
+			return ty
+		}
+		spew.Dump(err)
 		spew.Dump(expr)
 		panic("unreachable")
 	}
+}
+
+func Try[T any](f func() T) (out T, err error) {
+	done := make(chan struct{})
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("%v", r)
+				close(done)
+			}
+		}()
+		out = f()
+		close(done)
+	}()
+	<-done
+	return
 }
 
 func ReadExprList(exprs []ast.Expr) []Expr {
@@ -1856,11 +2264,41 @@ func ReadUnaryExpr(expr *ast.UnaryExpr) Expr {
 	}
 }
 
+func ReadFuncLit(expr *ast.FuncLit) Expr {
+	return &FuncLitExpr{
+		Signature: ReadSignature(expr.Type),
+		Body:      ReadBlockStmt(expr.Body),
+	}
+}
+
 func ReadBinaryOp(op token.Token) BinaryOp {
 	switch op {
 	case token.ADD:
 		return BinaryOpAdd
+	case token.EQL:
+		return BinaryOpEq
+	case token.NEQ:
+		return BinaryOpNeq
+	case token.LSS:
+		return BinaryOpLt
+	case token.LEQ:
+		return BinaryOpLte
+	case token.GTR:
+		return BinaryOpGt
+	case token.GEQ:
+		return BinaryOpGte
+	case token.AND:
+		return BinaryOpAnd
+	case token.OR:
+		return BinaryOpOr
+	case token.LAND:
+		return BinaryOpLAnd
+	case token.LOR:
+		return BinaryOpLOr
+	case token.ARROW:
+		return BinaryOpArrow
 	default:
+		spew.Dump(op)
 		panic("unreachable")
 	}
 }
@@ -1875,6 +2313,8 @@ func ReadUnaryOp(op token.Token) UnaryOp {
 		return UnaryOpAddr
 	case token.MUL:
 		return UnaryOpDeref
+	case token.ARROW:
+		return UnaryOpArrow
 	default:
 		spew.Dump(op)
 		panic("unreachable")
@@ -1974,6 +2414,37 @@ func ReadType(expr ast.Expr) Type {
 		}
 	case *ast.StarExpr:
 		return &PointerType{BaseType: ReadType(expr.X)}
+	case *ast.InterfaceType:
+		methods := []MethodElem{}
+		for _, field := range expr.Methods.List {
+			switch ty := ReadType(field.Type).(type) {
+			case *FunctionType:
+				methods = append(methods, MethodElem{
+					Name: NewIdentifier(field.Names[0].Name),
+					Type: ty,
+				})
+			default:
+				panic("TODO")
+			}
+		}
+		return &InterfaceType{Methods: methods}
+	case *ast.FuncType:
+		return &FunctionType{
+			Signature: ReadSignature(expr),
+		}
+	case *ast.MapType:
+		return &MapType{
+			KeyType:  ReadType(expr.Key),
+			ElemType: ReadType(expr.Value),
+		}
+	case *ast.ChanType:
+		return &ChannelType{
+			Dir:      ReadChanDir(expr.Dir),
+			ElemType: ReadType(expr.Value),
+		}
+	case *ast.SelectorExpr:
+		// TODO packages :')
+		return &TypeName{Name: NewIdentifier(expr.Sel.Name)}
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
@@ -1986,6 +2457,19 @@ func ReadTypeList(exprs []ast.Expr) []Type {
 		result = append(result, ReadType(expr))
 	}
 	return result
+}
+
+func ReadChanDir(dir ast.ChanDir) ChannelDir {
+	switch dir {
+	case ast.SEND:
+		return ChannelDirSend
+	case ast.RECV:
+		return ChannelDirRecv
+	case ast.SEND | ast.RECV:
+		return ChannelDirBoth
+	default:
+		panic("unreachable")
+	}
 }
 
 // ========================
@@ -2033,7 +2517,7 @@ type TwoHello[T string] struct{
 	_ = src
 
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", src, parser.ParseComments)
+	f, err := parser.ParseFile(fset, "main.go", nil, parser.ParseComments)
 	if err != nil {
 		panic(err)
 	}
