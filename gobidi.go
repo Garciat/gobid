@@ -57,14 +57,18 @@ type TypeName struct {
 	Name Identifier
 }
 
+func (t *TypeName) String() string {
+	return fmt.Sprintf("%sₙ", t.Name.Name)
+}
+
 type NamedType struct {
 	TypeBase
 	Name Identifier
 	Type Type
 }
 
-func (t *TypeName) String() string {
-	return fmt.Sprintf("%sₙ", t.Name.Name)
+func (t *NamedType) String() string {
+	return fmt.Sprintf("type %s %v", t.Name.Name, t.Type)
 }
 
 type TypeParam struct {
