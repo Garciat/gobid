@@ -153,7 +153,11 @@ type Signature struct {
 }
 
 func (s Signature) String() string {
-	return fmt.Sprintf("[%v](%v) (%v)", s.TypeParams, s.Params, s.Results)
+	if len(s.TypeParams.Params) == 0 {
+		return fmt.Sprintf("(%v) (%v)", s.Params, s.Results)
+	} else {
+		return fmt.Sprintf("[%v](%v) (%v)", s.TypeParams, s.Params, s.Results)
+	}
 }
 
 type ParameterList struct {
@@ -230,8 +234,9 @@ func EmptyInterface() Type {
 }
 
 type MethodElem struct {
-	Name Identifier
-	Type *FunctionType
+	Name            Identifier
+	PointerReceiver bool // matters only for NamedType
+	Type            *FunctionType
 }
 
 func (m MethodElem) String() string {
@@ -1030,9 +1035,17 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 
 	scope := c.BeginFunctionScope(&decl.Signature)
 
-	var receiverTy *NamedType
+	var receiverTy Type = decl.Receiver.Type
+	var pointerReceiver bool
 
-	switch ty := decl.Receiver.Type.(type) {
+	if pointerTy, ok := receiverTy.(*PointerType); ok {
+		pointerReceiver = true
+		receiverTy = pointerTy.BaseType
+	}
+
+	var methodHolder *NamedType
+
+	switch ty := receiverTy.(type) {
 	case *TypeName:
 		under, ok := c.VarCtx.Lookup(ty.Name)
 		if !ok {
@@ -1042,7 +1055,7 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 		if !ok {
 			panic("method on non-named type")
 		}
-		receiverTy = named
+		methodHolder = named
 	case *TypeApplication:
 		under, ok := c.VarCtx.Lookup(ty.Name)
 		if !ok {
@@ -1062,7 +1075,7 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 		for _, tyParam := range gen.TypeParams.Params {
 			scope.VarCtx.Def(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
 		}
-		receiverTy = named
+		methodHolder = named
 	default:
 		panic("method on non-named type")
 	}
@@ -1086,9 +1099,10 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 	subst := scope.Verify()
 	scope.CheckSubst(decl.Signature.TypeParams, subst)
 
-	receiverTy.Methods = append(receiverTy.Methods, MethodElem{
-		Name: decl.Name,
-		Type: &FunctionType{Signature: decl.Signature},
+	methodHolder.Methods = append(methodHolder.Methods, MethodElem{
+		Name:            decl.Name,
+		PointerReceiver: pointerReceiver,
+		Type:            &FunctionType{Signature: decl.Signature},
 	})
 }
 
@@ -1912,13 +1926,6 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 		}
 	}
 
-	// special cases???
-	switch sub := c.Resolve(sub).(type) {
-	case *PointerType:
-		c.UnifyEq(sub, super, subst)
-		return
-	}
-
 	switch super := super.(type) {
 	case *InterfaceType:
 		super = c.SimplifyInterface(super)
@@ -1930,18 +1937,21 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 			panic("cannot satisfy empty set")
 		}
 		if len(supertypeset.Methods) > 0 {
-			subMethods := c.MethodSet(sub)
+			subMethods, pointerReceiver := c.MethodSet(sub)
 		super:
 			for _, superMethod := range supertypeset.Methods {
 				for _, subMethod := range subMethods {
 					if subMethod.Name == superMethod.Name {
+						if subMethod.PointerReceiver && !pointerReceiver {
+							panic(fmt.Sprintf("cannot use pointer-receiver method %v with non pointer", subMethod))
+						}
 						if c.Identical(subMethod.Type, superMethod.Type) {
 							continue super
 						}
 						panic("incompatible method signature")
 					}
 				}
-				panic("type doesn't have method")
+				panic(fmt.Sprintf("type %v doesn't have method %v", sub, superMethod))
 			}
 		}
 		if tyPar, ok := c.Resolve(sub).(*TypeParam); ok {
@@ -2104,10 +2114,16 @@ func (c *Checker) ContainsTypeParam(ty Type, tyParam *TypeParam) bool {
 	}
 }
 
-func (c *Checker) MethodSet(ty Type) []MethodElem {
-	switch ty := ty.(type) {
+func (c *Checker) MethodSet(ty Type) ([]MethodElem, bool) {
+	var pointerReceiver bool
+	ty = c.Resolve(ty)
+	if pointerTy, ok := ty.(*PointerType); ok {
+		ty = pointerTy.BaseType
+		pointerReceiver = true
+	}
+	switch ty := c.Resolve(ty).(type) {
 	case *NamedType:
-		return ty.Methods
+		return ty.Methods, pointerReceiver
 	case *TypeApplication:
 		named, subst := c.InstantiateType(ty)
 		methods := []MethodElem{}
@@ -2117,8 +2133,9 @@ func (c *Checker) MethodSet(ty Type) []MethodElem {
 				Type: c.ApplySubst(m.Type, subst).(*FunctionType),
 			})
 		}
-		return methods
+		return methods, pointerReceiver
 	default:
+		spew.Dump(ty)
 		panic(fmt.Sprintf("type %v cannot have methods", ty))
 	}
 }
@@ -2150,6 +2167,8 @@ func (c *Checker) IsConcreteType(ty Type) bool {
 		return true
 	case *TypeApplication:
 		return c.IsConcreteType(c.TypeApplication(ty))
+	case *NamedType:
+		return c.IsConcreteType(ty.Type)
 	default:
 		spew.Dump(ty)
 		panic("TODO")
@@ -2477,12 +2496,19 @@ func ReadFuncDecl(decl *ast.FuncDecl) []Decl {
 }
 
 func ReadReceiver(field *ast.Field) FieldDecl {
-	if len(field.Names) != 1 {
-		panic("expected one name")
-	}
-	return FieldDecl{
-		Name: NewIdentifier(field.Names[0].Name),
-		Type: ReadType(field.Type),
+	switch len(field.Names) {
+	case 0:
+		return FieldDecl{
+			Name: IgnoreIdent,
+			Type: ReadType(field.Type),
+		}
+	case 1:
+		return FieldDecl{
+			Name: NewIdentifier(field.Names[0].Name),
+			Type: ReadType(field.Type),
+		}
+	default:
+		panic("too many names for receiver declaration")
 	}
 }
 
@@ -3288,6 +3314,17 @@ func (_ TyEqImpl[T]) Apply(x T) T {
 
 func Refl[T any]() TyEq[T, T] {
 	return TyEqImpl[T]{}
+}
+
+type Greeter interface{
+	Greet()
+}
+
+type Person struct{}
+func (*Person) Greet() {}
+
+func MakeGreeter() Greeter {
+	return &Person{}
 }
 `
 
