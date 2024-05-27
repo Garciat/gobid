@@ -2024,6 +2024,9 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 				return
 			}
 		}
+		if super.Bound != nil {
+			c.UnifySubtype(sub, super.Bound, subst)
+		}
 	default:
 		spew.Dump(sub, super)
 		panic("unreachable")
@@ -2581,7 +2584,7 @@ func ReadTypeConstraint(expr ast.Expr) *InterfaceType {
 		}
 	case *ast.InterfaceType:
 		return ReadInterfaceType(expr)
-	case *ast.StructType:
+	default:
 		return &InterfaceType{
 			Methods: nil,
 			Constraints: []TypeConstraint{
@@ -2594,9 +2597,6 @@ func ReadTypeConstraint(expr ast.Expr) *InterfaceType {
 				},
 			},
 		}
-	default:
-		spew.Dump(expr)
-		panic("unreachable")
 	}
 }
 
@@ -3345,7 +3345,12 @@ type IntMaker struct{}
 func (IntMaker) Make() int { return 0 }
 
 func UseIntMaker() Maker[int] {
-	return IntMaker{}
+	return &IntMaker{}
+}
+
+// TODO should not pass
+func PointerThing[T any, U *T|int](t T) U {
+	return &t
 }
 `
 
