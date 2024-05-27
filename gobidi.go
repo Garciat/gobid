@@ -782,6 +782,16 @@ func (r RelationSubtype) String() string {
 	return fmt.Sprintf("%v <: %v", r.Sub, r.Super)
 }
 
+type RelationSatisfies struct {
+	RelationBase
+	Type       Type
+	Constraint *InterfaceType
+}
+
+func (r RelationSatisfies) String() string {
+	return fmt.Sprintf("%v sat %v", r.Type, r.Constraint)
+}
+
 type TypeContext struct {
 	Parent    *TypeContext
 	Relations []Relation
@@ -1444,7 +1454,7 @@ func (c *Checker) SynthCallExpr(expr *CallExpr) Type {
 	fmt.Printf("subst FunctionType: %v\n", funcTy)
 	for i, tyArg := range typeArgs {
 		tyParam := funcTy.Signature.TypeParams.Params[i]
-		c.TyCtx.AddRelation(RelationSubtype{Sub: tyArg, Super: tyParam.Constraint})
+		c.TyCtx.AddRelation(RelationSatisfies{Type: tyArg, Constraint: tyParam.Constraint})
 		c.TyCtx.AddEq(tyArg, subst[tyParam.Name])
 	}
 	for i, arg := range expr.Args {
@@ -1567,7 +1577,7 @@ func (c *Checker) InstantiateTypeFunc(app *TypeApplication, argF func(tyParam Ty
 	for i, tyArg := range app.Args {
 		tyParam := gen.TypeParams.Params[i]
 		subst[tyParam.Name] = tyArg
-		c.TyCtx.AddRelation(RelationSubtype{Sub: tyArg, Super: tyParam.Constraint}) // TODO needed?
+		c.TyCtx.AddRelation(RelationSatisfies{Type: tyArg, Constraint: tyParam.Constraint})
 		argF(tyParam, tyArg)
 	}
 	return named, subst
@@ -1784,6 +1794,11 @@ func (c *Checker) Verify() Subst {
 					Sub:   c.ApplySubst(rel.Sub, learned),
 					Super: c.ApplySubst(rel.Super, learned),
 				})
+			case RelationSatisfies:
+				next = append(next, RelationSatisfies{
+					Type:       c.ApplySubst(rel.Type, learned),
+					Constraint: c.ApplySubst(rel.Constraint, learned).(*InterfaceType),
+				})
 			default:
 				panic("unreachable")
 			}
@@ -1810,37 +1825,12 @@ func (c *Checker) Unify(rels []Relation, subst Subst) {
 			c.UnifyEq(rel.Left, rel.Right, subst)
 		case RelationSubtype:
 			c.UnifySubtype(rel.Sub, rel.Super, subst)
+		case RelationSatisfies:
+			c.UnifySatisfies(rel.Type, rel.Constraint, subst)
 		default:
 			panic("unreachable")
 		}
 	}
-
-	// TODO is there a principled way to do this?
-
-	// params := map[Identifier]*TypeParam{}
-	// paramSupers := map[Identifier][]*InterfaceType{}
-	// for _, rel := range rels {
-	// 	switch rel := rel.(type) {
-	// 	case RelationSubtype:
-	// 		tyParam, ok := c.Resolve(rel.Sub).(*TypeParam)
-	// 		if !ok {
-	// 			continue
-	// 		}
-	// 		superInter, ok := c.Resolve(rel.Super).(*InterfaceType)
-	// 		if !ok {
-	// 			continue
-	// 		}
-	// 		params[tyParam.Name] = tyParam
-	// 		paramSupers[tyParam.Name] = append(paramSupers[tyParam.Name], superInter)
-	// 	}
-	// }
-
-	// for tyParam, supers := range paramSupers {
-	// 	if len(supers) > 1 {
-	// 		inter := IntersectInterfaces(supers...)
-	// 		c.UnifySubtype(params[tyParam], inter, subst)
-	// 	}
-	// }
 }
 
 func IntersectInterfaces(elems ...*InterfaceType) *InterfaceType {
@@ -1938,76 +1928,12 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 
 	switch super := super.(type) {
 	case *InterfaceType:
-		super = c.SimplifyInterface(super)
-		if super.IsEmpty() {
-			return
+		var typeset *TypeSet
+		c.BasicSatisfy(sub, super, subst, &typeset)
+		if typeset != nil {
+			// TODO hacky???
+			panic(fmt.Sprintf("cannot assign %v to %v", sub, super))
 		}
-		supertypeset := c.InterfaceTypeSet(super)
-		if len(supertypeset.Types) == 0 {
-			panic("cannot satisfy empty set")
-		}
-		if len(supertypeset.Methods) > 0 {
-			subMethods, pointerReceiver := c.MethodSet(sub)
-		super:
-			for _, superMethod := range supertypeset.Methods {
-				for _, subMethod := range subMethods {
-					if subMethod.Name == superMethod.Name {
-						if subMethod.PointerReceiver && !pointerReceiver {
-							panic(fmt.Sprintf("cannot use pointer-receiver method %v with non pointer", subMethod))
-						}
-						if c.Identical(subMethod.Type, superMethod.Type) {
-							continue super
-						}
-						panic("incompatible method signature")
-					}
-				}
-				panic(fmt.Sprintf("type %v doesn't have method %v", sub, superMethod))
-			}
-		}
-		if tyPar, ok := c.Resolve(sub).(*TypeParam); ok {
-			var bound Type = tyPar.Bound
-			if tyPar.Bound == nil {
-				bound = EmptyInterface()
-			}
-			c.UnifySubtype(bound, super, subst)
-			return
-		}
-		if sub, ok := c.Resolve(sub).(*InterfaceType); ok {
-			if sub.IsEmpty() {
-				return
-			}
-			subtypeset := c.InterfaceTypeSet(sub)
-			if len(subtypeset.Methods) != 0 {
-				panic("TODO")
-			}
-			for _, term := range subtypeset.Types {
-				found := false
-				for _, superTerm := range supertypeset.Types {
-					if c.Identical(term, superTerm) {
-						found = true
-					}
-				}
-				if !found {
-					panic(fmt.Sprintf("interface %v does not satisfy %v", sub, super))
-				}
-			}
-			return
-		}
-		if len(supertypeset.Types) == 1 {
-			c.UnifySubtype(sub, supertypeset.Types[0], subst)
-			return
-		} else {
-			for _, term := range supertypeset.Types {
-				if !c.IsConcreteType(term) {
-					panic("cannot make union of non-concrete types")
-				}
-				if c.Identical(sub, term) {
-					c.UnifyEq(sub, term, subst) // necessary?
-					return
-				}
-			}
-		}
-		panic(fmt.Sprintf("type %v does not satisfy %v", sub, super))
 	case *TypeName:
 		superTy, ok := c.VarCtx.Lookup(super.Name)
 		if !ok {
@@ -2031,6 +1957,88 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 		spew.Dump(sub, super)
 		panic("unreachable")
 	}
+}
+
+func (c *Checker) UnifySatisfies(sub Type, inter *InterfaceType, subst Subst) {
+	var typeset *TypeSet
+	c.BasicSatisfy(sub, inter, subst, &typeset)
+
+	if typeset != nil {
+		for _, term := range typeset.Types {
+			if !c.IsConcreteType(term) {
+				panic("cannot make union of non-concrete types")
+			}
+			if c.Identical(sub, term) {
+				c.UnifyEq(sub, term, subst) // necessary?
+				return
+			}
+		}
+		panic(fmt.Sprintf("type %v does not satisfy %v", sub, inter))
+	}
+}
+
+// TODO this seems unprincipled
+func (c *Checker) BasicSatisfy(sub Type, inter *InterfaceType, subst Subst, out **TypeSet) {
+	inter = c.SimplifyInterface(inter)
+	if inter.IsEmpty() {
+		return
+	}
+	supertypeset := c.InterfaceTypeSet(inter)
+	if len(supertypeset.Types) == 0 {
+		panic("cannot satisfy empty set")
+	}
+	if len(supertypeset.Methods) > 0 {
+		subMethods, pointerReceiver := c.MethodSet(sub)
+	super:
+		for _, superMethod := range supertypeset.Methods {
+			for _, subMethod := range subMethods {
+				if subMethod.Name == superMethod.Name {
+					if subMethod.PointerReceiver && !pointerReceiver {
+						panic(fmt.Sprintf("cannot use pointer-receiver method %v with non pointer", subMethod))
+					}
+					if c.Identical(subMethod.Type, superMethod.Type) {
+						continue super
+					}
+					panic("incompatible method signature")
+				}
+			}
+			panic(fmt.Sprintf("type %v doesn't have method %v", sub, superMethod))
+		}
+	}
+	if tyPar, ok := c.Resolve(sub).(*TypeParam); ok {
+		var bound Type = tyPar.Bound
+		if tyPar.Bound == nil {
+			bound = EmptyInterface()
+		}
+		c.UnifySubtype(bound, inter, subst)
+		return
+	}
+	if sub, ok := c.Resolve(sub).(*InterfaceType); ok {
+		if sub.IsEmpty() {
+			return
+		}
+		subtypeset := c.InterfaceTypeSet(sub)
+		if len(subtypeset.Methods) != 0 {
+			panic("TODO")
+		}
+		for _, term := range subtypeset.Types {
+			found := false
+			for _, superTerm := range supertypeset.Types {
+				if c.Identical(term, superTerm) {
+					found = true
+				}
+			}
+			if !found {
+				panic(fmt.Sprintf("interface %v does not satisfy %v", sub, inter))
+			}
+		}
+		return
+	}
+	if len(supertypeset.Types) == 1 {
+		c.UnifySubtype(sub, supertypeset.Types[0], subst)
+		return
+	}
+	*out = &supertypeset
 }
 
 func (c *Checker) Resolve(ty Type) Type {
@@ -3348,9 +3356,9 @@ func UseIntMaker() Maker[int] {
 	return &IntMaker{}
 }
 
-// TODO should not pass
 func PointerThing[T any, U *T|int](t T) U {
-	return &t
+	var empty U
+	return empty
 }
 `
 
@@ -3366,4 +3374,9 @@ func PointerThing[T any, U *T|int](t T) U {
 
 	c := NewChecker()
 	c.CheckFile(file)
+}
+
+func PointerThing[T any, U *T | int](t T) U {
+	var empty U
+	return empty
 }
