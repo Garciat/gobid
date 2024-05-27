@@ -3348,11 +3348,7 @@ func MakeGreeter() Greeter {
 		panic(err)
 	}
 
-	// spew.Dump(f)
-
 	file := ReadAST(f)
-
-	// spew.Dump(file)
 
 	c := NewChecker()
 	c.CheckFile(file)
