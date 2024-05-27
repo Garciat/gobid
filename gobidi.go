@@ -1008,7 +1008,7 @@ func (c *Checker) CheckTypeDeclType(ty Type) {
 		c.CheckTypeDeclType(ty.Type)
 	default:
 		spew.Dump(ty)
-		panic("TODO")
+		panic("unreachable")
 	}
 }
 
@@ -1256,7 +1256,8 @@ func (c *Checker) CheckIndexExpr(expr *IndexExpr, ty Type) {
 		c.CheckExpr(expr.Indices[0], c.Builtin("int"))
 		c.TyCtx.AddEq(ty, exprTy.ElemType)
 	default:
-		panic("TODO")
+		spew.Dump(expr)
+		panic("unreachable")
 	}
 }
 
@@ -1343,7 +1344,7 @@ func (c *Checker) SynthUnaryExpr(expr *UnaryExpr) Type {
 		}
 	default:
 		spew.Dump(expr)
-		panic("TODO")
+		panic("unreachable")
 	}
 }
 
@@ -1385,7 +1386,7 @@ func (c *Checker) SynthIndexExpr(expr *IndexExpr) Type {
 		panic("unexpected function type (should be handled by CallExpr)")
 	default:
 		spew.Dump(exprTy)
-		panic("TODO")
+		panic("unreachable")
 	}
 }
 
@@ -1662,7 +1663,7 @@ func (c *Checker) ApplySubst(ty Type, subst Subst) Type {
 		return &TupleType{Elems: elems}
 	default:
 		spew.Dump(ty)
-		panic("TODO")
+		panic("unreachable")
 	}
 }
 
@@ -1912,7 +1913,7 @@ func (c *Checker) UnifyEq(left, right Type, subst Subst) {
 		c.UnifyEq(right, left, subst) // TODO weird?
 	default:
 		spew.Dump(left, right)
-		panic("TODO")
+		panic("unreachable")
 	}
 }
 
@@ -2025,7 +2026,7 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 		}
 	default:
 		spew.Dump(sub, super)
-		panic("TODO")
+		panic("unreachable")
 	}
 }
 
@@ -2180,7 +2181,7 @@ func (c *Checker) IsConcreteType(ty Type) bool {
 		return c.IsConcreteType(ty.Type)
 	default:
 		spew.Dump(ty)
-		panic("TODO")
+		panic("unreachable")
 	}
 }
 
@@ -2274,7 +2275,7 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 		return false
 	default:
 		spew.Dump(ty1, ty2)
-		panic("TODO")
+		panic("unreachable")
 	}
 }
 
@@ -3133,11 +3134,9 @@ func ReadType(expr ast.Expr) Type {
 				ElemType: ReadType(expr.Elt),
 				Len:      ReadExpr(expr.Len),
 			}
-		}
-		if expr.Len == nil {
+		} else {
 			return &SliceType{ElemType: ReadType(expr.Elt)}
 		}
-		panic("TODO")
 	case *ast.StructType:
 		fields := []FieldDecl{}
 		for _, field := range expr.Fields.List {
@@ -3217,8 +3216,7 @@ func ReadInterfaceType(expr *ast.InterfaceType) *InterfaceType {
 				Type: ty,
 			})
 		default:
-			panic("TODO")
-
+			panic("unreachable")
 		}
 	}
 	return &InterfaceType{Methods: methods}
@@ -3337,6 +3335,17 @@ func (*Person) Greet() {}
 
 func MakeGreeter() Greeter {
 	return &Person{}
+}
+
+type Maker[T any] interface{
+	Make() T
+}
+
+type IntMaker struct{}
+func (IntMaker) Make() int { return 0 }
+
+func UseIntMaker() Maker[int] {
+	return IntMaker{}
 }
 `
 
