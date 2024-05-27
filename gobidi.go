@@ -63,8 +63,9 @@ func (t *TypeName) String() string {
 
 type NamedType struct {
 	TypeBase
-	Name Identifier
-	Type Type
+	Name    Identifier
+	Type    Type
+	Methods []MethodElem
 }
 
 func (t *NamedType) String() string {
@@ -815,6 +816,9 @@ type VarContext struct {
 }
 
 func (c *VarContext) Def(name Identifier, ty Type) {
+	if name == IgnoreIdent {
+		return
+	}
 	c.Types[name] = ty
 }
 
@@ -1026,8 +1030,21 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 
 	scope := c.BeginFunctionScope(&decl.Signature)
 
-	if app, ok := decl.Receiver.Type.(*TypeApplication); ok {
-		under, ok := c.VarCtx.Lookup(app.Name)
+	var receiverTy *NamedType
+
+	switch ty := decl.Receiver.Type.(type) {
+	case *TypeName:
+		under, ok := c.VarCtx.Lookup(ty.Name)
+		if !ok {
+			panic("undefined type")
+		}
+		named, ok := c.Resolve(under).(*NamedType)
+		if !ok {
+			panic("method on non-named type")
+		}
+		receiverTy = named
+	case *TypeApplication:
+		under, ok := c.VarCtx.Lookup(ty.Name)
 		if !ok {
 			panic("undefined type")
 		}
@@ -1039,12 +1056,15 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 		if !ok {
 			panic("not a generic type")
 		}
-		if len(gen.TypeParams.Params) != len(app.Args) {
+		if len(gen.TypeParams.Params) != len(ty.Args) {
 			panic("wrong number of type arguments")
 		}
 		for _, tyParam := range gen.TypeParams.Params {
 			scope.VarCtx.Def(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
 		}
+		receiverTy = named
+	default:
+		panic("method on non-named type")
 	}
 
 	for _, tyParam := range decl.Signature.TypeParams.Params {
@@ -1066,7 +1086,10 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 	subst := scope.Verify()
 	scope.CheckSubst(decl.Signature.TypeParams, subst)
 
-	c.VarCtx.Def(decl.Name, &FunctionType{Signature: decl.Signature})
+	receiverTy.Methods = append(receiverTy.Methods, MethodElem{
+		Name: decl.Name,
+		Type: &FunctionType{Signature: decl.Signature},
+	})
 }
 
 func (c *Checker) CheckFunctionDecl(decl *FunctionDecl) {
@@ -1491,6 +1514,16 @@ func (c *Checker) TypeApplication(app *TypeApplication) Type {
 }
 
 func (c *Checker) TypeApplicationFunc(app *TypeApplication, argF func(tyParam TypeParamDecl, tyArg Type)) Type {
+	named, subst := c.InstantiateTypeFunc(app, argF)
+	gen := c.Resolve(named.Type).(*GenericType)
+	return c.ApplySubst(gen.Type, subst)
+}
+
+func (c *Checker) InstantiateType(app *TypeApplication) (*NamedType, Subst) {
+	return c.InstantiateTypeFunc(app, func(TypeParamDecl, Type) {})
+}
+
+func (c *Checker) InstantiateTypeFunc(app *TypeApplication, argF func(tyParam TypeParamDecl, tyArg Type)) (*NamedType, Subst) {
 	under, ok := c.VarCtx.Lookup(app.Name)
 	if !ok {
 		panic("undefined type")
@@ -1513,7 +1546,7 @@ func (c *Checker) TypeApplicationFunc(app *TypeApplication, argF func(tyParam Ty
 		c.TyCtx.AddRelation(RelationSubtype{Sub: tyArg, Super: tyParam.Constraint}) // TODO needed?
 		argF(tyParam, tyArg)
 	}
-	return c.ApplySubst(gen.Type, subst)
+	return named, subst
 }
 
 // ========================
@@ -1888,49 +1921,30 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 
 	switch super := super.(type) {
 	case *InterfaceType:
-		// if sub, ok := c.Resolve(sub).(*TypeParam); ok {
-		// 	for _, rel := range c.TyCtx.Relations {
-
-		// 		switch rel := rel.(type) {
-		// 		case RelationEq:
-		// 			if c.Identical(sub, rel.Left) {
-		// 				c.UnifySubtype(rel.Right, super, subst)
-		// 			}
-		// 			if c.Identical(sub, rel.Right) {
-		// 				c.UnifySubtype(rel.Left, super, subst)
-		// 			}
-		// 		case RelationSubtype:
-		// 			if c.Identical(sub, rel.Super) {
-		// 				c.UnifySubtype(rel.Sub, super, subst)
-		// 			}
-		// 			if c.Identical(sub, rel.Sub) {
-		// 				c.UnifySubtype(rel.Super, super, subst)
-		// 			}
-		// 		}
-		// 	}
-		// 	return
-		// }
 		super = c.SimplifyInterface(super)
 		if super.IsEmpty() {
 			return
 		}
-		if single, ok := IsSingleTypeUnion(super); ok {
-			c.UnifySubtype(sub, single, subst)
-			return
-		}
-		if len(super.Methods) > 0 {
-			spew.Dump(sub, super)
-			panic("TODO")
-		}
 		supertypeset := c.InterfaceTypeSet(super)
-		if supertypeset.Universe {
-			panic("TODO") // check methods
-		}
 		if len(supertypeset.Types) == 0 {
 			panic("cannot satisfy empty set")
 		}
+		if len(supertypeset.Methods) > 0 {
+			subMethods := c.MethodSet(sub)
+		super:
+			for _, superMethod := range supertypeset.Methods {
+				for _, subMethod := range subMethods {
+					if subMethod.Name == superMethod.Name {
+						if c.Identical(subMethod.Type, superMethod.Type) {
+							continue super
+						}
+						panic("incompatible method signature")
+					}
+				}
+				panic("type doesn't have method")
+			}
+		}
 		if tyPar, ok := c.Resolve(sub).(*TypeParam); ok {
-
 			var bound Type = tyPar.Bound
 			if tyPar.Bound == nil {
 				bound = EmptyInterface()
@@ -1942,9 +1956,8 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 			if sub.IsEmpty() {
 				return
 			}
-			// TODO check methods
 			subtypeset := c.InterfaceTypeSet(sub)
-			if subtypeset.Universe {
+			if len(subtypeset.Methods) != 0 {
 				panic("TODO")
 			}
 			for _, term := range subtypeset.Types {
@@ -1960,13 +1973,18 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 			}
 			return
 		}
-		for _, term := range supertypeset.Types {
-			if !c.IsConcreteType(term) {
-				panic("cannot make union of non-concrete types")
-			}
-			if c.Identical(sub, term) {
-				c.UnifyEq(sub, term, subst) // necessary?
-				return
+		if len(supertypeset.Types) == 1 {
+			c.UnifySubtype(sub, supertypeset.Types[0], subst)
+			return
+		} else {
+			for _, term := range supertypeset.Types {
+				if !c.IsConcreteType(term) {
+					panic("cannot make union of non-concrete types")
+				}
+				if c.Identical(sub, term) {
+					c.UnifyEq(sub, term, subst) // necessary?
+					return
+				}
 			}
 		}
 		panic(fmt.Sprintf("type %v does not satisfy %v", sub, super))
@@ -2086,6 +2104,25 @@ func (c *Checker) ContainsTypeParam(ty Type, tyParam *TypeParam) bool {
 	}
 }
 
+func (c *Checker) MethodSet(ty Type) []MethodElem {
+	switch ty := ty.(type) {
+	case *NamedType:
+		return ty.Methods
+	case *TypeApplication:
+		named, subst := c.InstantiateType(ty)
+		methods := []MethodElem{}
+		for _, m := range named.Methods {
+			methods = append(methods, MethodElem{
+				Name: m.Name,
+				Type: c.ApplySubst(m.Type, subst).(*FunctionType),
+			})
+		}
+		return methods
+	default:
+		panic(fmt.Sprintf("type %v cannot have methods", ty))
+	}
+}
+
 func (c *Checker) IsTypeParam(ty Type) bool {
 	switch c.Resolve(ty).(type) {
 	case *TypeParam:
@@ -2202,15 +2239,51 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 			return c.Identical(ty1.ElemType, ty2.ElemType)
 		}
 		return false
+	case *FunctionType:
+		if ty2, ok := ty2.(*FunctionType); ok {
+			return c.IdenticalFunctionTypes(ty1, ty2)
+		}
+		return false
 	default:
 		spew.Dump(ty1, ty2)
 		panic("TODO")
 	}
 }
 
+func (c *Checker) IdenticalFunctionTypes(ty1, ty2 *FunctionType) bool {
+	if len(ty1.Signature.TypeParams.Params) != 0 {
+		panic("cannot compare type with type parameters")
+	}
+	if len(ty2.Signature.TypeParams.Params) != 0 {
+		panic("cannot compare type with type parameters")
+	}
+	if len(ty1.Signature.Params.Params) != len(ty2.Signature.Params.Params) {
+		return false
+	}
+	if len(ty1.Signature.Results.Params) != len(ty2.Signature.Results.Params) {
+		return false
+	}
+	for i := range ty1.Signature.Params.Params {
+		// TODO variadic
+		par1 := ty1.Signature.Params.Params[i]
+		par2 := ty2.Signature.Params.Params[i]
+		if !c.Identical(par1.Type, par2.Type) {
+			return false
+		}
+	}
+	for i := range ty1.Signature.Results.Params {
+		par1 := ty1.Signature.Results.Params[i]
+		par2 := ty2.Signature.Results.Params[i]
+		if !c.Identical(par1.Type, par2.Type) {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *Checker) InterfaceTypeSet(ty *InterfaceType) TypeSet {
 	if len(ty.Constraints) == 0 {
-		return TypeSet{Methods: ty.Methods}
+		return TypeSet{Methods: ty.Methods, Types: []Type{EmptyInterface()}}
 	}
 
 	methods := []MethodElem{}
@@ -2504,21 +2577,29 @@ func ReadParameterList(list *ast.FieldList) ParameterList {
 		return ParameterList{}
 	}
 	var params []ParameterDecl
+
+	addParam := func(name Identifier, fieldType ast.Expr) {
+		var ty Type
+		var variadic bool
+		if ellipsis, variadic := fieldType.(*ast.Ellipsis); variadic {
+			ty = &SliceType{ElemType: ReadType(ellipsis.Elt)}
+			variadic = true
+		} else {
+			ty = ReadType(fieldType)
+		}
+		params = append(params, ParameterDecl{
+			Name:     name,
+			Type:     ty,
+			Variadic: variadic,
+		})
+	}
+
 	for _, field := range list.List {
+		if len(field.Names) == 0 {
+			addParam(IgnoreIdent, field.Type)
+		}
 		for _, name := range field.Names {
-			var ty Type
-			var variadic bool
-			if ellipsis, variadic := field.Type.(*ast.Ellipsis); variadic {
-				ty = &SliceType{ElemType: ReadType(ellipsis.Elt)}
-				variadic = true
-			} else {
-				ty = ReadType(field.Type)
-			}
-			params = append(params, ParameterDecl{
-				Name:     NewIdentifier(name.Name),
-				Type:     ty,
-				Variadic: variadic,
-			})
+			addParam(NewIdentifier(name.Name), field.Type)
 		}
 	}
 	return ParameterList{Params: params}
