@@ -1300,6 +1300,7 @@ func (c *Checker) CheckExpr(expr Expr, ty Type) {
 }
 
 func (c *Checker) CheckBinaryExpr(expr *BinaryExpr, ty Type) {
+	// TODO incomplete
 	c.CheckExpr(expr.Left, ty)
 	c.CheckExpr(expr.Right, ty)
 }
