@@ -1039,6 +1039,9 @@ func (c *Checker) CheckAliasDecl(decl *AliasDecl) {
 }
 
 func (c *Checker) CheckVarDecl(decl *VarDecl) {
+	if decl.Type != nil && decl.Expr != nil {
+		c.CheckAssignableTo(c.Synth(decl.Expr), decl.Type)
+	}
 	c.VarCtx.Def(decl.Name, decl.Type)
 }
 
@@ -1202,6 +1205,53 @@ type TypeSet struct {
 	Methods  []MethodElem
 	Types    []Type
 	Universe bool
+}
+
+func (c *Checker) Combine(lhs, rhs TypeSet) TypeSet {
+	result := TypeSet{
+		Methods:  []MethodElem{},
+		Types:    []Type{},
+		Universe: lhs.Universe && rhs.Universe,
+	}
+
+	// combine
+	copy(result.Methods, lhs.Methods)
+
+	for _, m := range rhs.Methods {
+		for _, n := range lhs.Methods {
+			if m.Name == n.Name {
+				if !c.Identical(m.Type, n.Type) {
+					panic("method clash")
+				}
+				continue
+			}
+		}
+		result.Methods = append(result.Methods, m)
+	}
+
+	if lhs.Universe && rhs.Universe {
+		if len(lhs.Types) != 0 {
+			panic("weird")
+		}
+		if len(rhs.Types) != 0 {
+			panic("weird")
+		}
+	} else if lhs.Universe && !rhs.Universe {
+		result.Types = append(result.Types, rhs.Types...)
+	} else if !lhs.Universe && rhs.Universe {
+		result.Types = append(result.Types, lhs.Types...)
+	} else {
+		// intersect
+		for _, t := range rhs.Types {
+			for _, u := range lhs.Types {
+				if c.Identical(t, u) {
+					result.Types = append(result.Types, t)
+				}
+			}
+		}
+	}
+
+	return result
 }
 
 func (c *Checker) CheckSubst(tyParams TypeParamList, subst Subst) {
@@ -1930,7 +1980,7 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 	case *InterfaceType:
 		var typeset *TypeSet
 		c.BasicSatisfy(sub, super, subst, &typeset)
-		if typeset != nil {
+		if typeset != nil && !typeset.Universe {
 			// TODO hacky???
 			panic(fmt.Sprintf("cannot assign %v to %v", sub, super))
 		}
@@ -1984,7 +2034,7 @@ func (c *Checker) BasicSatisfy(sub Type, inter *InterfaceType, subst Subst, out 
 		return
 	}
 	supertypeset := c.InterfaceTypeSet(inter)
-	if len(supertypeset.Types) == 0 {
+	if !supertypeset.Universe && len(supertypeset.Types) == 0 {
 		panic("cannot satisfy empty set")
 	}
 	if len(supertypeset.Methods) > 0 {
@@ -2322,30 +2372,58 @@ func (c *Checker) IdenticalFunctionTypes(ty1, ty2 *FunctionType) bool {
 }
 
 func (c *Checker) InterfaceTypeSet(ty *InterfaceType) TypeSet {
+	typeset := TypeSet{
+		Methods:  ty.Methods,
+		Universe: true,
+	}
+
 	if len(ty.Constraints) == 0 {
-		return TypeSet{Methods: ty.Methods, Types: []Type{EmptyInterface()}}
+		return typeset
 	}
 
-	methods := []MethodElem{}
-	copy(methods, ty.Methods)
 	for _, constraint := range ty.Constraints {
-		methods = append(methods, c.TypeSet(constraint).Methods...)
-	}
-
-	intersection := c.TypeSet(ty.Constraints[0]).Types
-	for _, constraint := range ty.Constraints[1:] {
-		next := []Type{}
-		for _, ty := range c.TypeSet(constraint).Types {
-			for _, elem := range intersection {
-				if c.Identical(ty, elem) {
-					next = append(next, ty) // SLOW!?
+		var next TypeSet
+		if len(constraint.TypeElem.Union) == 1 {
+			term := constraint.TypeElem.Union[0]
+			if term.Tilde {
+				panic("TODO")
+			}
+			switch ty := c.Under(term.Type).(type) {
+			case *InterfaceType:
+				next = c.InterfaceTypeSet(ty)
+			case *TypeParam:
+				if ty.Bound != nil {
+					next = c.InterfaceTypeSet(ty.Bound)
+				} else {
+					next = TypeSet{Types: []Type{ty}, Universe: false}
+				}
+			default:
+				next = TypeSet{Types: []Type{ty}, Universe: false}
+			}
+		} else {
+			var types []Type
+			for _, term := range constraint.TypeElem.Union {
+				if term.Tilde {
+					panic("TODO")
+				}
+				switch ty := c.Under(term.Type).(type) {
+				case *InterfaceType:
+					if len(ty.Methods) == 0 {
+						spew.Dump(ty)
+						panic("cannot make union of interface with methods")
+					}
+					spew.Dump(ty)
+					panic("what")
+				default:
+					types = append(types, ty)
 				}
 			}
+			next = TypeSet{Types: types, Universe: false}
 		}
-		intersection = next
+		typeset = c.Combine(typeset, next)
 	}
 
-	return TypeSet{Types: intersection, Methods: methods}
+	return typeset
 }
 
 func (c *Checker) TypeSet(con TypeConstraint) TypeSet {
@@ -3216,18 +3294,35 @@ func ReadChanDir(dir ast.ChanDir) ChannelDir {
 
 func ReadInterfaceType(expr *ast.InterfaceType) *InterfaceType {
 	methods := []MethodElem{}
+	constraints := []TypeConstraint{}
 	for _, field := range expr.Methods.List {
-		switch ty := ReadType(field.Type).(type) {
-		case *FunctionType:
-			methods = append(methods, MethodElem{
-				Name: NewIdentifier(field.Names[0].Name),
-				Type: ty,
+		switch len(field.Names) {
+		case 0:
+			// embedded or constraint
+			constraints = append(constraints, TypeConstraint{
+				TypeElem: TypeElem{
+					Union: []TypeTerm{
+						{
+							Type: ReadTypeConstraint(field.Type),
+						},
+					},
+				},
 			})
+		case 1:
+			switch ty := ReadType(field.Type).(type) {
+			case *FunctionType:
+				methods = append(methods, MethodElem{
+					Name: NewIdentifier(field.Names[0].Name),
+					Type: ty,
+				})
+			default:
+				panic("unreachable")
+			}
 		default:
 			panic("unreachable")
 		}
 	}
-	return &InterfaceType{Methods: methods}
+	return &InterfaceType{Methods: methods, Constraints: constraints}
 }
 
 // ========================
@@ -3360,6 +3455,18 @@ func PointerThing[T any, U *T|int](t T) U {
 	var empty U
 	return empty
 }
+
+type Receiver struct{}
+func (*Receiver) Run() {}
+
+type Runner interface{
+	Run()
+}
+
+func PointerReceiverThing[T any, U interface{*T; Runner}](t T) {
+	var u U = &t
+	u.Run()
+}
 `
 
 	_ = src
@@ -3374,9 +3481,4 @@ func PointerThing[T any, U *T|int](t T) U {
 
 	c := NewChecker()
 	c.CheckFile(file)
-}
-
-func PointerThing[T any, U *T | int](t T) U {
-	var empty U
-	return empty
 }
