@@ -975,27 +975,9 @@ func (c *Checker) CheckTypeDeclType(ty Type) {
 	case *TypeParam:
 		// nothing to do
 	case *TypeApplication:
-		under, ok := c.VarCtx.Lookup(ty.Name)
-		if !ok {
-			panic("undefined type")
-		}
-		gen, ok := under.(*GenericType)
-		if !ok {
-			panic("not a generic type")
-		}
-		if len(gen.TypeParams.Params) != len(ty.Args) {
-			panic("wrong number of type arguments")
-		}
-		subst := Subst{}
-		for _, tyParam := range gen.TypeParams.Params {
-			subst[tyParam.Name] = &TypeParam{Name: c.FreshTypeName(), Bound: tyParam.Constraint}
-		}
-		gen = c.ApplySubst(gen, subst).(*GenericType)
-		for i, tyArg := range ty.Args {
-			tyParam := gen.TypeParams.Params[i]
-			c.TyCtx.AddRelation(RelationSubtype{Sub: tyArg, Super: tyParam.Constraint}) // Resolve?
+		c.TypeApplicationFunc(ty, func(tyParam TypeParamDecl, tyArg Type) {
 			c.CheckTypeDeclType(tyArg)
-		}
+		})
 	case *StructType:
 		for _, field := range ty.Fields {
 			c.CheckTypeDeclType(field.Type)
@@ -1049,7 +1031,11 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 		if !ok {
 			panic("undefined type")
 		}
-		gen, ok := c.Resolve(under).(*GenericType)
+		named, ok := c.Resolve(under).(*NamedType)
+		if !ok {
+			panic("method on non-named type")
+		}
+		gen, ok := c.Resolve(named.Type).(*GenericType)
 		if !ok {
 			panic("not a generic type")
 		}
@@ -1340,6 +1326,7 @@ func (c *Checker) SynthSelectorExpr(expr *SelectorExpr) Type {
 				}
 			}
 		}
+		spew.Dump(ty.Bound)
 		panic(fmt.Sprintf("type %v has no field %v", ty, expr.Sel))
 	default:
 		panic(fmt.Sprintf("type %v has no field %v", ty, expr.Sel))
@@ -1458,7 +1445,7 @@ func (c *Checker) SynthLiteralExpr(expr *LiteralExpr) Type {
 }
 
 func (c *Checker) SynthCompositeLitExpr(expr *CompositeLitExpr) Type {
-	structTy, ok := c.Resolve(expr.Type).(*StructType)
+	structTy, ok := c.Under(expr.Type).(*StructType)
 	if !ok {
 		panic("composite literal with non-struct type")
 	}
@@ -1500,11 +1487,19 @@ func (c *Checker) SynthCompositeLitExpr(expr *CompositeLitExpr) Type {
 }
 
 func (c *Checker) TypeApplication(app *TypeApplication) Type {
+	return c.TypeApplicationFunc(app, func(TypeParamDecl, Type) {})
+}
+
+func (c *Checker) TypeApplicationFunc(app *TypeApplication, argF func(tyParam TypeParamDecl, tyArg Type)) Type {
 	under, ok := c.VarCtx.Lookup(app.Name)
 	if !ok {
 		panic("undefined type")
 	}
-	gen, ok := c.Resolve(under).(*GenericType)
+	named, ok := c.Resolve(under).(*NamedType)
+	if !ok {
+		panic("can only instantiate named types?")
+	}
+	gen, ok := c.Resolve(named.Type).(*GenericType)
 	if !ok {
 		panic("not a generic type")
 	}
@@ -1515,6 +1510,8 @@ func (c *Checker) TypeApplication(app *TypeApplication) Type {
 	for i, tyArg := range app.Args {
 		tyParam := gen.TypeParams.Params[i]
 		subst[tyParam.Name] = tyArg
+		c.TyCtx.AddRelation(RelationSubtype{Sub: tyArg, Super: tyParam.Constraint}) // TODO needed?
+		argF(tyParam, tyArg)
 	}
 	return c.ApplySubst(gen.Type, subst)
 }
@@ -1979,6 +1976,10 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 			panic("undefined type")
 		}
 		c.UnifySubtype(sub, superTy, subst)
+	case *TypeApplication:
+		c.UnifySubtype(sub, c.Under(super), subst) // TODO: adding more constraints?
+	case *NamedType:
+		c.UnifySubtype(sub, c.Under(super), subst)
 	case *TypeParam:
 		if subTy, ok := c.Resolve(sub).(*TypeParam); ok {
 			if subTy.Name == super.Name {
@@ -2000,11 +2001,18 @@ func (c *Checker) Resolve(ty Type) Type {
 			panic(fmt.Sprintf("undefined type: %v", ty.Name))
 		}
 		return c.Resolve(under)
+	default:
+		return ty
+	}
+}
+
+func (c *Checker) Under(ty Type) Type {
+	switch ty := c.Resolve(ty).(type) {
+	case *NamedType:
+		return c.Under(ty.Type)
 	case *TypeApplication:
 		// TODO: pre apply?
 		return c.TypeApplication(ty) // TODO crazy?
-	case *NamedType:
-		return c.Resolve(ty.Type)
 	default:
 		return ty
 	}
@@ -2233,7 +2241,7 @@ func (c *Checker) TypeSet(con TypeConstraint) TypeSet {
 		if term.Tilde {
 			panic("TODO")
 		}
-		switch ty := c.Resolve(term.Type).(type) {
+		switch ty := c.Under(term.Type).(type) {
 		case *InterfaceType:
 			return c.InterfaceTypeSet(ty)
 		case *TypeParam:
@@ -2250,7 +2258,7 @@ func (c *Checker) TypeSet(con TypeConstraint) TypeSet {
 		if term.Tilde {
 			panic("TODO")
 		}
-		switch ty := c.Resolve(term.Type).(type) {
+		switch ty := c.Under(term.Type).(type) {
 		case *InterfaceType:
 			if len(ty.Methods) == 0 {
 				spew.Dump(ty)
