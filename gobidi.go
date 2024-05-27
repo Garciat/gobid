@@ -528,7 +528,7 @@ type CompositeLitExpr struct {
 }
 
 type CompositeLitElem struct {
-	Key   *Identifier
+	Key   Expr
 	Value Expr
 }
 
@@ -1004,6 +1004,8 @@ func (c *Checker) CheckTypeDeclType(ty Type) {
 		c.CheckTypeDeclSignature(ty.Signature)
 	case *SliceType:
 		c.CheckTypeDeclType(ty.ElemType)
+	case *NamedType:
+		c.CheckTypeDeclType(ty.Type)
 	default:
 		spew.Dump(ty)
 		panic("TODO")
@@ -1346,7 +1348,8 @@ func (c *Checker) SynthUnaryExpr(expr *UnaryExpr) Type {
 }
 
 func (c *Checker) SynthSelectorExpr(expr *SelectorExpr) Type {
-	switch ty := c.Synth(expr.Expr).(type) {
+	ty := c.Synth(expr.Expr)
+	switch ty := c.Under(ty).(type) {
 	case *StructType:
 		for _, field := range ty.Fields {
 			if field.Name == expr.Sel {
@@ -1463,6 +1466,7 @@ func (c *Checker) SynthCallExpr(expr *CallExpr) Type {
 func (c *Checker) SynthNameExpr(expr *NameExpr) Type {
 	ty, ok := c.VarCtx.Lookup(expr.Name)
 	if !ok {
+		spew.Dump(expr)
 		panic("undefined variable")
 	}
 	return c.Resolve(ty)
@@ -1484,6 +1488,7 @@ func (c *Checker) SynthLiteralExpr(expr *LiteralExpr) Type {
 func (c *Checker) SynthCompositeLitExpr(expr *CompositeLitExpr) Type {
 	structTy, ok := c.Under(expr.Type).(*StructType)
 	if !ok {
+		// TODO: maps
 		panic("composite literal with non-struct type")
 	}
 
@@ -1511,7 +1516,11 @@ func (c *Checker) SynthCompositeLitExpr(expr *CompositeLitExpr) Type {
 				if elem.Key == nil {
 					panic("composite literal with unordered fields")
 				}
-				if field.Name == *elem.Key {
+				key, ok := elem.Key.(*NameExpr)
+				if !ok {
+					panic("struct literal must use identifier as key name")
+				}
+				if field.Name == key.Name {
 					c.CheckExpr(elem.Value, field.Type)
 					continue elems
 				}
@@ -2683,6 +2692,9 @@ func ReadStmt(stmt ast.Stmt) Statement {
 		return &GoStmt{Call: ReadCallExpr(stmt.Call).(*CallExpr)}
 	case *ast.DeferStmt:
 		return &DeferStmt{Call: ReadCallExpr(stmt.Call).(*CallExpr)}
+	case *ast.LabeledStmt:
+		// TODO labeled satement semantics?
+		return ReadStmt(stmt.Stmt)
 	default:
 		spew.Dump(stmt)
 		panic("unreachable")
@@ -3084,7 +3096,7 @@ func ReadCompositeLitElems(exprs []ast.Expr) []CompositeLitElem {
 		switch expr := expr.(type) {
 		case *ast.KeyValueExpr:
 			elems = append(elems, CompositeLitElem{
-				Key:   Ptr(NewIdentifier(expr.Key.(*ast.Ident).Name)),
+				Key:   ReadExpr(expr.Key),
 				Value: ReadExpr(expr.Value),
 			})
 		default:
