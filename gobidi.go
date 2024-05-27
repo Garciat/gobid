@@ -2204,13 +2204,13 @@ func (c *Checker) InterfaceTypeSet(ty *InterfaceType) TypeSet {
 	if len(ty.Constraints) == 0 {
 		return TypeSet{Methods: ty.Methods}
 	}
+
 	methods := []MethodElem{}
 	copy(methods, ty.Methods)
 	for _, constraint := range ty.Constraints {
-		for _, elem := range c.TypeSet(constraint).Methods {
-			methods = append(methods, elem)
-		}
+		methods = append(methods, c.TypeSet(constraint).Methods...)
 	}
+
 	intersection := c.TypeSet(ty.Constraints[0]).Types
 	for _, constraint := range ty.Constraints[1:] {
 		next := []Type{}
@@ -2223,6 +2223,7 @@ func (c *Checker) InterfaceTypeSet(ty *InterfaceType) TypeSet {
 		}
 		intersection = next
 	}
+
 	return TypeSet{Types: intersection, Methods: methods}
 }
 
