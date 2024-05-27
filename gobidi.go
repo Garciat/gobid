@@ -1276,7 +1276,7 @@ func (c *Checker) CheckExpr(expr Expr, ty Type) {
 	case *BinaryExpr:
 		c.CheckBinaryExpr(expr, ty)
 	case *UnaryExpr:
-		panic("TODO")
+		c.CheckUnaryExpr(expr, ty)
 	case *ConversionExpr:
 		panic("TODO")
 	case *SelectorExpr:
@@ -1291,6 +1291,8 @@ func (c *Checker) CheckExpr(expr Expr, ty Type) {
 		c.CheckNameExpr(expr, ty)
 	case *LiteralExpr:
 		c.CheckLiteralExpr(expr, ty)
+	case *CompositeLitExpr:
+		c.CheckCompositeLitExpr(expr, ty)
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
@@ -1300,6 +1302,17 @@ func (c *Checker) CheckExpr(expr Expr, ty Type) {
 func (c *Checker) CheckBinaryExpr(expr *BinaryExpr, ty Type) {
 	c.CheckExpr(expr.Left, ty)
 	c.CheckExpr(expr.Right, ty)
+}
+
+func (c *Checker) CheckUnaryExpr(expr *UnaryExpr, ty Type) {
+	exprTy := c.Synth(expr.Expr)
+	switch expr.Op {
+	case UnaryOpAddr:
+		c.CheckAssignableTo(&PointerType{BaseType: exprTy}, ty)
+	default:
+		spew.Dump(expr, ty)
+		panic("unreachable")
+	}
 }
 
 func (c *Checker) CheckSelectorExpr(expr *SelectorExpr, ty Type) {
@@ -1347,6 +1360,11 @@ func (c *Checker) CheckLiteralExpr(expr *LiteralExpr, ty Type) {
 	}
 }
 
+func (c *Checker) CheckCompositeLitExpr(expr *CompositeLitExpr, ty Type) {
+	exprTy := c.Synth(expr)
+	c.CheckAssignableTo(exprTy, ty)
+}
+
 func (c *Checker) CheckAssignableTo(src, dst Type) {
 	c.TyCtx.AddRelation(RelationSubtype{Sub: src, Super: dst})
 }
@@ -1360,7 +1378,7 @@ func (c *Checker) Synth(expr Expr) Type {
 	case *UnaryExpr:
 		return c.SynthUnaryExpr(expr)
 	case *ConversionExpr:
-		panic("TODO")
+		return c.SynthConversionExpr(expr)
 	case *SelectorExpr:
 		return c.SynthSelectorExpr(expr)
 	case *IndexExpr:
@@ -1408,30 +1426,56 @@ func (c *Checker) SynthUnaryExpr(expr *UnaryExpr) Type {
 	}
 }
 
+func (c *Checker) SynthConversionExpr(expr *ConversionExpr) Type {
+	panic("TODO")
+}
+
 func (c *Checker) SynthSelectorExpr(expr *SelectorExpr) Type {
-	ty := c.Synth(expr.Expr)
-	switch ty := c.Under(ty).(type) {
+	exprTy := c.Synth(expr.Expr)
+	return c.DoSelect(exprTy, expr.Sel)
+}
+
+func (c *Checker) DoSelect(exprTy Type, sel Identifier) Type {
+	checkTy := exprTy
+
+	switch ty := c.Resolve(checkTy).(type) {
+	case *PointerType:
+		checkTy = ty.BaseType
+	}
+
+	switch ty := c.Resolve(checkTy).(type) {
+	case *NamedType:
+		for _, m := range ty.Methods {
+			if m.Name == sel {
+				return m.Type
+			}
+		}
+		checkTy = ty.Type
+	}
+
+	switch ty := c.Under(checkTy).(type) {
 	case *StructType:
 		for _, field := range ty.Fields {
-			if field.Name == expr.Sel {
+			if field.Name == sel {
 				return field.Type
 			}
 		}
-		panic("undefined field")
 	case *TypeParam:
 		if ty.Bound != nil {
 			set := c.InterfaceTypeSet(ty.Bound)
 			for _, m := range set.Methods {
-				if m.Name == expr.Sel {
+				if m.Name == sel {
 					return m.Type
 				}
 			}
+			if len(set.Types) == 1 {
+				return c.DoSelect(c.Resolve(set.Types[0]), sel)
+			}
 		}
-		spew.Dump(ty.Bound)
-		panic(fmt.Sprintf("type %v has no field %v", ty, expr.Sel))
-	default:
-		panic(fmt.Sprintf("type %v has no field %v", ty, expr.Sel))
 	}
+
+	spew.Dump(exprTy)
+	panic(fmt.Sprintf("type %v has no field or method %v", exprTy, sel))
 }
 
 func (c *Checker) SynthIndexExpr(expr *IndexExpr) Type {
@@ -1496,19 +1540,31 @@ func (c *Checker) SynthCallExpr(expr *CallExpr) Type {
 	if len(typeArgs) > len(funcTy.Signature.TypeParams.Params) {
 		panic("too many type arguments")
 	}
+
 	subst := Subst{}
 	for _, tyParam := range funcTy.Signature.TypeParams.Params {
 		subst[tyParam.Name] = &TypeParam{Name: c.FreshTypeName(), Bound: tyParam.Constraint}
 	}
 	funcTy = c.ApplySubst(funcTy, subst).(*FunctionType)
 	fmt.Printf("subst FunctionType: %v\n", funcTy)
+
 	for i, tyArg := range typeArgs {
 		tyParam := funcTy.Signature.TypeParams.Params[i]
 		c.TyCtx.AddRelation(RelationSatisfies{Type: tyArg, Constraint: tyParam.Constraint})
 		c.TyCtx.AddEq(tyArg, subst[tyParam.Name])
 	}
+	for _, tyParam := range funcTy.Signature.TypeParams.Params {
+		ty := &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint}
+		c.TyCtx.AddRelation(RelationSubtype{Sub: ty, Super: tyParam.Constraint})
+	}
 	for i, arg := range expr.Args {
-		c.CheckExpr(arg, funcTy.Signature.Params.Params[i].Type)
+		argTy := c.Synth(arg)
+		switch paramTy := funcTy.Signature.Params.Params[i].Type.(type) {
+		case *TypeParam:
+			c.TyCtx.AddEq(argTy, paramTy)
+		default:
+			c.CheckAssignableTo(argTy, paramTy)
+		}
 	}
 	returns := []Type{}
 	for _, result := range funcTy.Signature.Results.Params {
@@ -1691,18 +1747,14 @@ func (c *Checker) ApplySubst(ty Type, subst Subst) Type {
 	case *PointerType:
 		return &PointerType{BaseType: c.ApplySubst(ty.BaseType, subst)}
 	case *InterfaceType:
-		methods := make([]MethodElem, len(ty.Methods))
-		for i, method := range ty.Methods {
-			methods[i] = MethodElem{
-				Name: method.Name,
-				Type: c.ApplySubst(method.Type, subst).(*FunctionType),
-			}
-		}
 		constraints := make([]TypeConstraint, len(ty.Constraints))
 		for i, constraint := range ty.Constraints {
 			constraints[i] = TypeConstraint{TypeElem: c.ApplySubstTypeElem(constraint.TypeElem, subst)}
 		}
-		return &InterfaceType{Methods: methods, Constraints: constraints}
+		return &InterfaceType{
+			Methods:     c.ApplySubstMethodList(ty.Methods, subst),
+			Constraints: constraints,
+		}
 	case *SliceType:
 		return &SliceType{ElemType: c.ApplySubst(ty.ElemType, subst)}
 	case *MapType:
@@ -1721,10 +1773,27 @@ func (c *Checker) ApplySubst(ty Type, subst Subst) Type {
 			elems[i] = c.ApplySubst(elem, subst)
 		}
 		return &TupleType{Elems: elems}
+	case *NamedType:
+		return &NamedType{
+			Name:    ty.Name,
+			Type:    c.ApplySubst(ty.Type, subst),
+			Methods: c.ApplySubstMethodList(ty.Methods, subst),
+		}
 	default:
 		spew.Dump(ty)
 		panic("unreachable")
 	}
+}
+
+func (c *Checker) ApplySubstMethodList(methods []MethodElem, subst Subst) []MethodElem {
+	out := make([]MethodElem, len(methods))
+	for i, method := range methods {
+		out[i] = MethodElem{
+			Name: method.Name,
+			Type: c.ApplySubst(method.Type, subst).(*FunctionType),
+		}
+	}
+	return out
 }
 
 func (c *Checker) ApplySubstSignature(sig Signature, subst Subst) Signature {
@@ -1773,25 +1842,12 @@ func (c *Checker) ApplySubstParameterList(list ParameterList, subst Subst) Param
 
 // ========================
 
-func (c *Checker) Simplify(subst Subst) {
+func (c *Checker) Simplify(subst Subst) Subst {
+	next := Subst{}
 	for k, v := range subst {
-		cur := v
-		for {
-			if param, ok := cur.(*TypeParam); ok {
-				if k.Name == param.Name.Name {
-					panic("circular substitution?")
-				}
-				if next, ok := subst[param.Name]; ok {
-					cur = next
-					continue
-				} else {
-					break
-				}
-			}
-			break
-		}
-		subst[k] = cur
+		next[k] = c.ApplySubst(v, subst)
 	}
+	return next
 }
 
 func (c *Checker) Merge(lhs, rhs Subst) Subst {
@@ -1815,24 +1871,21 @@ func (c *Checker) Verify() Subst {
 	subst := Subst{}
 
 	fmt.Println("=== Verify ===")
-	fmt.Println(c.TyCtx)
-
-	rels := c.TyCtx.Relations
 
 	for i := 0; i < 10; i++ {
 		fmt.Printf("=== iteration %d ===\n", i)
-		fmt.Println(rels)
+		fmt.Println(c.TyCtx)
 
 		learned := Subst{}
 
-		c.Unify(rels, learned)
-		c.Simplify(learned)
+		c.Unify(c.TyCtx.Relations, learned)
+		learned = c.Simplify(learned)
 
 		fmt.Printf("learned: %v\n", learned)
 
 		next := []Relation{}
 
-		for _, rel := range rels {
+		for _, rel := range c.TyCtx.Relations {
 			switch rel := rel.(type) {
 			case RelationEq:
 				next = append(next, RelationEq{
@@ -1854,7 +1907,7 @@ func (c *Checker) Verify() Subst {
 			}
 		}
 
-		rels = next
+		c.TyCtx.Relations = next
 		subst = c.Merge(subst, learned)
 
 		if len(learned) == 0 {
@@ -2036,6 +2089,16 @@ func (c *Checker) BasicSatisfy(sub Type, inter *InterfaceType, subst Subst, out 
 	supertypeset := c.InterfaceTypeSet(inter)
 	if !supertypeset.Universe && len(supertypeset.Types) == 0 {
 		panic("cannot satisfy empty set")
+	}
+	if len(supertypeset.Types) == 1 {
+		// TODO hacky
+		if c.Identical(sub, supertypeset.Types[0]) {
+			return
+		}
+		c.UnifyEq(sub, supertypeset.Types[0], subst)
+		// c.UnifySatisfies(sub, &InterfaceType{Methods: supertypeset.Methods}, subst)
+		c.TyCtx.AddRelation(RelationSubtype{Sub: sub, Super: &InterfaceType{Methods: supertypeset.Methods}})
+		return // leave for next iteration?
 	}
 	if len(supertypeset.Methods) > 0 {
 		subMethods, pointerReceiver := c.MethodSet(sub)
@@ -2257,6 +2320,11 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 			}
 		}
 		return c.Identical(ty2, c.Resolve(ty1))
+	case *NamedType:
+		if ty2, ok := ty2.(*NamedType); ok {
+			return ty1.Name == ty2.Name
+		}
+		return false
 	case *TypeBuiltin:
 		ty, ok := c.Resolve(ty2).(*TypeBuiltin)
 		if !ok {
@@ -2388,17 +2456,17 @@ func (c *Checker) InterfaceTypeSet(ty *InterfaceType) TypeSet {
 			if term.Tilde {
 				panic("TODO")
 			}
-			switch ty := c.Under(term.Type).(type) {
+			switch underTy := c.Under(term.Type).(type) {
 			case *InterfaceType:
-				next = c.InterfaceTypeSet(ty)
+				next = c.InterfaceTypeSet(underTy)
 			case *TypeParam:
-				if ty.Bound != nil {
-					next = c.InterfaceTypeSet(ty.Bound)
+				if underTy.Bound != nil {
+					next = c.InterfaceTypeSet(underTy.Bound)
 				} else {
-					next = TypeSet{Types: []Type{ty}, Universe: false}
+					next = TypeSet{Types: []Type{underTy}, Universe: false}
 				}
 			default:
-				next = TypeSet{Types: []Type{ty}, Universe: false}
+				next = TypeSet{Types: []Type{term.Type}, Universe: false}
 			}
 		} else {
 			var types []Type
@@ -3466,6 +3534,25 @@ type Runner interface{
 func PointerReceiverThing[T any, U interface{*T; Runner}](t T) {
 	var u U = &t
 	u.Run()
+}
+
+func UsePointerReceiverThing() {
+	PointerReceiverThing(Receiver{})
+}
+
+type X struct {}
+func (x *X) M() int { return 42 }
+
+func CallX_M(x X) int {
+	return x.M()
+}
+
+func CallHasM[T interface{*X; M() R}, R any](t T) R {
+	return t.M()
+}
+
+func getValue(id *struct{Value int}) int {
+	return id.Value
 }
 `
 
