@@ -798,6 +798,14 @@ type RangeStmt struct {
 	Body       StatementList
 }
 
+type ForStmt struct {
+	StatementBase
+	Init Statement
+	Cond Expr
+	Post Statement
+	Body StatementList
+}
+
 type TypeSwitchStmt struct {
 	StatementBase
 	Init   Statement
@@ -820,14 +828,6 @@ type SwitchStmt struct {
 type SwitchCase struct {
 	Exprs []Expr
 	Body  StatementList
-}
-
-type ForStmt struct {
-	StatementBase
-	Init Statement
-	Cond Expr
-	Post Statement
-	Body StatementList
 }
 
 type BlockStmt struct {
@@ -1298,7 +1298,13 @@ func (c *Checker) ReadPackage(decl *ImportDecl) VarContext {
 }
 
 func (c *Checker) DefineConstDecl(decl *ConstDecl) {
-	c.Define(decl.Name, decl.Type)
+	valueTy := c.Synth(decl.Value)
+	if decl.Type != nil {
+		c.CheckAssignableTo(valueTy, decl.Type)
+		c.Define(decl.Name, decl.Type)
+	} else {
+		c.Define(decl.Name, valueTy)
+	}
 }
 
 func (c *Checker) DefineTypeDecl(decl *TypeDecl) {
@@ -1442,6 +1448,11 @@ func (c *Checker) CheckTypeDeclType(ty Type) {
 		c.CheckTypeDeclType(ty.Type)
 	case *PointerType:
 		c.CheckTypeDeclType(ty.BaseType)
+	case *ArrayType:
+		c.CheckTypeDeclType(ty.ElemType)
+	case *MapType:
+		c.CheckTypeDeclType(ty.KeyType)
+		c.CheckTypeDeclType(ty.ElemType)
 	default:
 		spew.Dump(ty)
 		panic("unreachable")
@@ -1594,6 +1605,8 @@ func (c *Checker) CheckStatement(stmt Statement) {
 		c.CheckAssignmentStmt(stmt)
 	case *BranchStmt:
 		// nothing?
+	case *ForStmt:
+		c.CheckForStmt(stmt)
 	default:
 		spew.Dump(stmt)
 		panic("unreachable")
@@ -1720,6 +1733,20 @@ func (c *Checker) CheckRangeStmt(stmt *RangeStmt) {
 		panic(fmt.Sprintf("cannot range over %v", targetTy))
 	}
 
+	scope.CheckStatementList(stmt.Body)
+}
+
+func (c *Checker) CheckForStmt(stmt *ForStmt) {
+	scope := c.BeginScope()
+	if stmt.Init != nil {
+		scope.CheckStatement(stmt.Init)
+	}
+	if stmt.Cond != nil {
+		scope.CheckExpr(stmt.Cond, c.Builtin("bool"))
+	}
+	if stmt.Post != nil {
+		scope.CheckStatement(stmt.Post)
+	}
 	scope.CheckStatementList(stmt.Body)
 }
 
@@ -1949,6 +1976,12 @@ func (c *Checker) SynthBinaryExpr(expr *BinaryExpr) Type {
 		c.CheckExpr(expr.Left, c.Builtin("bool"))
 		c.CheckExpr(expr.Right, c.Builtin("bool"))
 		return c.Builtin("bool")
+	case BinaryOpAnd, BinaryOpOr, BinaryOpXor, BinaryOpAndNot, BinaryOpShl, BinaryOpShr:
+		// TODO check numeric?
+		leftTy := c.Synth(expr.Left)
+		rightTy := c.Synth(expr.Right)
+		c.TyCtx.AddEq(leftTy, rightTy)
+		return leftTy
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
@@ -1965,6 +1998,7 @@ func (c *Checker) SynthUnaryExpr(expr *UnaryExpr) Type {
 		case *PointerType:
 			return ty.BaseType
 		default:
+			spew.Dump(expr)
 			panic("cannot dereference non-pointer")
 		}
 	default:
