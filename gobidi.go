@@ -55,7 +55,7 @@ type NilType struct {
 }
 
 func (*NilType) String() string {
-	return "nil"
+	return "type(nil)"
 }
 
 type MethodType struct {
@@ -406,11 +406,11 @@ const (
 	BinaryOpOr
 	BinaryOpXor
 	BinaryOpAndNot
+	BinaryOpShl
+	BinaryOpShr
 
 	BinaryOpLAnd
 	BinaryOpLOr
-	BinaryOpShl
-	BinaryOpShr
 
 	BinaryOpArrow
 	// TODO: div, mod, etc.
@@ -1539,13 +1539,26 @@ func (c *Checker) CheckStatement(stmt Statement) {
 }
 
 func (c *Checker) CheckShortVarDecl(stmt *ShortVarDecl) {
-	if len(stmt.Names) != len(stmt.Exprs) {
-		// TODO tuple assignment
+	if len(stmt.Names) == len(stmt.Exprs) {
+		for i, name := range stmt.Names {
+			ty := c.Synth(stmt.Exprs[i])
+			c.Define(name, ty)
+		}
+	} else if len(stmt.Names) > 1 && len(stmt.Exprs) == 1 {
+		ty := c.Synth(stmt.Exprs[0])
+		switch ty := c.Under(ty).(type) {
+		case *TupleType:
+			if len(stmt.Names) != len(ty.Elems) {
+				panic("wrong number of return in tuple expansion")
+			}
+			for i, name := range stmt.Names {
+				c.Define(name, ty.Elems[i])
+			}
+		default:
+			panic("non-tuple type")
+		}
+	} else {
 		panic("wrong number of expressions")
-	}
-	for i, name := range stmt.Names {
-		ty := c.Synth(stmt.Exprs[i])
-		c.Define(name, ty)
 	}
 }
 
@@ -1562,13 +1575,26 @@ func (c *Checker) CheckAssignmentStmt(stmt *AssignmentStmt) {
 
 func (c *Checker) CheckReturnStmt(stmt *ReturnStmt) {
 	fn := c.AssertInFunctionScope()
-	if len(stmt.Results) != len(fn.Results.Params) {
-		// TODO: tuple return
-		panic("wrong number of return values")
-	}
-	for i, result := range stmt.Results {
-		ty := c.Synth(result)
-		c.CheckAssignableTo(ty, fn.Results.Params[i].Type)
+	if len(stmt.Results) == len(fn.Results.Params) {
+		for i, result := range stmt.Results {
+			ty := c.Synth(result)
+			c.CheckAssignableTo(ty, fn.Results.Params[i].Type)
+		}
+	} else if len(stmt.Results) == 1 && len(fn.Results.Params) > 0 {
+		ty := c.Synth(stmt.Results[0])
+		switch ty := c.Under(ty).(type) {
+		case *TupleType:
+			if len(fn.Results.Params) != len(ty.Elems) {
+				panic("wrong number of return in tuple expansion")
+			}
+			for i, param := range fn.Results.Params {
+				c.CheckAssignableTo(ty.Elems[i], param.Type)
+			}
+		default:
+			panic("non-tuple type")
+		}
+	} else {
+		panic("wrong number of expressions in return")
 	}
 }
 
@@ -1749,14 +1775,7 @@ func (c *Checker) CheckExpr(expr Expr, ty Type) {
 }
 
 func (c *Checker) CheckBinaryExpr(expr *BinaryExpr, ty Type) {
-	switch expr.Op {
-	case BinaryOpEq, BinaryOpNeq, BinaryOpLt, BinaryOpLte, BinaryOpGt, BinaryOpGte:
-		// TODO check comparable
-		leftTy := c.Synth(expr.Left)
-		rightTy := c.Synth(expr.Right)
-		c.TyCtx.AddEq(leftTy, rightTy)
-		c.CheckAssignableTo(c.Builtin("bool"), ty)
-	}
+	c.CheckAssignableTo(c.Synth(expr), ty)
 }
 
 func (c *Checker) CheckUnaryExpr(expr *UnaryExpr, ty Type) {
@@ -1859,10 +1878,27 @@ func (c *Checker) Synth(expr Expr) Type {
 }
 
 func (c *Checker) SynthBinaryExpr(expr *BinaryExpr) Type {
-	tyLeft := c.Synth(expr.Left)
-	tyRight := c.Synth(expr.Right)
-	c.TyCtx.AddEq(tyLeft, tyRight)
-	return tyLeft
+	switch expr.Op {
+	case BinaryOpEq, BinaryOpNeq, BinaryOpLt, BinaryOpLte, BinaryOpGt, BinaryOpGte:
+		// TODO check comparable
+		leftTy := c.Synth(expr.Left)
+		rightTy := c.Synth(expr.Right)
+		c.TyCtx.AddEq(leftTy, rightTy)
+		return c.Builtin("bool")
+	case BinaryOpAdd, BinaryOpSub, BinaryOpMul, BinaryOpQuo, BinaryOpRem:
+		// TODO check numeric?
+		leftTy := c.Synth(expr.Left)
+		rightTy := c.Synth(expr.Right)
+		c.TyCtx.AddEq(leftTy, rightTy)
+		return leftTy
+	case BinaryOpLAnd, BinaryOpLOr:
+		c.CheckExpr(expr.Left, c.Builtin("bool"))
+		c.CheckExpr(expr.Right, c.Builtin("bool"))
+		return c.Builtin("bool")
+	default:
+		spew.Dump(expr)
+		panic("unreachable")
+	}
 }
 
 func (c *Checker) SynthUnaryExpr(expr *UnaryExpr) Type {
@@ -1908,7 +1944,7 @@ func (c *Checker) DoSelect(exprTy Type, sel Identifier) Type {
 
 	switch ty := c.Resolve(checkTy).(type) {
 	case *NamedType:
-		for _, m := range c.IdentifierMethods(ty.Name) {
+		for _, m := range c.NamedTypeMethods(ty) {
 			if m.Name == sel {
 				return m.Type
 			}
@@ -2533,16 +2569,20 @@ func IntersectInterfaces(elems ...*InterfaceType) *InterfaceType {
 }
 
 func (c *Checker) UnifyEq(left, right Type, subst Subst) {
+	left = c.Resolve(left)
+	right = c.Resolve(right)
+
 	fmt.Printf("? %v = %v %v\n", left, right, subst)
 
 	if c.Identical(left, right) {
 		return
 	}
 
+	if _, ok := right.(*TypeParam); ok {
+		left, right = right, left
+	}
+
 	switch left := left.(type) {
-	case *TypeName:
-		leftTy := c.Lookup(left.Name)
-		c.UnifyEq(right, leftTy, subst)
 	case *TypeBuiltin:
 		if _, ok := right.(*TypeBuiltin); ok {
 			panic(fmt.Sprintf("cannot unify: %v = %v", left, right))
@@ -2565,6 +2605,9 @@ func (c *Checker) UnifyEq(left, right Type, subst Subst) {
 		left = c.SimplifyInterface(left)
 		if single, ok := IsSingleTypeUnion(left); ok {
 			c.UnifyEq(single, right, subst)
+			return
+		}
+		if _, ok := right.(*NilType); ok {
 			return
 		}
 		spew.Dump(left, right)
@@ -2598,6 +2641,9 @@ func (c *Checker) UnifyEq(left, right Type, subst Subst) {
 }
 
 func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
+	sub = c.Resolve(sub)
+	super = c.Resolve(super)
+
 	fmt.Printf("? %v <: %v %v\n", sub, super, subst)
 
 	if c.IsConcreteType(super) {
@@ -2635,8 +2681,6 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 			// TODO hacky???
 			panic(fmt.Sprintf("cannot assign %v to %v", sub, super))
 		}
-	case *TypeName:
-		c.UnifySubtype(sub, c.Lookup(super.Name), subst)
 	case *TypeApplication:
 		c.UnifySubtype(sub, c.Under(super), subst) // TODO: adding more constraints?
 	case *NamedType:
@@ -2657,6 +2701,8 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 }
 
 func (c *Checker) UnifySatisfies(sub Type, inter *InterfaceType, subst Subst) {
+	sub = c.Resolve(sub)
+
 	var typeset *TypeSet
 	c.BasicSatisfy(sub, inter, subst, &typeset)
 
@@ -2852,20 +2898,24 @@ func (c *Checker) ContainsTypeParam(ty Type, tyParam *TypeParam) bool {
 }
 
 func (c *Checker) MethodSet(ty Type) ([]MethodElem, bool) {
-	var pointerReceiver bool
 	ty = c.Resolve(ty)
+
+	var pointerReceiver bool
 	if pointerTy, ok := ty.(*PointerType); ok {
 		ty = pointerTy.BaseType
 		pointerReceiver = true
 	}
 
 	switch ty := c.Resolve(ty).(type) {
+	case *InterfaceType:
+		return ty.Methods, false
 	case *NamedType:
-		return c.IdentifierMethods(ty.Name), pointerReceiver
+
+		return c.NamedTypeMethods(ty), pointerReceiver
 	case *TypeApplication:
 		named, subst := c.InstantiateType(ty)
 		methods := []MethodElem{}
-		for _, m := range c.IdentifierMethods(named.Name) {
+		for _, m := range c.NamedTypeMethods(named) {
 			methods = append(methods, MethodElem{
 				Name: m.Name,
 				Type: c.ApplySubst(m.Type, subst).(*FunctionType),
@@ -2878,14 +2928,18 @@ func (c *Checker) MethodSet(ty Type) ([]MethodElem, bool) {
 	}
 }
 
-func (c *Checker) IdentifierMethods(id Identifier) []MethodElem {
+func (c *Checker) NamedTypeMethods(namedTy *NamedType) []MethodElem {
+	if interTy, ok := c.Under(namedTy).(*InterfaceType); ok {
+		return interTy.Methods
+	}
+
 	methods := []MethodElem{}
 
 	c.VarCtx.Iter(func(name Identifier, ty Type) {
-		if strings.HasPrefix(name.Value, id.Value+".") {
+		if strings.HasPrefix(name.Value, namedTy.Name.Value+".") {
 			methodTy := ty.(*MethodType)
 			methods = append(methods, MethodElem{
-				Name:            Identifier{Value: name.Value[len(id.Value)+1:]},
+				Name:            Identifier{Value: name.Value[len(namedTy.Name.Value)+1:]},
 				Type:            methodTy.Type,
 				PointerReceiver: methodTy.PointerReceiver,
 			})
@@ -4319,6 +4373,10 @@ func parse() (int, error) {
 func useParse() bool {
 	i, err := parse()
 	return i == 0 && err == nil
+}
+
+func callParse() (int, error) {
+	return parse()
 }
 `
 
