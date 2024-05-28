@@ -130,7 +130,7 @@ func (i QualIdentifier) String() string {
 
 type TypeApplication struct {
 	TypeBase
-	ID   *QualIdentifier
+	ID   QualIdentifier
 	Args []Type
 }
 
@@ -1433,7 +1433,7 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 		}
 		methodHolder = named
 	case *TypeApplication:
-		under := c.Resolve(ty.ID)
+		under := c.Resolve(&ty.ID)
 		named, ok := c.Resolve(under).(*NamedType)
 		if !ok {
 			panic("method on non-named type")
@@ -2249,7 +2249,7 @@ func (c *Checker) InstantiateType(app *TypeApplication) (*NamedType, Subst) {
 }
 
 func (c *Checker) InstantiateTypeFunc(app *TypeApplication, argF func(tyParam TypeParamDecl, tyArg Type)) (*NamedType, Subst) {
-	under := c.Resolve(app.ID)
+	under := c.Resolve(&app.ID)
 	named, ok := c.Resolve(under).(*NamedType)
 	if !ok {
 		panic("can only instantiate named types?")
@@ -2752,6 +2752,20 @@ func (c *Checker) Resolve(ty Type) Type {
 	switch ty := ty.(type) {
 	case *TypeName:
 		return c.Resolve(c.Lookup(ty.Name))
+	case *QualIdentifier:
+		if ty.Package == "" {
+			return c.Resolve(c.Lookup(ty.Name))
+		}
+		pkg := c.Lookup(NewIdentifier(ty.Package))
+		imp, ok := c.Resolve(pkg).(*ImportType)
+		if !ok {
+			panic("not an import")
+		}
+		retTy, ok := imp.Scope.Lookup(ty.Name)
+		if !ok {
+			panic(fmt.Sprintf("definition %v not found in package %v", ty.Name, ty.Package))
+		}
+		return retTy
 	default:
 		return ty
 	}
@@ -4034,15 +4048,15 @@ func ReadType(expr ast.Expr) Type {
 	}
 }
 
-func ReadQualIdentifier(expr ast.Expr) *QualIdentifier {
+func ReadQualIdentifier(expr ast.Expr) QualIdentifier {
 	switch expr := expr.(type) {
 	case *ast.Ident:
-		return &QualIdentifier{
+		return QualIdentifier{
 			Package: "",
 			Name:    NewIdentifier(expr.Name),
 		}
 	case *ast.SelectorExpr:
-		return &QualIdentifier{
+		return QualIdentifier{
 			Package: expr.X.(*ast.Ident).Name,
 			Name:    NewIdentifier(expr.Sel.Name),
 		}
@@ -4297,12 +4311,21 @@ func useVariadic() {
 	variadic(1, 2, 3)
 	variadic([]int{1,2,3}...)
 }
+
+func parse() (int, error) {
+	return 0, nil
+}
+
+func useParse() bool {
+	i, err := parse()
+	return i == 0 && err == nil
+}
 `
 
 	_ = src
 
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "example.go", nil, parser.ParseComments)
+	f, err := parser.ParseFile(fset, "example.go", src, parser.ParseComments)
 	if err != nil {
 		panic(err)
 	}
