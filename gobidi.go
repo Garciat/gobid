@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -43,6 +45,29 @@ type TypeBase struct{}
 
 func (*TypeBase) _Type() {}
 
+type LazyType struct {
+	TypeBase
+	Expr Expr
+}
+
+type MethodType struct {
+	TypeBase
+	PointerReceiver bool
+	Type            *FunctionType
+}
+
+type ImportType struct {
+	TypeBase
+	Decl ImportDecl
+}
+
+func (t *ImportType) String() string {
+	if t.Decl.Alias != nil {
+		return fmt.Sprintf("import(\"%v\" as %v)", t.Decl.Path, t.Decl.Alias)
+	}
+	return fmt.Sprintf("import(%v)", t.Decl.Path)
+}
+
 type TypeBuiltin struct {
 	TypeBase
 	Name Identifier
@@ -63,9 +88,8 @@ func (t *TypeName) String() string {
 
 type NamedType struct {
 	TypeBase
-	Name    Identifier
-	Type    Type
-	Methods []MethodElem
+	Name Identifier
+	Type Type
 }
 
 func (t *NamedType) String() string {
@@ -106,20 +130,13 @@ func (t *ArrayType) String() string {
 	return fmt.Sprintf("[%v]%v", t.Len, t.ElemType)
 }
 
-type BuiltinMakeType struct {
+type BuiltinFunctionType struct {
 	TypeBase
+	Name string
 }
 
-func (t *BuiltinMakeType) String() string {
-	return "make()"
-}
-
-type BuiltinNewType struct {
-	TypeBase
-}
-
-func (t *BuiltinNewType) String() string {
-	return "new()"
+func (t *BuiltinFunctionType) String() string {
+	return fmt.Sprintf("builtin(%v)", t.Name)
 }
 
 type FunctionType struct {
@@ -341,6 +358,8 @@ const (
 	BinaryOpAdd BinaryOp = iota
 	BinaryOpSub
 	BinaryOpMul
+	BinaryOpQuo
+	BinaryOpRem
 
 	BinaryOpEq
 	BinaryOpNeq
@@ -354,6 +373,8 @@ const (
 
 	BinaryOpLAnd
 	BinaryOpLOr
+	BinaryOpShl
+	BinaryOpShr
 
 	BinaryOpArrow
 	// TODO: div, mod, etc.
@@ -406,6 +427,8 @@ const (
 	UnaryOpDeref
 
 	UnaryOpArrow
+
+	UnaryOpXor // what
 )
 
 func (op UnaryOp) String() string {
@@ -555,6 +578,16 @@ type LiteralString struct {
 	Value string
 }
 
+type LiteralFloat struct {
+	LiteralBase
+	Value string
+}
+
+type LiteralRune struct {
+	LiteralBase
+	Value string
+}
+
 // for things like make() and new()
 type TypeExpr struct {
 	ExprBase
@@ -686,6 +719,20 @@ type Decl interface {
 type DeclBase struct{}
 
 func (DeclBase) _Decl() {}
+
+type ImportDecl struct {
+	DeclBase
+	Path  string
+	Alias *Identifier
+}
+
+func (d *ImportDecl) EffectiveName() string {
+	if d.Alias != nil {
+		return d.Alias.Name
+	}
+	parts := strings.Split(d.Path, "/")
+	return parts[len(parts)-1]
+}
 
 type ConstDecl struct {
 	DeclBase
@@ -849,6 +896,15 @@ func (c *VarContext) Fork() VarContext {
 	return VarContext{Parent: c, Types: map[Identifier]Type{}}
 }
 
+func (c *VarContext) Iter(f func(Identifier, Type)) {
+	if c.Parent != nil {
+		c.Parent.Iter(f)
+	}
+	for name, ty := range c.Types {
+		f(name, ty)
+	}
+}
+
 type Checker struct {
 	Fresh *int
 
@@ -865,12 +921,41 @@ func NewChecker() *Checker {
 	builtins := VarContext{Types: map[Identifier]Type{
 		NewIdentifier("any"): EmptyInterface(),
 
-		NewIdentifier("int"):    &TypeBuiltin{Name: Identifier{Name: "int"}},
-		NewIdentifier("bool"):   &TypeBuiltin{Name: Identifier{Name: "bool"}},
+		NewIdentifier("bool"): &TypeBuiltin{Name: Identifier{Name: "bool"}},
+
+		NewIdentifier("byte"): &TypeBuiltin{Name: Identifier{Name: "byte"}},
+		NewIdentifier("rune"): &TypeBuiltin{Name: Identifier{Name: "rune"}},
+
+		NewIdentifier("int"):     &TypeBuiltin{Name: Identifier{Name: "int"}},
+		NewIdentifier("int8"):    &TypeBuiltin{Name: Identifier{Name: "int8"}},
+		NewIdentifier("int16"):   &TypeBuiltin{Name: Identifier{Name: "int16"}},
+		NewIdentifier("int32"):   &TypeBuiltin{Name: Identifier{Name: "int32"}},
+		NewIdentifier("int64"):   &TypeBuiltin{Name: Identifier{Name: "int64"}},
+		NewIdentifier("uint"):    &TypeBuiltin{Name: Identifier{Name: "uint"}},
+		NewIdentifier("uint8"):   &TypeBuiltin{Name: Identifier{Name: "uint8"}},
+		NewIdentifier("uint16"):  &TypeBuiltin{Name: Identifier{Name: "uint16"}},
+		NewIdentifier("uint32"):  &TypeBuiltin{Name: Identifier{Name: "uint32"}},
+		NewIdentifier("uint64"):  &TypeBuiltin{Name: Identifier{Name: "uint64"}},
+		NewIdentifier("uintptr"): &TypeBuiltin{Name: Identifier{Name: "uintptr"}},
+		NewIdentifier("float32"): &TypeBuiltin{Name: Identifier{Name: "float32"}},
+		NewIdentifier("float64"): &TypeBuiltin{Name: Identifier{Name: "float64"}},
+
 		NewIdentifier("string"): &TypeBuiltin{Name: Identifier{Name: "string"}},
 
-		NewIdentifier("make"): &BuiltinMakeType{},
-		NewIdentifier("new"):  &BuiltinNewType{},
+		NewIdentifier("true"):  &TypeBuiltin{Name: Identifier{Name: "bool"}},
+		NewIdentifier("false"): &TypeBuiltin{Name: Identifier{Name: "bool"}},
+		NewIdentifier("nil"):   &TypeBuiltin{Name: Identifier{Name: "any"}}, // TODO not quite right
+		NewIdentifier("error"): &NamedType{Name: Identifier{Name: "error"}, Type: ParseType("interface{Error() string}")},
+
+		NewIdentifier("len"):    &BuiltinFunctionType{Name: "len"},
+		NewIdentifier("cap"):    &BuiltinFunctionType{Name: "cap"},
+		NewIdentifier("copy"):   &BuiltinFunctionType{Name: "copy"},
+		NewIdentifier("delete"): &BuiltinFunctionType{Name: "delete"},
+		NewIdentifier("append"): &BuiltinFunctionType{Name: "append"},
+		NewIdentifier("close"):  &BuiltinFunctionType{Name: "close"},
+		NewIdentifier("make"):   &BuiltinFunctionType{Name: "make"},
+		NewIdentifier("new"):    &BuiltinFunctionType{Name: "new"},
+		NewIdentifier("panic"):  &BuiltinFunctionType{Name: "panic"},
 	}}
 	return &Checker{
 		Fresh:    Ptr(0),
@@ -937,12 +1022,134 @@ func (c *Checker) AssertInFunctionScope() *Signature {
 
 func (c *Checker) CheckFile(file File) {
 	for _, decl := range file.Decls {
+		c.DefineDecl(decl)
+	}
+	for _, decl := range file.Decls {
 		c.CheckDecl(decl)
 	}
 }
 
+// ========================
+
+func (c *Checker) DefineDecl(decl Decl) {
+	switch decl := decl.(type) {
+	case *ImportDecl:
+		c.DefineImportDecl(decl)
+	case *ConstDecl:
+		c.DefineConstDecl(decl)
+	case *TypeDecl:
+		c.DefineTypeDecl(decl)
+	case *AliasDecl:
+		c.DefineAliasDecl(decl)
+	case *VarDecl:
+		c.DefineVarDecl(decl)
+	case *FunctionDecl:
+		c.DefineFunctionDecl(decl)
+	case *MethodDecl:
+		c.DefineMethodDecl(decl)
+	default:
+		spew.Dump(decl)
+		panic("unreachable")
+	}
+}
+
+func (c *Checker) DefineImportDecl(decl *ImportDecl) {
+	fmt.Printf("=== DefineImportDecl(%v) ===\n", decl.Path)
+
+	out, err := exec.Command("go", "env", "GOROOT").Output()
+	if err != nil {
+		panic(fmt.Errorf("failed to get GOROOT: %w", err))
+	}
+
+	goroot := strings.TrimSpace(string(out))
+	path := filepath.Join(goroot, "src", decl.Path)
+
+	fmt.Printf("parsing %v\n", path)
+
+	packages, err := parser.ParseDir(token.NewFileSet(), path, nil, parser.ParseComments)
+	if err != nil {
+		panic(fmt.Errorf("failed to parse GOROOT: %w", err))
+	}
+
+	child := NewChecker()
+	for _, pkg := range packages {
+		for _, file := range pkg.Files {
+			child.CheckFile(ReadAST(file))
+		}
+	}
+
+	c.VarCtx.Def(NewIdentifier(decl.EffectiveName()), &ImportType{Decl: *decl})
+}
+
+func (c *Checker) DefineConstDecl(decl *ConstDecl) {
+	c.VarCtx.Def(decl.Name, decl.Type)
+}
+
+func (c *Checker) DefineTypeDecl(decl *TypeDecl) {
+	var ty Type
+	if len(decl.TypeParams.Params) > 0 {
+		ty = &NamedType{Name: decl.Name, Type: &GenericType{TypeParams: decl.TypeParams, Type: decl.Type}}
+	} else {
+		ty = &NamedType{Name: decl.Name, Type: decl.Type}
+	}
+	c.VarCtx.Def(decl.Name, ty)
+}
+
+func (c *Checker) DefineAliasDecl(decl *AliasDecl) {
+	c.VarCtx.Def(decl.Name, decl.Type)
+}
+
+func (c *Checker) DefineVarDecl(decl *VarDecl) {
+	var ty Type
+	if decl.Type == nil {
+		ty = &LazyType{Expr: decl.Expr}
+	} else {
+		ty = decl.Type
+	}
+	c.VarCtx.Def(decl.Name, ty)
+}
+
+func (c *Checker) DefineFunctionDecl(decl *FunctionDecl) {
+	c.VarCtx.Def(decl.Name, &FunctionType{Signature: decl.Signature})
+}
+
+func (c *Checker) DefineMethodDecl(decl *MethodDecl) {
+	pointerReceiver := false
+
+	receiverTy := decl.Receiver.Type
+	if pointerTy, ok := receiverTy.(*PointerType); ok {
+		receiverTy = pointerTy.BaseType
+		pointerReceiver = true
+	}
+
+	var methodHolder Identifier
+
+	switch receiverTy := receiverTy.(type) {
+	case *TypeName:
+		methodHolder = receiverTy.Name
+	case *TypeApplication:
+		methodHolder = receiverTy.Name
+	default:
+		spew.Dump(receiverTy)
+		panic("TODO")
+	}
+
+	methodTy := &MethodType{
+		PointerReceiver: pointerReceiver,
+		Type:            &FunctionType{Signature: decl.Signature},
+	}
+
+	methodName := NewIdentifier(fmt.Sprintf("%s.%s", methodHolder.Name, decl.Name.Name))
+
+	c.VarCtx.Def(methodName, methodTy)
+}
+
+// ========================
+
 func (c *Checker) CheckDecl(decl Decl) {
 	switch decl := decl.(type) {
+	case *ImportDecl:
+		c.CheckImportDecl(decl)
 	case *ConstDecl:
 		c.CheckConstDecl(decl)
 	case *TypeDecl:
@@ -961,8 +1168,12 @@ func (c *Checker) CheckDecl(decl Decl) {
 	}
 }
 
+func (c *Checker) CheckImportDecl(decl *ImportDecl) {
+	// nothing to do
+}
+
 func (c *Checker) CheckConstDecl(decl *ConstDecl) {
-	c.VarCtx.Def(decl.Name, decl.Type)
+	// TODO: check constant expressions?
 }
 
 func (c *Checker) CheckTypeDecl(decl *TypeDecl) {
@@ -979,12 +1190,6 @@ func (c *Checker) CheckTypeDecl(decl *TypeDecl) {
 	subst := scope.Verify()
 
 	scope.CheckSubst(decl.TypeParams, subst)
-
-	if len(decl.TypeParams.Params) > 0 {
-		c.VarCtx.Def(decl.Name, &NamedType{Name: decl.Name, Type: &GenericType{TypeParams: decl.TypeParams, Type: decl.Type}})
-	} else {
-		c.VarCtx.Def(decl.Name, &NamedType{Name: decl.Name, Type: decl.Type})
-	}
 }
 
 func (c *Checker) CheckTypeDeclType(ty Type) {
@@ -1016,6 +1221,8 @@ func (c *Checker) CheckTypeDeclType(ty Type) {
 		c.CheckTypeDeclType(ty.ElemType)
 	case *NamedType:
 		c.CheckTypeDeclType(ty.Type)
+	case *PointerType:
+		c.CheckTypeDeclType(ty.BaseType)
 	default:
 		spew.Dump(ty)
 		panic("unreachable")
@@ -1035,14 +1242,13 @@ func (c *Checker) CheckTypeDeclSignature(sig Signature) {
 }
 
 func (c *Checker) CheckAliasDecl(decl *AliasDecl) {
-	c.VarCtx.Def(decl.Name, decl.Type)
+	// nothing to do
 }
 
 func (c *Checker) CheckVarDecl(decl *VarDecl) {
 	if decl.Type != nil && decl.Expr != nil {
 		c.CheckAssignableTo(c.Synth(decl.Expr), decl.Type)
 	}
-	c.VarCtx.Def(decl.Name, decl.Type)
 }
 
 func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
@@ -1068,6 +1274,7 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 		}
 		named, ok := c.Resolve(under).(*NamedType)
 		if !ok {
+			spew.Dump(under)
 			panic("method on non-named type")
 		}
 		methodHolder = named
@@ -1114,11 +1321,8 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 	subst := scope.Verify()
 	scope.CheckSubst(decl.Signature.TypeParams, subst)
 
-	methodHolder.Methods = append(methodHolder.Methods, MethodElem{
-		Name:            decl.Name,
-		PointerReceiver: pointerReceiver,
-		Type:            &FunctionType{Signature: decl.Signature},
-	})
+	_ = methodHolder
+	_ = pointerReceiver
 }
 
 func (c *Checker) CheckFunctionDecl(decl *FunctionDecl) {
@@ -1142,8 +1346,6 @@ func (c *Checker) CheckFunctionDecl(decl *FunctionDecl) {
 
 	subst := scope.Verify()
 	scope.CheckSubst(decl.Signature.TypeParams, subst)
-
-	c.VarCtx.Def(decl.Name, &FunctionType{Signature: decl.Signature})
 }
 
 func (c *Checker) CheckStatementList(list StatementList) {
@@ -1155,6 +1357,7 @@ func (c *Checker) CheckStatementList(list StatementList) {
 func (c *Checker) CheckStatement(stmt Statement) {
 	switch stmt := stmt.(type) {
 	case *DeclStmt:
+		c.DefineDecl(stmt.Decl)
 		c.CheckDecl(stmt.Decl)
 	case *ExpressionStmt:
 		c.Synth(stmt.Expr) // ???
@@ -1166,9 +1369,22 @@ func (c *Checker) CheckStatement(stmt Statement) {
 		c.CheckIfStmt(stmt)
 	case *ShortVarDecl:
 		c.CheckShortVarDecl(stmt)
+	case *RangeStmt:
+		c.CheckRangeStmt(stmt)
 	default:
 		spew.Dump(stmt)
 		panic("unreachable")
+	}
+}
+
+func (c *Checker) CheckShortVarDecl(stmt *ShortVarDecl) {
+	if len(stmt.Names) != len(stmt.Exprs) {
+		// TODO tuple assignment
+		panic("wrong number of expressions")
+	}
+	for i, name := range stmt.Names {
+		ty := c.Synth(stmt.Exprs[i])
+		c.VarCtx.Def(name, ty)
 	}
 }
 
@@ -1188,15 +1404,8 @@ func (c *Checker) CheckIfStmt(stmt *IfStmt) {
 	panic("TODO")
 }
 
-func (c *Checker) CheckShortVarDecl(stmt *ShortVarDecl) {
-	if len(stmt.Names) != len(stmt.Exprs) {
-		// TODO tuple assignment
-		panic("wrong number of expressions")
-	}
-	for i, name := range stmt.Names {
-		ty := c.Synth(stmt.Exprs[i])
-		c.VarCtx.Def(name, ty)
-	}
+func (c *Checker) CheckRangeStmt(stmt *RangeStmt) {
+	panic("TODO")
 }
 
 // ========================
@@ -1446,7 +1655,7 @@ func (c *Checker) DoSelect(exprTy Type, sel Identifier) Type {
 
 	switch ty := c.Resolve(checkTy).(type) {
 	case *NamedType:
-		for _, m := range ty.Methods {
+		for _, m := range c.IdentifierMethods(ty.Name) {
 			if m.Name == sel {
 				return m.Type
 			}
@@ -1510,27 +1719,8 @@ func (c *Checker) SynthCallExpr(expr *CallExpr) Type {
 		switch ty := c.Synth(expr.Func).(type) {
 		case *FunctionType:
 			funcTy = ty
-		case *BuiltinNewType:
-			if len(expr.Args) != 1 {
-				panic("builtin new() takes exactly one argument")
-			}
-			return &PointerType{BaseType: c.Synth(expr.Args[0])}
-		case *BuiltinMakeType:
-			if len(expr.Args) == 0 {
-				panic("builtin make() takes at least one argument")
-			}
-			elemTy := c.Synth(expr.Args[0])
-			switch elemTy.(type) {
-			case *SliceType:
-			case *MapType:
-			case *ChannelType:
-			default:
-				panic("make() with non-slice, non-map, non-channel type")
-			}
-			for _, arg := range expr.Args[1:] {
-				c.CheckExpr(arg, c.Builtin("int"))
-			}
-			return elemTy
+		case *BuiltinFunctionType:
+			return c.SynthBuiltinFunctionCall(ty, expr)
 		default:
 			panic("not a function")
 		}
@@ -1578,6 +1768,35 @@ func (c *Checker) SynthCallExpr(expr *CallExpr) Type {
 		return returns[0]
 	default:
 		return &TupleType{Elems: returns}
+	}
+}
+
+func (c *Checker) SynthBuiltinFunctionCall(f *BuiltinFunctionType, expr *CallExpr) Type {
+	switch f.Name {
+	case "new":
+		if len(expr.Args) != 1 {
+			panic("builtin new() takes exactly one argument")
+		}
+		return &PointerType{BaseType: c.Synth(expr.Args[0])}
+	case "make":
+		if len(expr.Args) == 0 {
+			panic("builtin make() takes at least one argument")
+		}
+		elemTy := c.Synth(expr.Args[0])
+		switch elemTy.(type) {
+		case *SliceType:
+		case *MapType:
+		case *ChannelType:
+		default:
+			panic("make() with non-slice, non-map, non-channel type")
+		}
+		for _, arg := range expr.Args[1:] {
+			c.CheckExpr(arg, c.Builtin("int"))
+		}
+		return elemTy
+	default:
+		spew.Dump(f)
+		panic("unreachable")
 	}
 }
 
@@ -1776,9 +1995,9 @@ func (c *Checker) ApplySubst(ty Type, subst Subst) Type {
 		return &TupleType{Elems: elems}
 	case *NamedType:
 		return &NamedType{
-			Name:    ty.Name,
-			Type:    c.ApplySubst(ty.Type, subst),
-			Methods: c.ApplySubstMethodList(ty.Methods, subst),
+			Name: ty.Name,
+			Type: c.ApplySubst(ty.Type, subst),
+			// Methods: c.ApplySubstMethodList(ty.Methods, subst),
 		}
 	default:
 		spew.Dump(ty)
@@ -1915,6 +2134,8 @@ func (c *Checker) Verify() Subst {
 			break
 		}
 	}
+
+	subst = c.Simplify(subst)
 
 	fmt.Println("=== subst ===")
 	fmt.Println(subst)
@@ -2256,13 +2477,14 @@ func (c *Checker) MethodSet(ty Type) ([]MethodElem, bool) {
 		ty = pointerTy.BaseType
 		pointerReceiver = true
 	}
+
 	switch ty := c.Resolve(ty).(type) {
 	case *NamedType:
-		return ty.Methods, pointerReceiver
+		return c.IdentifierMethods(ty.Name), pointerReceiver
 	case *TypeApplication:
 		named, subst := c.InstantiateType(ty)
 		methods := []MethodElem{}
-		for _, m := range named.Methods {
+		for _, m := range c.IdentifierMethods(named.Name) {
 			methods = append(methods, MethodElem{
 				Name: m.Name,
 				Type: c.ApplySubst(m.Type, subst).(*FunctionType),
@@ -2273,6 +2495,23 @@ func (c *Checker) MethodSet(ty Type) ([]MethodElem, bool) {
 		spew.Dump(ty)
 		panic(fmt.Sprintf("type %v cannot have methods", ty))
 	}
+}
+
+func (c *Checker) IdentifierMethods(id Identifier) []MethodElem {
+	methods := []MethodElem{}
+
+	c.VarCtx.Iter(func(name Identifier, ty Type) {
+		if strings.HasPrefix(name.Name, id.Name+".") {
+			methodTy := ty.(*MethodType)
+			methods = append(methods, MethodElem{
+				Name:            Identifier{Name: name.Name[len(id.Name)+1:]},
+				Type:            methodTy.Type,
+				PointerReceiver: methodTy.PointerReceiver,
+			})
+		}
+	})
+
+	return methods
 }
 
 func (c *Checker) IsTypeParam(ty Type) bool {
@@ -2586,11 +2825,29 @@ func ReadGenDecl(decl *ast.GenDecl) []Decl {
 	case token.VAR:
 		return ReadVarDecl(decl)
 	case token.IMPORT:
-		return nil
+		return ReadImport(decl)
 	default:
 		spew.Dump(decl)
 		panic("unreachable")
 	}
+}
+
+func ReadImport(decl *ast.GenDecl) []Decl {
+	var decls []Decl
+	for _, spec := range decl.Specs {
+		spec := spec.(*ast.ImportSpec)
+		var name *Identifier
+		if spec.Name != nil {
+			name = Ptr(NewIdentifier(spec.Name.Name))
+		}
+		path := spec.Path.Value
+		path = path[1 : len(path)-1]
+		decls = append(decls, &ImportDecl{
+			Path:  path,
+			Alias: name,
+		})
+	}
+	return decls
 }
 
 func ReadConstDecl(decl *ast.GenDecl) []Decl {
@@ -2811,6 +3068,9 @@ func ReadResultsList(list *ast.FieldList) ParameterList {
 }
 
 func ReadBlockStmt(block *ast.BlockStmt) StatementList {
+	if block == nil {
+		return StatementList{}
+	}
 	var stmts []Statement
 	for _, stmt := range block.List {
 		stmts = append(stmts, ReadStmt(stmt))
@@ -3178,6 +3438,14 @@ func ReadBinaryOp(op token.Token) BinaryOp {
 	switch op {
 	case token.ADD:
 		return BinaryOpAdd
+	case token.SUB:
+		return BinaryOpSub
+	case token.MUL:
+		return BinaryOpMul
+	case token.QUO:
+		return BinaryOpQuo
+	case token.REM:
+		return BinaryOpRem
 	case token.EQL:
 		return BinaryOpEq
 	case token.NEQ:
@@ -3198,6 +3466,10 @@ func ReadBinaryOp(op token.Token) BinaryOp {
 		return BinaryOpLAnd
 	case token.LOR:
 		return BinaryOpLOr
+	case token.SHL:
+		return BinaryOpShl
+	case token.SHR:
+		return BinaryOpShr
 	case token.ARROW:
 		return BinaryOpArrow
 	default:
@@ -3218,6 +3490,8 @@ func ReadUnaryOp(op token.Token) UnaryOp {
 		return UnaryOpDeref
 	case token.ARROW:
 		return UnaryOpArrow
+	case token.XOR:
+		return UnaryOpXor
 	default:
 		spew.Dump(op)
 		panic("unreachable")
@@ -3271,7 +3545,12 @@ func ReadLiteral(lit *ast.BasicLit) Literal {
 		return &LiteralInt{Value: lit.Value}
 	case token.STRING:
 		return &LiteralString{Value: lit.Value}
+	case token.CHAR:
+		return &LiteralRune{Value: lit.Value}
+	case token.FLOAT:
+		return &LiteralFloat{Value: lit.Value}
 	default:
+		spew.Dump(lit)
 		panic("unreachable")
 	}
 }
@@ -3334,6 +3613,8 @@ func ReadType(expr ast.Expr) Type {
 	case *ast.SelectorExpr:
 		// TODO packages :')
 		return &TypeName{Name: NewIdentifier(expr.Sel.Name)}
+	case *ast.ParenExpr:
+		return ReadType(expr.X)
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
@@ -3392,6 +3673,24 @@ func ReadInterfaceType(expr *ast.InterfaceType) *InterfaceType {
 		}
 	}
 	return &InterfaceType{Methods: methods, Constraints: constraints}
+}
+
+// ========================
+
+func ParseExpr(src string) Expr {
+	expr, err := parser.ParseExpr(src)
+	if err != nil {
+		panic(err)
+	}
+	return ReadExpr(expr)
+}
+
+func ParseType(src string) Type {
+	expr, err := parser.ParseExpr(src)
+	if err != nil {
+		panic(err)
+	}
+	return ReadType(expr)
 }
 
 // ========================
@@ -3560,7 +3859,7 @@ func getValue(id *struct{Value int}) int {
 	_ = src
 
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", src, parser.ParseComments)
+	f, err := parser.ParseFile(fset, "example.go", src, parser.ParseComments)
 	if err != nil {
 		panic(err)
 	}
