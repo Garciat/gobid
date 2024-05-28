@@ -58,6 +58,64 @@ func (*NilType) String() string {
 	return "type(nil)"
 }
 
+type UntypedConstantKind int
+
+const (
+	UntypedConstantInt UntypedConstantKind = iota
+	UntypedConstantFloat
+	UntypedConstantComplex
+	UntypedConstantRune
+	UntypedConstantString
+	UntypedConstantBool
+)
+
+func (k UntypedConstantKind) String() string {
+	switch k {
+	case UntypedConstantInt:
+		return "int"
+	case UntypedConstantFloat:
+		return "float"
+	case UntypedConstantComplex:
+		return "complex"
+	case UntypedConstantRune:
+		return "rune"
+	case UntypedConstantString:
+		return "string"
+	case UntypedConstantBool:
+		return "bool"
+	default:
+		panic("unreachable")
+	}
+}
+
+type UntypedConstantType struct {
+	TypeBase
+	Kind UntypedConstantKind
+}
+
+func (t *UntypedConstantType) IsCompatible(builtin string) bool {
+	switch t.Kind {
+	case UntypedConstantInt:
+		return slices.Contains([]string{"int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr"}, builtin)
+	case UntypedConstantFloat:
+		return slices.Contains([]string{"float32", "float64"}, builtin)
+	case UntypedConstantComplex:
+		return slices.Contains([]string{"complex64", "complex128"}, builtin)
+	case UntypedConstantRune:
+		return slices.Contains([]string{"rune"}, builtin)
+	case UntypedConstantString:
+		return slices.Contains([]string{"string"}, builtin)
+	case UntypedConstantBool:
+		return slices.Contains([]string{"bool"}, builtin)
+	default:
+		panic("unreachable")
+	}
+}
+
+func (t *UntypedConstantType) String() string {
+	return fmt.Sprintf("type(untyped %s)", t.Kind.String())
+}
+
 type MethodType struct {
 	TypeBase
 	PointerReceiver bool
@@ -772,6 +830,11 @@ type ForStmt struct {
 	Body StatementList
 }
 
+type BlockStmt struct {
+	StatementBase
+	Body StatementList
+}
+
 type StatementList struct {
 	Stmts []Statement
 }
@@ -1060,7 +1123,6 @@ func (c *Checker) Lookup(name Identifier) Type {
 	if ok {
 		return ty
 	}
-	fmt.Printf("=== %v\n", c.VarCtx)
 	panic(fmt.Errorf("undefined: %v", name))
 }
 
@@ -1818,16 +1880,8 @@ func (c *Checker) CheckNameExpr(expr *NameExpr, ty Type) {
 }
 
 func (c *Checker) CheckLiteralExpr(expr *LiteralExpr, ty Type) {
-	switch expr.Literal.(type) {
-	case *LiteralInt:
-		c.TyCtx.AddEq(ty, c.Builtin("int"))
-	case *LiteralBool:
-		c.TyCtx.AddEq(ty, c.Builtin("bool"))
-	case *LiteralString:
-		c.TyCtx.AddEq(ty, c.Builtin("string"))
-	default:
-		panic("unreachable")
-	}
+	exprTy := c.Synth(expr)
+	c.CheckAssignableTo(exprTy, ty)
 }
 
 func (c *Checker) CheckCompositeLitExpr(expr *CompositeLitExpr, ty Type) {
@@ -1990,6 +2044,12 @@ func (c *Checker) SynthIndexExpr(expr *IndexExpr) Type {
 			panic("indexing a slice with multiple indices")
 		}
 		c.CheckExpr(expr.Indices[0], c.Builtin("int"))
+		return exprTy.ElemType
+	case *MapType:
+		if len(expr.Indices) != 1 {
+			panic("indexing a map with multiple indices")
+		}
+		c.CheckExpr(expr.Indices[0], exprTy.KeyType)
 		return exprTy.ElemType
 	case *FunctionType:
 		panic("unexpected function type (should be handled by CallExpr)")
@@ -2191,14 +2251,31 @@ func (c *Checker) SynthLiteralExpr(expr *LiteralExpr) Type {
 	// TODO untype literal types
 	switch expr.Literal.(type) {
 	case *LiteralInt:
-		return c.Builtin("int")
+		return &UntypedConstantType{Kind: UntypedConstantInt}
 	case *LiteralBool:
-		return c.Builtin("bool")
+		return &UntypedConstantType{Kind: UntypedConstantBool}
 	case *LiteralString:
-		return c.Builtin("string")
+		return &UntypedConstantType{Kind: UntypedConstantString}
 	case *LiteralFloat:
-		return c.Builtin("float64")
+		return &UntypedConstantType{Kind: UntypedConstantFloat}
 	case *LiteralRune:
+		return &UntypedConstantType{Kind: UntypedConstantRune}
+	default:
+		panic("unreachable")
+	}
+}
+
+func (c *Checker) UntypedDefaultType(ty *UntypedConstantType) Type {
+	switch ty.Kind {
+	case UntypedConstantInt:
+		return c.Builtin("int")
+	case UntypedConstantBool:
+		return c.Builtin("bool")
+	case UntypedConstantString:
+		return c.Builtin("string")
+	case UntypedConstantFloat:
+		return c.Builtin("float64")
+	case UntypedConstantRune:
 		return c.Builtin("rune")
 	default:
 		panic("unreachable")
@@ -2398,6 +2475,8 @@ func (c *Checker) ApplySubst(ty Type, subst Subst) Type {
 			// Methods: c.ApplySubstMethodList(ty.Methods, subst),
 		}
 	case *NilType:
+		return ty
+	case *UntypedConstantType:
 		return ty
 	default:
 		spew.Dump(ty)
@@ -2634,6 +2713,13 @@ func (c *Checker) UnifyEq(left, right Type, subst Subst) {
 		c.UnifyEq(right, left, subst) // TODO weird?
 	case *NamedType:
 		c.UnifyEq(c.Under(left), c.Under(right), subst)
+	case *UntypedConstantType:
+		if right, ok := right.(*TypeBuiltin); ok {
+			if left.IsCompatible(right.Name.Value) {
+				return
+			}
+		}
+		c.UnifyEq(c.UntypedDefaultType(left), right, subst)
 	default:
 		spew.Dump(left, right)
 		panic("unreachable")
@@ -2983,6 +3069,8 @@ func (c *Checker) IsConcreteType(ty Type) bool {
 		return c.IsConcreteType(c.TypeApplication(ty))
 	case *NamedType:
 		return c.IsConcreteType(ty.Type)
+	case *UntypedConstantType:
+		return true
 	default:
 		spew.Dump(ty)
 		panic("unreachable")
@@ -3082,6 +3170,8 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 			return c.IdenticalFunctionTypes(ty1, ty2)
 		}
 		return false
+	case *UntypedConstantType:
+		return false // TODO ???
 	default:
 		spew.Dump(ty1, ty2)
 		panic("unreachable")
@@ -3347,14 +3437,14 @@ func ReadFuncDecl(decl *ast.FuncDecl) []Decl {
 		return []Decl{&FunctionDecl{
 			Name:      NewIdentifier(decl.Name.Name),
 			Signature: ReadSignature(decl.Type),
-			Body:      ReadBlockStmt(decl.Body),
+			Body:      ReadStatementList(decl.Body),
 		}}
 	} else {
 		return []Decl{&MethodDecl{
 			Receiver:  ReadReceiver(decl.Recv.List[0]),
 			Name:      NewIdentifier(decl.Name.Name),
 			Signature: ReadSignature(decl.Type),
-			Body:      ReadBlockStmt(decl.Body),
+			Body:      ReadStatementList(decl.Body),
 		}}
 
 	}
@@ -3514,7 +3604,11 @@ func ReadResultsList(list *ast.FieldList) ParameterList {
 	return ParameterList{Params: params}
 }
 
-func ReadBlockStmt(block *ast.BlockStmt) StatementList {
+func ReadBlockStmt(block *ast.BlockStmt) Statement {
+	return &BlockStmt{Body: ReadStatementList(block)}
+}
+
+func ReadStatementList(block *ast.BlockStmt) StatementList {
 	if block == nil {
 		return StatementList{}
 	}
@@ -3571,6 +3665,8 @@ func ReadStmt(stmt ast.Stmt) Statement {
 		}
 	case *ast.SelectStmt:
 		return &SelectStmt{Cases: ReadCommCases(stmt.Body.List)}
+	case *ast.BlockStmt:
+		return ReadBlockStmt(stmt)
 	default:
 		spew.Dump(stmt)
 		panic("unreachable")
@@ -3613,8 +3709,8 @@ func ReadIfStmt(stmt *ast.IfStmt) Statement {
 	return &IfStmt{
 		Init: init,
 		Cond: ReadExpr(stmt.Cond),
-		Body: ReadBlockStmt(stmt.Body),
-		Else: elseStmt, // TODO
+		Body: ReadStatementList(stmt.Body),
+		Else: elseStmt,
 	}
 }
 
@@ -3623,7 +3719,7 @@ func ReadElseStmt(stmt ast.Stmt) Statement {
 	case *ast.BlockStmt:
 		return &IfStmt{
 			Cond: nil,
-			Body: ReadBlockStmt(stmt),
+			Body: ReadStatementList(stmt),
 		}
 	case *ast.IfStmt:
 		return ReadIfStmt(stmt)
@@ -3668,7 +3764,7 @@ func ReadRangeStmt(stmt *ast.RangeStmt) Statement {
 		Key:    ReadExpr(stmt.Key),
 		Value:  ReadExpr(stmt.Value),
 		X:      ReadExpr(stmt.X),
-		Body:   ReadBlockStmt(stmt.Body),
+		Body:   ReadStatementList(stmt.Body),
 	}
 }
 
@@ -3787,7 +3883,7 @@ func ReadForStmt(stmt *ast.ForStmt) Statement {
 		Init: init,
 		Cond: cond,
 		Post: post,
-		Body: ReadBlockStmt(stmt.Body),
+		Body: ReadStatementList(stmt.Body),
 	}
 }
 
@@ -3908,7 +4004,7 @@ func ReadUnaryExpr(expr *ast.UnaryExpr) Expr {
 func ReadFuncLit(expr *ast.FuncLit) Expr {
 	return &FuncLitExpr{
 		Signature: ReadSignature(expr.Type),
-		Body:      ReadBlockStmt(expr.Body),
+		Body:      ReadStatementList(expr.Body),
 	}
 }
 
@@ -4097,8 +4193,10 @@ func ReadType(expr ast.Expr) Type {
 			ElemType: ReadType(expr.Value),
 		}
 	case *ast.SelectorExpr:
-		// TODO packages :')
-		return &TypeName{Name: NewIdentifier(expr.Sel.Name)}
+		return &QualIdentifier{
+			Package: expr.X.(*ast.Ident).Name,
+			Name:    NewIdentifier(expr.Sel.Name),
+		}
 	case *ast.ParenExpr:
 		return ReadType(expr.X)
 	default:
@@ -4388,7 +4486,7 @@ func callParse() (int, error) {
 	_ = src
 
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "example.go", src, parser.ParseComments)
+	f, err := parser.ParseFile(fset, "example.go", nil, parser.ParseComments)
 	if err != nil {
 		panic(err)
 	}
