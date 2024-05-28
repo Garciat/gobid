@@ -2646,11 +2646,6 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 
 	fmt.Printf("? %v <: %v %v\n", sub, super, subst)
 
-	if c.IsConcreteType(super) {
-		c.UnifyEq(sub, super, subst)
-		return
-	}
-
 	if sub, ok := c.Resolve(sub).(*TypeParam); ok {
 		if !c.Identical(sub, super) && c.ContainsTypeParam(super, sub) {
 			panic(fmt.Sprintf("circular constraint: %v <: %v", sub, super))
@@ -2673,6 +2668,11 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 		}
 	}
 
+	if c.IsConcreteType(super) {
+		c.UnifyEq(sub, super, subst)
+		return
+	}
+
 	switch super := super.(type) {
 	case *InterfaceType:
 		var typeset *TypeSet
@@ -2684,6 +2684,11 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 	case *TypeApplication:
 		c.UnifySubtype(sub, c.Under(super), subst) // TODO: adding more constraints?
 	case *NamedType:
+		if subTy, ok := sub.(*NamedType); ok {
+			if subTy.Name == super.Name {
+				return
+			}
+		}
 		c.UnifySubtype(sub, c.Under(super), subst)
 	case *TypeParam:
 		if subTy, ok := c.Resolve(sub).(*TypeParam); ok {
