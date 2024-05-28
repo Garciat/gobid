@@ -1387,7 +1387,11 @@ func (c *Checker) CheckFunctionDecl(decl *FunctionDecl) {
 	}
 
 	for _, param := range decl.Signature.Params.Params {
-		scope.VarCtx.Def(param.Name, param.Type)
+		if param.Variadic {
+			scope.VarCtx.Def(param.Name, &SliceType{ElemType: param.Type})
+		} else {
+			scope.VarCtx.Def(param.Name, param.Type)
+		}
 	}
 
 	for _, result := range decl.Signature.Results.Params {
@@ -4115,8 +4119,11 @@ func getValue(id *struct{Value int}) int {
 	return id.Value
 }
 
-func variadic(x ...int) []int {
-	return x
+func variadic(xs ...int) []int {
+	for _, x := range xs {
+
+	}
+	return xs
 }
 
 func useVariadic() {
