@@ -21,14 +21,14 @@ func Ptr[T any](x T) *T {
 
 // ========================
 
-var IgnoreIdent = Identifier{Name: "_"}
+var IgnoreIdent = Identifier{Value: "_"}
 
 type Identifier struct {
-	Name string
+	Value string
 }
 
 func (i Identifier) String() string {
-	return i.Name
+	return i.Value
 }
 
 func NewIdentifier(name string) Identifier {
@@ -83,7 +83,7 @@ type TypeBuiltin struct {
 }
 
 func (t *TypeBuiltin) String() string {
-	return fmt.Sprintf("%sᵢ", t.Name.Name)
+	return fmt.Sprintf("%sᵢ", t.Name.Value)
 }
 
 type TypeName struct {
@@ -92,7 +92,7 @@ type TypeName struct {
 }
 
 func (t *TypeName) String() string {
-	return fmt.Sprintf("%sₙ", t.Name.Name)
+	return fmt.Sprintf("%sₙ", t.Name.Value)
 }
 
 type NamedType struct {
@@ -102,7 +102,7 @@ type NamedType struct {
 }
 
 func (t *NamedType) String() string {
-	return fmt.Sprintf("type %s %v", t.Name.Name, t.Type)
+	return fmt.Sprintf("type %s %v", t.Name.Value, t.Type)
 }
 
 type TypeParam struct {
@@ -112,12 +112,25 @@ type TypeParam struct {
 }
 
 func (t *TypeParam) String() string {
-	return fmt.Sprintf("%sₚ", t.Name.Name)
+	return fmt.Sprintf("%sₚ", t.Name.Value)
+}
+
+type QualIdentifier struct {
+	TypeBase
+	Package string // can be empty
+	Name    Identifier
+}
+
+func (i QualIdentifier) String() string {
+	if i.Package == "" {
+		return i.Name.String()
+	}
+	return fmt.Sprintf("%s.%s", i.Package, i.Name)
 }
 
 type TypeApplication struct {
 	TypeBase
-	Name Identifier
+	ID   *QualIdentifier
 	Args []Type
 }
 
@@ -126,7 +139,7 @@ func (t *TypeApplication) String() string {
 	for _, arg := range t.Args {
 		parts = append(parts, fmt.Sprintf("%v", arg))
 	}
-	return fmt.Sprintf("%s[%s]", t.Name.Name, strings.Join(parts, ", "))
+	return fmt.Sprintf("%v[%s]", t.ID, strings.Join(parts, ", "))
 }
 
 type ArrayType struct {
@@ -391,6 +404,8 @@ const (
 
 	BinaryOpAnd
 	BinaryOpOr
+	BinaryOpXor
+	BinaryOpAndNot
 
 	BinaryOpLAnd
 	BinaryOpLOr
@@ -482,6 +497,10 @@ type Expr interface {
 type ExprBase struct{}
 
 func (ExprBase) _Expr() {}
+
+type EllipsisExpr struct {
+	ExprBase
+}
 
 type BinaryExpr struct {
 	ExprBase
@@ -680,6 +699,27 @@ type IncDecStmt struct {
 	Inc  bool
 }
 
+type SendStmt struct {
+	StatementBase
+	Chan  Expr
+	Value Expr
+}
+
+type ReceiveStmt struct {
+	StatementBase
+	Chan Expr
+}
+
+type SelectStmt struct {
+	StatementBase
+	Cases []SelectCase
+}
+
+type SelectCase struct {
+	Comm Statement
+	Body StatementList
+}
+
 type AssignmentStmt struct {
 	StatementBase
 	LHS []Expr
@@ -754,7 +794,7 @@ type ImportDecl struct {
 
 func (d *ImportDecl) EffectiveName() string {
 	if d.Alias != nil {
-		return d.Alias.Name
+		return d.Alias.Value
 	}
 	parts := strings.Split(d.Path, "/")
 	return parts[len(parts)-1]
@@ -822,6 +862,7 @@ type TypeParamDecl struct {
 // ========================
 
 type File struct {
+	Path  string
 	Decls []Decl
 }
 
@@ -959,33 +1000,33 @@ func NewChecker() *Checker {
 	builtins := VarContext{Types: map[Identifier]Type{
 		NewIdentifier("any"): EmptyInterface(),
 
-		NewIdentifier("bool"): &TypeBuiltin{Name: Identifier{Name: "bool"}},
+		NewIdentifier("bool"): &TypeBuiltin{Name: Identifier{Value: "bool"}},
 
-		NewIdentifier("byte"): &TypeBuiltin{Name: Identifier{Name: "byte"}},
-		NewIdentifier("rune"): &TypeBuiltin{Name: Identifier{Name: "rune"}},
+		NewIdentifier("byte"): &TypeBuiltin{Name: Identifier{Value: "byte"}},
+		NewIdentifier("rune"): &TypeBuiltin{Name: Identifier{Value: "rune"}},
 
-		NewIdentifier("int"):     &TypeBuiltin{Name: Identifier{Name: "int"}},
-		NewIdentifier("int8"):    &TypeBuiltin{Name: Identifier{Name: "int8"}},
-		NewIdentifier("int16"):   &TypeBuiltin{Name: Identifier{Name: "int16"}},
-		NewIdentifier("int32"):   &TypeBuiltin{Name: Identifier{Name: "int32"}},
-		NewIdentifier("int64"):   &TypeBuiltin{Name: Identifier{Name: "int64"}},
-		NewIdentifier("uint"):    &TypeBuiltin{Name: Identifier{Name: "uint"}},
-		NewIdentifier("uint8"):   &TypeBuiltin{Name: Identifier{Name: "uint8"}},
-		NewIdentifier("uint16"):  &TypeBuiltin{Name: Identifier{Name: "uint16"}},
-		NewIdentifier("uint32"):  &TypeBuiltin{Name: Identifier{Name: "uint32"}},
-		NewIdentifier("uint64"):  &TypeBuiltin{Name: Identifier{Name: "uint64"}},
-		NewIdentifier("uintptr"): &TypeBuiltin{Name: Identifier{Name: "uintptr"}},
-		NewIdentifier("float32"): &TypeBuiltin{Name: Identifier{Name: "float32"}},
-		NewIdentifier("float64"): &TypeBuiltin{Name: Identifier{Name: "float64"}},
+		NewIdentifier("int"):     &TypeBuiltin{Name: Identifier{Value: "int"}},
+		NewIdentifier("int8"):    &TypeBuiltin{Name: Identifier{Value: "int8"}},
+		NewIdentifier("int16"):   &TypeBuiltin{Name: Identifier{Value: "int16"}},
+		NewIdentifier("int32"):   &TypeBuiltin{Name: Identifier{Value: "int32"}},
+		NewIdentifier("int64"):   &TypeBuiltin{Name: Identifier{Value: "int64"}},
+		NewIdentifier("uint"):    &TypeBuiltin{Name: Identifier{Value: "uint"}},
+		NewIdentifier("uint8"):   &TypeBuiltin{Name: Identifier{Value: "uint8"}},
+		NewIdentifier("uint16"):  &TypeBuiltin{Name: Identifier{Value: "uint16"}},
+		NewIdentifier("uint32"):  &TypeBuiltin{Name: Identifier{Value: "uint32"}},
+		NewIdentifier("uint64"):  &TypeBuiltin{Name: Identifier{Value: "uint64"}},
+		NewIdentifier("uintptr"): &TypeBuiltin{Name: Identifier{Value: "uintptr"}},
+		NewIdentifier("float32"): &TypeBuiltin{Name: Identifier{Value: "float32"}},
+		NewIdentifier("float64"): &TypeBuiltin{Name: Identifier{Value: "float64"}},
 
-		NewIdentifier("IntegerType"): &TypeBuiltin{Name: Identifier{Name: "int"}}, // TODO hack
+		NewIdentifier("IntegerType"): &TypeBuiltin{Name: Identifier{Value: "int"}}, // TODO hack
 
-		NewIdentifier("string"): &TypeBuiltin{Name: Identifier{Name: "string"}},
+		NewIdentifier("string"): &TypeBuiltin{Name: Identifier{Value: "string"}},
 
-		NewIdentifier("true"):  &TypeBuiltin{Name: Identifier{Name: "bool"}},
-		NewIdentifier("false"): &TypeBuiltin{Name: Identifier{Name: "bool"}},
+		NewIdentifier("true"):  &TypeBuiltin{Name: Identifier{Value: "bool"}},
+		NewIdentifier("false"): &TypeBuiltin{Name: Identifier{Value: "bool"}},
 		NewIdentifier("nil"):   &NilType{},
-		NewIdentifier("error"): &NamedType{Name: Identifier{Name: "error"}, Type: ParseType("interface{Error() string}")},
+		NewIdentifier("error"): &NamedType{Name: Identifier{Value: "error"}, Type: ParseType("interface{Error() string}")},
 
 		NewIdentifier("len"):    &BuiltinFunctionType{Name: "len"},
 		NewIdentifier("cap"):    &BuiltinFunctionType{Name: "cap"},
@@ -1007,7 +1048,7 @@ func NewChecker() *Checker {
 
 func (c *Checker) FreshTypeName() Identifier {
 	*c.Fresh = *c.Fresh + 1
-	return Identifier{Name: fmt.Sprintf("@T%d", *c.Fresh)}
+	return Identifier{Value: fmt.Sprintf("@T%d", *c.Fresh)}
 }
 
 func (c *Checker) Lookup(name Identifier) Type {
@@ -1019,6 +1060,7 @@ func (c *Checker) Lookup(name Identifier) Type {
 	if ok {
 		return ty
 	}
+	fmt.Printf("=== %v\n", c.VarCtx)
 	panic(fmt.Errorf("undefined: %v", name))
 }
 
@@ -1076,10 +1118,15 @@ func (c *Checker) AssertInFunctionScope() *Signature {
 
 // ========================
 
-func (c *Checker) CheckFile(file File) {
+func (c *Checker) LoadFile(file File) {
+	fmt.Printf("=== LoadFile(%v) ===\n", file.Path)
 	for _, decl := range file.Decls {
 		c.DefineDecl(decl)
 	}
+}
+
+func (c *Checker) CheckFile(file File) {
+	fmt.Printf("=== CheckFile(%v) ===\n", file.Path)
 	for _, decl := range file.Decls {
 		c.CheckDecl(decl)
 	}
@@ -1112,6 +1159,40 @@ func (c *Checker) DefineDecl(decl Decl) {
 func (c *Checker) DefineImportDecl(decl *ImportDecl) {
 	fmt.Printf("=== DefineImportDecl(%v) ===\n", decl.Path)
 
+	var scope VarContext
+
+	switch decl.Path {
+	case "unsafe":
+		scope = c.ReadUnsafePackage()
+	default:
+		scope = c.ReadPackage(decl)
+	}
+
+	c.Define(NewIdentifier(decl.EffectiveName()), &ImportType{Decl: *decl, Scope: scope})
+
+	fmt.Printf("=== done DefineImportDecl(%v) ===\n", decl.Path)
+}
+
+func (c *Checker) ReadUnsafePackage() VarContext {
+	return VarContext{Types: map[Identifier]Type{
+		NewIdentifier("Pointer"):    &TypeBuiltin{Name: Identifier{Value: "Pointer"}},
+		NewIdentifier("Sizeof"):     ParseType("func(interface{}) uintptr"),
+		NewIdentifier("Offsetof"):   ParseType("func(interface{}) uintptr"),
+		NewIdentifier("Alignof"):    ParseType("func(interface{}) uintptr"),
+		NewIdentifier("Add"):        ParseType("func(Pointer, int) Pointer"),
+		NewIdentifier("String"):     ParseType("func(*byte, int) string"),
+		NewIdentifier("StringData"): ParseType("func(string) *byte"),
+	}}
+}
+
+var packageCache = map[string]VarContext{} // TODO are paths relative or module-based?
+
+func (c *Checker) ReadPackage(decl *ImportDecl) VarContext {
+	if cached, ok := packageCache[decl.Path]; ok {
+		fmt.Printf("using cached %v\n", decl.Path)
+		return cached
+	}
+
 	out, err := exec.Command("go", "env", "GOROOT").Output()
 	if err != nil {
 		panic(fmt.Errorf("failed to get GOROOT: %w", err))
@@ -1128,15 +1209,30 @@ func (c *Checker) DefineImportDecl(decl *ImportDecl) {
 	}
 
 	child := NewChecker()
+
+	files := []File{}
 	for _, pkg := range packages {
-		for _, file := range pkg.Files {
-			child.CheckFile(ReadAST(file))
+		fmt.Printf("package %v\n", pkg.Name)
+		if strings.HasSuffix(pkg.Name, "_test") {
+			// TODO handle "." import
+			fmt.Printf("skipping test package\n")
+			continue
+		}
+		for filename, f := range pkg.Files {
+			files = append(files, ReadAST(filename, f))
 		}
 	}
 
-	c.Define(NewIdentifier(decl.EffectiveName()), &ImportType{Decl: *decl, Scope: child.VarCtx})
+	packageCache[decl.Path] = child.VarCtx
 
-	fmt.Printf("=== done DefineImportDecl(%v) ===\n", decl.Path)
+	for _, file := range files {
+		child.LoadFile(file)
+	}
+	for _, file := range files {
+		child.CheckFile(file)
+	}
+
+	return child.VarCtx
 }
 
 func (c *Checker) DefineConstDecl(decl *ConstDecl) {
@@ -1186,7 +1282,10 @@ func (c *Checker) DefineMethodDecl(decl *MethodDecl) {
 	case *TypeName:
 		methodHolder = receiverTy.Name
 	case *TypeApplication:
-		methodHolder = receiverTy.Name
+		if receiverTy.ID.Package != "" {
+			panic("cannot have package-qualified receiver type")
+		}
+		methodHolder = receiverTy.ID.Name
 	default:
 		spew.Dump(receiverTy)
 		panic("TODO")
@@ -1197,7 +1296,7 @@ func (c *Checker) DefineMethodDecl(decl *MethodDecl) {
 		Type:            &FunctionType{Signature: decl.Signature},
 	}
 
-	methodName := NewIdentifier(fmt.Sprintf("%s.%s", methodHolder.Name, decl.Name.Name))
+	methodName := NewIdentifier(fmt.Sprintf("%s.%s", methodHolder.Value, decl.Name.Value))
 
 	c.Define(methodName, methodTy)
 }
@@ -1334,7 +1433,7 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 		}
 		methodHolder = named
 	case *TypeApplication:
-		under := c.Lookup(ty.Name)
+		under := c.Resolve(ty.ID)
 		named, ok := c.Resolve(under).(*NamedType)
 		if !ok {
 			panic("method on non-named type")
@@ -1431,6 +1530,8 @@ func (c *Checker) CheckStatement(stmt Statement) {
 		c.CheckIncDecStmt(stmt)
 	case *AssignmentStmt:
 		c.CheckAssignmentStmt(stmt)
+	case *BranchStmt:
+		// nothing?
 	default:
 		spew.Dump(stmt)
 		panic("unreachable")
@@ -1611,7 +1712,7 @@ var NumericTypes = [...]string{"int", "int8", "int16", "int32", "int64", "uint",
 func (c *Checker) IsNumeric(ty Type) bool {
 	switch ty := c.Under(ty).(type) {
 	case *TypeBuiltin:
-		return slices.Contains(NumericTypes[:], ty.Name.Name)
+		return slices.Contains(NumericTypes[:], ty.Name.Value)
 	default:
 		return false
 	}
@@ -1711,8 +1812,12 @@ func (c *Checker) CheckLiteralExpr(expr *LiteralExpr, ty Type) {
 }
 
 func (c *Checker) CheckCompositeLitExpr(expr *CompositeLitExpr, ty Type) {
-	exprTy := c.Synth(expr)
-	c.CheckAssignableTo(exprTy, ty)
+	if expr.Type == nil {
+		c.MakeCompositeLit(expr, ty)
+	} else {
+		exprTy := c.Synth(expr)
+		c.CheckAssignableTo(exprTy, ty)
+	}
 }
 
 func (c *Checker) CheckAssignableTo(src, dst Type) {
@@ -1900,7 +2005,7 @@ func (c *Checker) SynthCallExpr(expr *CallExpr) Type {
 			}
 			switch elemType := c.Under(ty.ElemType).(type) {
 			case *TypeBuiltin:
-				if elemType.Name.Name == "byte" {
+				if elemType.Name.Value == "byte" {
 					c.CheckAssignableTo(c.Synth(expr.Args[0]), c.Builtin("string"))
 					return ty
 				}
@@ -2065,11 +2170,15 @@ func (c *Checker) SynthLiteralExpr(expr *LiteralExpr) Type {
 }
 
 func (c *Checker) SynthCompositeLitExpr(expr *CompositeLitExpr) Type {
-	switch exprTy := c.Under(expr.Type).(type) {
+	return c.MakeCompositeLit(expr, expr.Type)
+}
+
+func (c *Checker) MakeCompositeLit(expr *CompositeLitExpr, targetTy Type) Type {
+	switch exprTy := c.Under(targetTy).(type) {
 	case *StructType:
-		return c.SynthCompositeLitExprStruct(expr, exprTy)
+		return c.MakeCompositeLitStruct(expr, exprTy)
 	case *SliceType:
-		return c.SynthCompositeLitExprSlice(expr, exprTy)
+		return c.MakeCompositeLitSlice(expr, exprTy)
 	default:
 		// TODO MapType, ArrayType
 		spew.Dump(expr)
@@ -2077,7 +2186,7 @@ func (c *Checker) SynthCompositeLitExpr(expr *CompositeLitExpr) Type {
 	}
 }
 
-func (c *Checker) SynthCompositeLitExprStruct(expr *CompositeLitExpr, structTy *StructType) Type {
+func (c *Checker) MakeCompositeLitStruct(expr *CompositeLitExpr, structTy *StructType) Type {
 	if len(expr.Elems) == 0 {
 		return expr.Type
 	}
@@ -2118,7 +2227,7 @@ func (c *Checker) SynthCompositeLitExprStruct(expr *CompositeLitExpr, structTy *
 	return expr.Type
 }
 
-func (c *Checker) SynthCompositeLitExprSlice(expr *CompositeLitExpr, sliceTy *SliceType) Type {
+func (c *Checker) MakeCompositeLitSlice(expr *CompositeLitExpr, sliceTy *SliceType) Type {
 	for _, elem := range expr.Elems {
 		c.CheckExpr(elem.Value, sliceTy.ElemType)
 	}
@@ -2140,7 +2249,7 @@ func (c *Checker) InstantiateType(app *TypeApplication) (*NamedType, Subst) {
 }
 
 func (c *Checker) InstantiateTypeFunc(app *TypeApplication, argF func(tyParam TypeParamDecl, tyArg Type)) (*NamedType, Subst) {
-	under := c.Lookup(app.Name)
+	under := c.Resolve(app.ID)
 	named, ok := c.Resolve(under).(*NamedType)
 	if !ok {
 		panic("can only instantiate named types?")
@@ -2193,7 +2302,7 @@ func (c *Checker) ApplySubst(ty Type, subst Subst) Type {
 		for i, arg := range ty.Args {
 			args[i] = c.ApplySubst(arg, subst)
 		}
-		return &TypeApplication{Name: ty.Name, Args: args}
+		return &TypeApplication{ID: ty.ID, Args: args}
 	case *ArrayType:
 		return &ArrayType{
 			ElemType: c.ApplySubst(ty.ElemType, subst),
@@ -2462,7 +2571,7 @@ func (c *Checker) UnifyEq(left, right Type, subst Subst) {
 		panic("TODO")
 	case *TypeApplication:
 		if right, ok := right.(*TypeApplication); ok {
-			if left.Name != right.Name {
+			if left.ID != right.ID {
 				panic(fmt.Sprintf("cannot unify: %v = %v", left, right))
 			}
 			if len(left.Args) != len(right.Args) {
@@ -2759,10 +2868,10 @@ func (c *Checker) IdentifierMethods(id Identifier) []MethodElem {
 	methods := []MethodElem{}
 
 	c.VarCtx.Iter(func(name Identifier, ty Type) {
-		if strings.HasPrefix(name.Name, id.Name+".") {
+		if strings.HasPrefix(name.Value, id.Value+".") {
 			methodTy := ty.(*MethodType)
 			methods = append(methods, MethodElem{
-				Name:            Identifier{Name: name.Name[len(id.Name)+1:]},
+				Name:            Identifier{Value: name.Value[len(id.Value)+1:]},
 				Type:            methodTy.Type,
 				PointerReceiver: methodTy.PointerReceiver,
 			})
@@ -2852,7 +2961,7 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 		return false
 	case *TypeApplication:
 		if ty2, ok := ty2.(*TypeApplication); ok {
-			if ty1.Name != ty2.Name {
+			if ty1.ID != ty2.ID {
 				return false
 			}
 			if len(ty1.Args) != len(ty2.Args) {
@@ -3052,12 +3161,15 @@ func IsSingleTypeUnion(ty *InterfaceType) (Type, bool) {
 
 // ========================
 
-func ReadAST(file *ast.File) File {
+func ReadAST(path string, file *ast.File) File {
 	var decls []Decl
 	for _, decl := range file.Decls {
 		decls = append(decls, ReadDecl(decl)...)
 	}
-	return File{Decls: decls}
+	return File{
+		Path:  path,
+		Decls: decls,
+	}
 }
 
 func ReadDecl(decl ast.Decl) []Decl {
@@ -3096,7 +3208,7 @@ func ReadImport(decl *ast.GenDecl) []Decl {
 			name = Ptr(NewIdentifier(spec.Name.Name))
 		}
 		path := spec.Path.Value
-		path = path[1 : len(path)-1]
+		path = path[1 : len(path)-1] // remove quotes
 		decls = append(decls, &ImportDecl{
 			Path:  path,
 			Alias: name,
@@ -3373,6 +3485,19 @@ func ReadStmt(stmt ast.Stmt) Statement {
 	case *ast.LabeledStmt:
 		// TODO labeled satement semantics?
 		return ReadStmt(stmt.Stmt)
+	case *ast.SendStmt:
+		if stmt.Value == nil {
+			return &ReceiveStmt{
+				Chan: ReadExpr(stmt.Chan),
+			}
+		} else {
+			return &SendStmt{
+				Chan:  ReadExpr(stmt.Chan),
+				Value: ReadExpr(stmt.Value),
+			}
+		}
+	case *ast.SelectStmt:
+		return &SelectStmt{Cases: ReadCommCases(stmt.Body.List)}
 	default:
 		spew.Dump(stmt)
 		panic("unreachable")
@@ -3479,6 +3604,22 @@ func ReadIncDecStmt(stmt *ast.IncDecStmt) Statement {
 		Expr: ReadExpr(stmt.X),
 		Inc:  stmt.Tok == token.INC,
 	}
+}
+
+func ReadCommCases(clauses []ast.Stmt) []SelectCase {
+	var cases []SelectCase
+	for _, clause := range clauses {
+		clause := clause.(*ast.CommClause)
+		var comm Statement
+		if clause.Comm != nil {
+			comm = ReadStmt(clause.Comm)
+		}
+		cases = append(cases, SelectCase{
+			Comm: comm,
+			Body: ReadStmtList(clause.Body),
+		})
+	}
+	return cases
 }
 
 func ReadTypeSwitchStmt(stmt *ast.TypeSwitchStmt) Statement {
@@ -3637,6 +3778,8 @@ func ReadExpr(expr ast.Expr) Expr {
 		}
 	case *ast.FuncLit:
 		return ReadFuncLit(expr)
+	case *ast.Ellipsis:
+		return &EllipsisExpr{}
 	default:
 		ty, err := Try(func() Expr {
 			return &TypeExpr{Type: ReadType(expr)}
@@ -3724,6 +3867,10 @@ func ReadBinaryOp(op token.Token) BinaryOp {
 		return BinaryOpAnd
 	case token.OR:
 		return BinaryOpOr
+	case token.XOR:
+		return BinaryOpXor
+	case token.AND_NOT:
+		return BinaryOpAndNot
 	case token.LAND:
 		return BinaryOpLAnd
 	case token.LOR:
@@ -3742,6 +3889,8 @@ func ReadBinaryOp(op token.Token) BinaryOp {
 
 func ReadUnaryOp(op token.Token) UnaryOp {
 	switch op {
+	case token.ADD:
+		return UnaryOpPos
 	case token.SUB:
 		return UnaryOpNeg
 	case token.NOT:
@@ -3848,12 +3997,12 @@ func ReadType(expr ast.Expr) Type {
 		return &StructType{Fields: fields}
 	case *ast.IndexExpr:
 		return &TypeApplication{
-			Name: NewIdentifier(expr.X.(*ast.Ident).Name),
+			ID:   ReadQualIdentifier(expr.X),
 			Args: []Type{ReadType(expr.Index)},
 		}
 	case *ast.IndexListExpr:
 		return &TypeApplication{
-			Name: NewIdentifier(expr.X.(*ast.Ident).Name),
+			ID:   ReadQualIdentifier(expr.X),
 			Args: ReadTypeList(expr.Indices),
 		}
 	case *ast.StarExpr:
@@ -3879,6 +4028,24 @@ func ReadType(expr ast.Expr) Type {
 		return &TypeName{Name: NewIdentifier(expr.Sel.Name)}
 	case *ast.ParenExpr:
 		return ReadType(expr.X)
+	default:
+		spew.Dump(expr)
+		panic("unreachable")
+	}
+}
+
+func ReadQualIdentifier(expr ast.Expr) *QualIdentifier {
+	switch expr := expr.(type) {
+	case *ast.Ident:
+		return &QualIdentifier{
+			Package: "",
+			Name:    NewIdentifier(expr.Name),
+		}
+	case *ast.SelectorExpr:
+		return &QualIdentifier{
+			Package: expr.X.(*ast.Ident).Name,
+			Name:    NewIdentifier(expr.Sel.Name),
+		}
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
@@ -4135,13 +4302,14 @@ func useVariadic() {
 	_ = src
 
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "example.go", src, parser.ParseComments)
+	f, err := parser.ParseFile(fset, "example.go", nil, parser.ParseComments)
 	if err != nil {
 		panic(err)
 	}
 
-	file := ReadAST(f)
+	file := ReadAST("example.go", f)
 
 	c := NewChecker()
+	c.LoadFile(file)
 	c.CheckFile(file)
 }
