@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -44,6 +45,11 @@ type Type interface {
 type TypeBase struct{}
 
 func (*TypeBase) _Type() {}
+
+type TypeInType struct {
+	TypeBase
+	Type Type
+}
 
 type LazyType struct {
 	TypeBase
@@ -514,14 +520,15 @@ type UnaryOp int
 const (
 	UnaryOpPos UnaryOp = iota
 	UnaryOpNeg
+
 	UnaryOpNot
-	UnaryOpBitNot
 
 	UnaryOpAddr
 	UnaryOpDeref
 
 	UnaryOpArrow
 
+	UnaryOpBitNot
 	UnaryOpXor // what
 )
 
@@ -541,6 +548,8 @@ func (op UnaryOp) String() string {
 		return "*"
 	case UnaryOpArrow:
 		return "<-"
+	case UnaryOpXor:
+		return "^"
 	default:
 		panic("unreachable")
 	}
@@ -2067,6 +2076,12 @@ func (c *Checker) SynthBinaryExpr(expr *BinaryExpr) Type {
 func (c *Checker) SynthUnaryExpr(expr *UnaryExpr) Type {
 	ty := c.Synth(expr.Expr)
 	switch expr.Op {
+	case UnaryOpPos, UnaryOpNeg:
+		// TODO check numeric?
+		return ty
+	case UnaryOpNot:
+		c.CheckExpr(expr.Expr, c.Builtin("bool"))
+		return c.Builtin("bool")
 	case UnaryOpAddr:
 		return &PointerType{BaseType: ty}
 	case UnaryOpDeref:
@@ -2074,17 +2089,13 @@ func (c *Checker) SynthUnaryExpr(expr *UnaryExpr) Type {
 		case *PointerType:
 			return ty.BaseType
 		default:
-			spew.Dump(expr)
-			panic("cannot dereference non-pointer")
+			// TODO yikes?
+			return &TypeInType{Type: &PointerType{BaseType: ty}}
 		}
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
 	}
-}
-
-func (c *Checker) SynthConversionExpr(expr *ConversionExpr) Type {
-	panic("TODO")
 }
 
 func (c *Checker) SynthSelectorExpr(expr *SelectorExpr) Type {
@@ -2164,7 +2175,7 @@ func (c *Checker) SynthIndexExpr(expr *IndexExpr) Type {
 	case *FunctionType:
 		panic("unexpected function type (should be handled by CallExpr)")
 	default:
-		spew.Dump(exprTy)
+		spew.Dump(reflect.TypeOf(exprTy))
 		panic("unreachable")
 	}
 }
@@ -2222,6 +2233,8 @@ func (c *Checker) SynthCallExpr(expr *CallExpr) Type {
 				panic("conversion without exactly one argument")
 			}
 			return c.SynthBuiltinConversion(expr.Args[0], ty)
+		case *TypeInType:
+			return c.SynthConversionExpr(&ConversionExpr{Expr: expr.Func, Type: ty.Type})
 		default:
 			spew.Dump(ty)
 			panic("not a function")
@@ -2286,12 +2299,23 @@ func (c *Checker) SynthCallExpr(expr *CallExpr) Type {
 	}
 }
 
+func (c *Checker) SynthConversionExpr(expr *ConversionExpr) Type {
+	// TODO check conversion
+	return expr.Type
+}
+
 func (c *Checker) SynthBuiltinConversion(expr Expr, targetTy *TypeBuiltin) Type {
 	exprTy := c.Synth(expr)
 	switch exprTy := exprTy.(type) {
 	case *UntypedConstantType:
 		if exprTy.IsCompatible(targetTy.Name.Value) {
 			return targetTy
+		}
+	case *TypeBuiltin:
+		if exprTy.Name.Value == "Pointer" {
+			if targetTy.Name.Value == "uintptr" {
+				return targetTy
+			}
 		}
 	}
 	panic(fmt.Sprintf("cannot convert %v to %v", exprTy, targetTy))
