@@ -50,6 +50,20 @@ type BottomType struct {
 	TypeBase
 }
 
+type LazyType struct {
+	TypeBase
+	Name Identifier
+	Sem  <-chan struct{}
+}
+
+func NewLazyType(name Identifier, sem <-chan struct{}) *LazyType {
+	return &LazyType{Name: name, Sem: sem}
+}
+
+func (t *LazyType) String() string {
+	return fmt.Sprintf("lazy(%v)", t.Name)
+}
+
 type TypeOfType struct {
 	TypeBase
 	Type Type
@@ -1162,18 +1176,58 @@ type Checker struct {
 	VarCtx   VarContext
 	Builtins VarContext
 
-	// this seems unprincipled
 	CurFn *Signature
 	CurTy *TypeDecl
+
+	LazyWaiters    map[Identifier]chan struct{}
+	DoneLoadingSem chan struct{}
+	DefinerMailbox chan DefineElem
+}
+
+type DefineElem struct {
+	Identifier
+	Type
 }
 
 func NewChecker() *Checker {
-	return &Checker{
-		Fresh:    Ptr(0),
-		TyCtx:    TypeContext{},
-		VarCtx:   EmptyVarContext(),
-		Builtins: MakeBuiltins(),
+	c := &Checker{
+		Fresh:          Ptr(0),
+		TyCtx:          TypeContext{},
+		VarCtx:         EmptyVarContext(),
+		Builtins:       MakeBuiltins(),
+		LazyWaiters:    map[Identifier]chan struct{}{},
+		DoneLoadingSem: make(chan struct{}),
 	}
+	c.RunDefiner()
+	return c
+}
+
+func (c *Checker) Copy() *Checker {
+	return &Checker{
+		Fresh:          c.Fresh,
+		TyCtx:          c.TyCtx,
+		VarCtx:         c.VarCtx,
+		Builtins:       c.Builtins,
+		CurFn:          c.CurFn,
+		CurTy:          c.CurTy,
+		LazyWaiters:    c.LazyWaiters,
+		DoneLoadingSem: c.DoneLoadingSem,
+		DefinerMailbox: c.DefinerMailbox,
+	}
+}
+
+func (c *Checker) RunDefiner() {
+	c.DefinerMailbox = make(chan DefineElem)
+	go func() {
+		for {
+			elem, ok := <-c.DefinerMailbox
+			if !ok {
+				return
+			}
+			c.DefineValue(elem.Identifier, elem.Type)
+			fmt.Printf("LAZY defined %v = %v\n", elem.Identifier, elem.Type)
+		}
+	}()
 }
 
 // ========================
@@ -1197,6 +1251,28 @@ func (c *Checker) Lookup(name Identifier) Type {
 
 func (c *Checker) DefineValue(name Identifier, ty Type) {
 	c.VarCtx.Def(name, ty)
+}
+
+func (c *Checker) DefineLazyValue(name Identifier, f func() Type) {
+	fmt.Printf("LAZY start %v\n", name)
+	c.LazyWaiters[name] = make(chan struct{})
+	c.DefineValue(name, NewLazyType(name, c.LazyWaiters[name]))
+	go func() {
+		<-c.DoneLoadingSem
+		ty := f()
+		c.DefinerMailbox <- struct {
+			Identifier
+			Type
+		}{name, ty}
+		close(c.LazyWaiters[name])
+	}()
+	select {
+	case <-c.DoneLoadingSem:
+		fmt.Printf("LAZY immediate %v\n", name)
+		<-c.LazyWaiters[name]
+	default:
+		return
+	}
 }
 
 func (c *Checker) DefineType(name Identifier, ty Type) {
@@ -1227,6 +1303,9 @@ func (c *Checker) BuiltinType(name string) Type {
 
 func (c *Checker) ResolveValue(ty Type) Type {
 	switch ty := ty.(type) {
+	case *LazyType:
+		<-ty.Sem
+		return c.Lookup(ty.Name)
 	case *TypeName:
 		return c.Lookup(ty.Name)
 	case *QualIdentifier:
@@ -1275,36 +1354,26 @@ func (c *Checker) CheckAssignableTo(src, dst Type) {
 // ========================
 
 func (c *Checker) BeginScope() *Checker {
-	return &Checker{
-		Fresh:    c.Fresh,
-		TyCtx:    c.TyCtx.Fork(),
-		VarCtx:   c.VarCtx.Fork(),
-		Builtins: c.Builtins,
-		CurFn:    c.CurFn,
-		CurTy:    c.CurTy,
-	}
+	copy := c.Copy()
+	copy.VarCtx = c.VarCtx.Fork()
+	copy.TyCtx = c.TyCtx.Fork()
+	return copy
 }
 
 func (c *Checker) BeginTypeScope(decl *TypeDecl) *Checker {
-	return &Checker{
-		Fresh:    c.Fresh,
-		TyCtx:    c.TyCtx.Fork(),
-		VarCtx:   c.VarCtx.Fork(),
-		Builtins: c.Builtins,
-		CurFn:    c.CurFn,
-		CurTy:    decl,
-	}
+	copy := c.Copy()
+	copy.VarCtx = c.VarCtx.Fork()
+	copy.TyCtx = c.TyCtx.Fork()
+	copy.CurTy = decl
+	return copy
 }
 
 func (c *Checker) BeginFunctionScope(fn *Signature) *Checker {
-	return &Checker{
-		Fresh:    c.Fresh,
-		TyCtx:    c.TyCtx.Fork(),
-		VarCtx:   c.VarCtx.Fork(),
-		Builtins: c.Builtins,
-		CurFn:    fn,
-		CurTy:    c.CurTy,
-	}
+	copy := c.Copy()
+	copy.VarCtx = c.VarCtx.Fork()
+	copy.TyCtx = c.TyCtx.Fork()
+	copy.CurFn = fn
+	return copy
 }
 
 func (c *Checker) AssertInFunctionScope() *Signature {
@@ -1316,11 +1385,34 @@ func (c *Checker) AssertInFunctionScope() *Signature {
 
 // ========================
 
+func (c *Checker) AcceptFiles(files []File) {
+	for _, file := range files {
+		c.LoadFile(file)
+	}
+	c.DoneLoading()
+	for _, file := range files {
+		c.CheckFile(file)
+	}
+}
+
 func (c *Checker) LoadFile(file File) {
 	fmt.Printf("=== LoadFile(%v) ===\n", file.Path)
+	later := []Decl{}
 	for _, decl := range file.Decls {
+		switch decl.(type) {
+		case *VarDecl, *ConstDecl:
+			later = append(later, decl)
+		default:
+			c.DefineDecl(decl)
+		}
+	}
+	for _, decl := range later {
 		c.DefineDecl(decl)
 	}
+}
+
+func (c *Checker) DoneLoading() {
+	close(c.DoneLoadingSem)
 }
 
 func (c *Checker) CheckFile(file File) {
@@ -1430,12 +1522,7 @@ func (c *Checker) ReadPackage(decl *ImportDecl) VarContext {
 
 	packageCache[decl.Path] = child.VarCtx
 
-	for _, file := range files {
-		child.LoadFile(file)
-	}
-	for _, file := range files {
-		child.CheckFile(file)
-	}
+	child.AcceptFiles(files)
 
 	return child.VarCtx
 }
@@ -1535,16 +1622,18 @@ func (c *Checker) DefineAliasDecl(decl *AliasDecl) {
 func (c *Checker) DefineVarDecl(decl *VarDecl) {
 	if len(decl.Names) == len(decl.Exprs) {
 		for i, name := range decl.Names {
-			ty := c.Synth(decl.Exprs[i])
-			if _, ok := ty.(*TupleType); ok {
-				panic("cannot use tuple as value")
-			}
-			if decl.Type != nil {
-				c.CheckAssignableTo(ty, decl.Type)
-				c.DefineValue(name, decl.Type)
-			} else {
-				c.DefineValue(name, ty)
-			}
+			c.DefineLazyValue(name, func() Type {
+				ty := c.Synth(decl.Exprs[i])
+				if _, ok := ty.(*TupleType); ok {
+					panic("cannot use tuple as value")
+				}
+				if decl.Type != nil {
+					c.CheckAssignableTo(ty, decl.Type)
+					return decl.Type
+				} else {
+					return ty
+				}
+			})
 		}
 	} else if len(decl.Names) > 1 && len(decl.Exprs) == 1 {
 		expr := decl.Exprs[0]
@@ -1564,7 +1653,15 @@ func (c *Checker) DefineVarDecl(decl *VarDecl) {
 				c.DefineValue(name, tupleTy.Elems[i])
 			}
 		}
+	} else if len(decl.Names) > 0 && len(decl.Exprs) == 0 {
+		if decl.Type == nil {
+			panic("variable declaration without type or initializing expression")
+		}
+		for _, name := range decl.Names {
+			c.DefineValue(name, decl.Type)
+		}
 	} else {
+		spew.Dump(decl)
 		panic("unreachable?")
 	}
 }
@@ -2646,8 +2743,11 @@ func (c *Checker) MakeCompositeLit(expr *CompositeLitExpr, targetTy Type) Type {
 		return c.MakeCompositeLitStruct(expr, exprTy)
 	case *SliceType:
 		return c.MakeCompositeLitSlice(expr, exprTy)
+	case *MapType:
+		panic("TODO")
+	case *ArrayType:
+		panic("TODO")
 	default:
-		// TODO MapType, ArrayType
 		spew.Dump(expr)
 		panic("unreachable")
 	}
@@ -3449,7 +3549,7 @@ func (c *Checker) IsConcreteType(ty Type) bool {
 	case *TypeApplication:
 		return c.IsConcreteType(c.TypeApplication(ty))
 	case *NamedType:
-		return c.IsConcreteType(ty.Type)
+		return c.IsConcreteType(c.ResolveType(ty.Type))
 	case *UntypedConstantType:
 		return true
 	default:
@@ -4895,6 +4995,5 @@ func callParse() (int, error) {
 	file := ReadAST("example.go", f)
 
 	c := NewChecker()
-	c.LoadFile(file)
-	c.CheckFile(file)
+	c.AcceptFiles([]File{file})
 }
