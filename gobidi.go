@@ -59,11 +59,6 @@ func (t *TypeOfType) String() string {
 	return fmt.Sprintf("type(%v)", t.Type)
 }
 
-type LazyType struct {
-	TypeBase
-	Expr Expr
-}
-
 type NilType struct {
 	TypeBase
 }
@@ -914,9 +909,9 @@ type AliasDecl struct {
 
 type VarDecl struct {
 	DeclBase
-	Name Identifier
-	Type Type
-	Expr Expr
+	Names []Identifier
+	Type  Type
+	Exprs []Expr
 }
 
 type FunctionDecl struct {
@@ -1333,6 +1328,9 @@ func (c *Checker) CheckFile(file File) {
 	for _, decl := range file.Decls {
 		c.CheckDecl(decl)
 	}
+	fmt.Printf("=== verifying CheckFile(%v) ===\n", file.Path)
+	c.Verify()
+	fmt.Printf("=== DONE CheckFile(%v) ===\n", file.Path)
 }
 
 // ========================
@@ -1535,13 +1533,40 @@ func (c *Checker) DefineAliasDecl(decl *AliasDecl) {
 }
 
 func (c *Checker) DefineVarDecl(decl *VarDecl) {
-	var ty Type
-	if decl.Type == nil {
-		ty = &LazyType{Expr: decl.Expr}
+	if len(decl.Names) == len(decl.Exprs) {
+		for i, name := range decl.Names {
+			ty := c.Synth(decl.Exprs[i])
+			if _, ok := ty.(*TupleType); ok {
+				panic("cannot use tuple as value")
+			}
+			if decl.Type != nil {
+				c.CheckAssignableTo(ty, decl.Type)
+				c.DefineValue(name, decl.Type)
+			} else {
+				c.DefineValue(name, ty)
+			}
+		}
+	} else if len(decl.Names) > 1 && len(decl.Exprs) == 1 {
+		expr := decl.Exprs[0]
+		exprTy := c.Synth(expr)
+		tupleTy, ok := exprTy.(*TupleType)
+		if !ok {
+			panic("multiple-value return in single-value context")
+		}
+		if len(tupleTy.Elems) != len(decl.Names) {
+			panic(fmt.Sprintf("assignment mismatch: %v variables but RHS returns %v values", len(decl.Names), len(tupleTy.Elems)))
+		}
+		for i, name := range decl.Names {
+			if decl.Type != nil {
+				c.CheckAssignableTo(tupleTy.Elems[i], decl.Type)
+				c.DefineValue(name, decl.Type)
+			} else {
+				c.DefineValue(name, tupleTy.Elems[i])
+			}
+		}
 	} else {
-		ty = decl.Type
+		panic("unreachable?")
 	}
-	c.DefineValue(decl.Name, ty)
 }
 
 func (c *Checker) DefineFunctionDecl(decl *FunctionDecl) {
@@ -1689,9 +1714,7 @@ func (c *Checker) CheckAliasDecl(decl *AliasDecl) {
 }
 
 func (c *Checker) CheckVarDecl(decl *VarDecl) {
-	if decl.Type != nil && decl.Expr != nil {
-		c.CheckAssignableTo(c.Synth(decl.Expr), decl.Type)
-	}
+	// nothing to do?
 }
 
 func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
@@ -3773,17 +3796,19 @@ func ReadVarDecl(decl *ast.GenDecl) []Decl {
 	var decls []Decl
 	for _, spec := range decl.Specs {
 		spec := spec.(*ast.ValueSpec)
-		for i, name := range spec.Names {
-			var expr Expr
-			if spec.Values != nil {
-				expr = ReadExpr(spec.Values[i])
-			}
-			decls = append(decls, &VarDecl{
-				Name: NewIdentifier(name.Name),
-				Type: ReadType(spec.Type),
-				Expr: expr,
-			})
+		names := []Identifier{}
+		exprs := []Expr{}
+		for _, name := range spec.Names {
+			names = append(names, NewIdentifier(name.Name))
 		}
+		for _, expr := range spec.Values {
+			exprs = append(exprs, ReadExpr(expr))
+		}
+		decls = append(decls, &VarDecl{
+			Names: names,
+			Type:  ReadType(spec.Type),
+			Exprs: exprs,
+		})
 	}
 	return decls
 }
