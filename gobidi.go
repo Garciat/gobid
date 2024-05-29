@@ -865,6 +865,11 @@ func (d *ImportDecl) EffectiveName() string {
 
 type ConstDecl struct {
 	DeclBase
+	Elems []ConstDeclElem
+}
+
+type ConstDeclElem struct {
+	DeclBase
 	Name  Identifier
 	Type  Type
 	Value Expr
@@ -1100,6 +1105,8 @@ func NewChecker() *Checker {
 		NewIdentifier("make"):   &BuiltinFunctionType{Name: "make"},
 		NewIdentifier("new"):    &BuiltinFunctionType{Name: "new"},
 		NewIdentifier("panic"):  &BuiltinFunctionType{Name: "panic"},
+
+		NewIdentifier("iota"): &UntypedConstantType{Kind: UntypedConstantInt},
 	}}
 	return &Checker{
 		Fresh:    Ptr(0),
@@ -1298,12 +1305,81 @@ func (c *Checker) ReadPackage(decl *ImportDecl) VarContext {
 }
 
 func (c *Checker) DefineConstDecl(decl *ConstDecl) {
-	valueTy := c.Synth(decl.Value)
-	if decl.Type != nil {
-		c.CheckAssignableTo(valueTy, decl.Type)
-		c.Define(decl.Name, decl.Type)
-	} else {
-		c.Define(decl.Name, valueTy)
+	var carryTy Type
+	for _, elem := range decl.Elems {
+		var elemTy Type
+		if elem.Type == nil {
+			if elem.Value == nil {
+				if carryTy == nil {
+					panic("mising init expr for constant")
+				}
+				elemTy = carryTy
+			} else {
+				elemTy = c.Synth(elem.Value)
+				if ContainsIota(elem.Value) {
+					carryTy = elemTy
+				}
+			}
+		} else {
+			carryTy = nil
+			elemTy = elem.Type
+			if elem.Value != nil {
+				c.CheckAssignableTo(c.Synth(elem.Value), elemTy)
+				if ContainsIota(elem.Value) {
+					carryTy = elemTy
+				}
+			} else {
+				panic("mising init expr for constant")
+			}
+		}
+		if elemTy == nil {
+			panic("OOPS")
+		}
+		c.Define(elem.Name, elemTy)
+	}
+	spew.Dump(c.VarCtx)
+}
+
+func ContainsIota(expr Expr) bool {
+	switch expr := expr.(type) {
+	case *NameExpr:
+		return expr.Name.Value == "iota"
+	case *BinaryExpr:
+		return ContainsIota(expr.Left) || ContainsIota(expr.Right)
+	case *UnaryExpr:
+		return ContainsIota(expr.Expr)
+	case *StarExpr:
+		return ContainsIota(expr.Expr)
+	case *AddressExpr:
+		return ContainsIota(expr.Expr)
+	case *ConversionExpr:
+		return ContainsIota(expr.Expr)
+	case *SelectorExpr:
+		return ContainsIota(expr.Expr)
+	case *IndexExpr:
+		return ContainsIota(expr.Expr)
+	case *SliceExpr:
+		return ContainsIota(expr.Expr) || ContainsIota(expr.Low) || ContainsIota(expr.High) || ContainsIota(expr.Max)
+	case *TypeAssertionExpr:
+		return ContainsIota(expr.Expr)
+	case *CallExpr:
+		for _, arg := range expr.Args {
+			if ContainsIota(arg) {
+				return true
+			}
+		}
+		return false
+	case *LiteralExpr:
+		return false
+	case *FuncLitExpr:
+		return false
+	case *CompositeLitExpr:
+		return false
+	case *TypeExpr:
+		return false
+	default:
+		spew.Dump(expr)
+		panic("unreachable")
 	}
 }
 
@@ -2141,6 +2217,11 @@ func (c *Checker) SynthCallExpr(expr *CallExpr) Type {
 				}
 			}
 			panic("TODO")
+		case *TypeBuiltin:
+			if len(expr.Args) != 1 {
+				panic("conversion without exactly one argument")
+			}
+			return c.SynthBuiltinConversion(expr.Args[0], ty)
 		default:
 			spew.Dump(ty)
 			panic("not a function")
@@ -2203,6 +2284,17 @@ func (c *Checker) SynthCallExpr(expr *CallExpr) Type {
 	default:
 		return &TupleType{Elems: returns}
 	}
+}
+
+func (c *Checker) SynthBuiltinConversion(expr Expr, targetTy *TypeBuiltin) Type {
+	exprTy := c.Synth(expr)
+	switch exprTy := exprTy.(type) {
+	case *UntypedConstantType:
+		if exprTy.IsCompatible(targetTy.Name.Value) {
+			return targetTy
+		}
+	}
+	panic(fmt.Sprintf("cannot convert %v to %v", exprTy, targetTy))
 }
 
 func (c *Checker) SynthBuiltinFunctionCall(f *BuiltinFunctionType, expr *CallExpr) Type {
@@ -3415,8 +3507,7 @@ func ReadImport(decl *ast.GenDecl) []Decl {
 }
 
 func ReadConstDecl(decl *ast.GenDecl) []Decl {
-	// TODO iota?
-	var decls []Decl
+	var elems []ConstDeclElem
 	for _, spec := range decl.Specs {
 		spec := spec.(*ast.ValueSpec)
 		for i, name := range spec.Names {
@@ -3424,14 +3515,14 @@ func ReadConstDecl(decl *ast.GenDecl) []Decl {
 			if spec.Values != nil {
 				value = ReadExpr(spec.Values[i])
 			}
-			decls = append(decls, &ConstDecl{
+			elems = append(elems, ConstDeclElem{
 				Name:  NewIdentifier(name.Name),
 				Type:  ReadType(spec.Type),
 				Value: value,
 			})
 		}
 	}
-	return decls
+	return []Decl{&ConstDecl{Elems: elems}}
 }
 
 func ReadTypeDecl(decl *ast.GenDecl) []Decl {
