@@ -46,6 +46,10 @@ type TypeBase struct{}
 
 func (*TypeBase) _Type() {}
 
+type BottomType struct {
+	TypeBase
+}
+
 type TypeOfType struct {
 	TypeBase
 	Type Type
@@ -543,7 +547,6 @@ const (
 	UnaryOpArrow
 
 	UnaryOpBitNot
-	UnaryOpXor // what
 )
 
 func (op UnaryOp) String() string {
@@ -562,8 +565,6 @@ func (op UnaryOp) String() string {
 		return "*"
 	case UnaryOpArrow:
 		return "<-"
-	case UnaryOpXor:
-		return "^"
 	default:
 		panic("unreachable")
 	}
@@ -1124,8 +1125,8 @@ func MakeBuiltins() VarContext {
 	scope.DefBuiltinType("uint")
 	scope.DefBuiltinType("uintptr")
 
-	scope.DefBuiltinType("byte")
-	scope.DefBuiltinType("rune")
+	scope.DefType(NewIdentifier("byte"), NewBuiltinType("uint8"))
+	scope.DefType(NewIdentifier("rune"), NewBuiltinType("int32"))
 
 	scope.DefType(NewIdentifier("any"), EmptyInterface())
 
@@ -1421,6 +1422,10 @@ func (c *Checker) ReadPackage(decl *ImportDecl) VarContext {
 			continue
 		}
 		for filename, f := range pkg.Files {
+			if strings.HasSuffix(filename, "_test.go") {
+				fmt.Printf("skipping test file %v\n", filename)
+				continue
+			}
 			files = append(files, ReadAST(filename, f))
 		}
 	}
@@ -1470,7 +1475,6 @@ func (c *Checker) DefineConstDecl(decl *ConstDecl) {
 		}
 		c.DefineValue(elem.Name, elemTy)
 	}
-	spew.Dump(c.VarCtx)
 }
 
 func ContainsIota(expr Expr) bool {
@@ -1965,6 +1969,7 @@ func (c *Checker) CheckSwitchStmt(stmt *SwitchStmt) {
 		scope.CheckStatement(stmt.Init)
 	}
 	if stmt.Tag != nil {
+		spew.Dump(stmt)
 		panic("PANIC what is a tag?")
 	}
 	for _, caseStmt := range stmt.Cases {
@@ -2099,6 +2104,8 @@ func (c *Checker) CheckBinaryExpr(expr *BinaryExpr, ty Type) {
 func (c *Checker) CheckUnaryExpr(expr *UnaryExpr, ty Type) {
 	exprTy := c.Synth(expr.Expr)
 	switch expr.Op {
+	case UnaryOpNot:
+		c.CheckExpr(expr.Expr, c.BuiltinType("bool"))
 	case UnaryOpAddr:
 		c.CheckAssignableTo(&PointerType{BaseType: exprTy}, ty)
 	default:
@@ -2108,8 +2115,7 @@ func (c *Checker) CheckUnaryExpr(expr *UnaryExpr, ty Type) {
 }
 
 func (c *Checker) CheckSelectorExpr(expr *SelectorExpr, ty Type) {
-	spew.Dump(expr, ty)
-	panic("TODO")
+	c.CheckAssignableTo(c.Synth(expr), ty)
 }
 
 func (c *Checker) CheckIndexExpr(expr *IndexExpr, ty Type) {
@@ -2234,6 +2240,9 @@ func (c *Checker) SynthUnaryExpr(expr *UnaryExpr) Type {
 			spew.Dump(expr)
 			panic(fmt.Sprintf("cannot dereference %v of type %v", expr, ty))
 		}
+	case UnaryOpBitNot:
+		// TODO check numeric?
+		return ty
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
@@ -2319,6 +2328,12 @@ func (c *Checker) SynthIndexExpr(expr *IndexExpr) Type {
 		return exprTy.ElemType
 	case *FunctionType:
 		panic("unexpected function type (should be handled by CallExpr)")
+	case *ArrayType:
+		if len(expr.Indices) != 1 {
+			panic("indexing an array with multiple indices")
+		}
+		c.CheckExpr(expr.Indices[0], c.BuiltinType("int"))
+		return exprTy.ElemType
 	default:
 		spew.Dump(reflect.TypeOf(exprTy))
 		panic("unreachable")
@@ -2476,6 +2491,8 @@ func (c *Checker) SynthBuiltinFunctionCall(f *BuiltinFunctionType, expr *CallExp
 		return c.SynthBuiltinAppendCall(expr)
 	case "len":
 		return c.SynthBuiltinLenCall(expr)
+	case "panic":
+		return c.SynthBuiltinPanicCall(expr)
 	default:
 		spew.Dump(f)
 		panic("unreachable")
@@ -2541,9 +2558,18 @@ func (c *Checker) SynthBuiltinLenCall(expr *CallExpr) Type {
 	case *MapType:
 	case *ChannelType:
 	default:
+		spew.Dump(argTy)
 		panic(fmt.Sprintf("len() on incompatible type %v", argTy))
 	}
 	return c.BuiltinType("int")
+}
+
+func (c *Checker) SynthBuiltinPanicCall(expr *CallExpr) Type {
+	if len(expr.Args) != 1 {
+		panic("builtin panic() takes exactly one argument")
+	}
+	c.CheckExpr(expr.Args[0], EmptyInterface())
+	return &BottomType{}
 }
 
 func (c *Checker) SynthNameExpr(expr *NameExpr) Type {
@@ -2969,6 +2995,34 @@ func (c *Checker) UnifyEq(left, right Type, subst Subst) {
 		left, right = right, left
 	}
 
+	if _, ok := left.(*NilType); ok {
+		left, right = right, left
+	}
+
+	if _, ok := right.(*NilType); ok {
+		switch left := left.(type) {
+		case *PointerType:
+			return
+		case *ChannelType:
+			return
+		case *FunctionType:
+			return
+		case *InterfaceType:
+			return
+		case *MapType:
+			return
+		case *SliceType:
+			return
+		case *TypeBuiltin:
+			if left.Name.Value == "Pointer" {
+				return
+			}
+			panic(fmt.Sprintf("cannot assign nil to type %v", left))
+		default:
+			panic(fmt.Sprintf("cannot assign nil to type %v", left))
+		}
+	}
+
 	switch left := left.(type) {
 	case *TypeBuiltin:
 		if _, ok := right.(*TypeBuiltin); ok {
@@ -3059,8 +3113,21 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 		switch super := c.Under(super).(type) {
 		case *PointerType:
 			return
+		case *ChannelType:
+			return
+		case *FunctionType:
+			return
 		case *InterfaceType:
 			return
+		case *MapType:
+			return
+		case *SliceType:
+			return
+		case *TypeBuiltin:
+			if super.Name.Value == "Pointer" {
+				return
+			}
+			panic(fmt.Sprintf("cannot assign nil to type %v", super))
 		default:
 			panic(fmt.Sprintf("cannot assign nil to type %v", super))
 		}
@@ -3794,11 +3861,11 @@ func ReadTypeConstraint(expr ast.Expr) *InterfaceType {
 		terms := []TypeTerm{}
 		cur := expr
 		for {
-			terms = append(terms, TypeTerm{Type: ReadType(cur.Y)})
+			terms = append(terms, ReadUnionTerm(cur.Y))
 			if next, ok := cur.X.(*ast.BinaryExpr); ok {
 				cur = next
 			} else {
-				terms = append(terms, TypeTerm{Type: ReadType(cur.X)})
+				terms = append(terms, ReadUnionTerm(cur.X))
 				break
 			}
 		}
@@ -3822,12 +3889,24 @@ func ReadTypeConstraint(expr ast.Expr) *InterfaceType {
 				{
 					TypeElem{
 						Union: []TypeTerm{
-							{Type: ReadType(expr)},
+							ReadUnionTerm(expr),
 						},
 					},
 				},
 			},
 		}
+	}
+}
+
+func ReadUnionTerm(expr ast.Expr) TypeTerm {
+	switch expr := expr.(type) {
+	case *ast.UnaryExpr:
+		if expr.Op != token.TILDE {
+			panic("Expected TILDE")
+		}
+		return TypeTerm{Type: ReadType(expr.X), Tilde: true}
+	default:
+		return TypeTerm{Type: ReadType(expr)}
 	}
 }
 
@@ -4368,7 +4447,7 @@ func ReadUnaryOp(op token.Token) UnaryOp {
 	case token.ARROW:
 		return UnaryOpArrow
 	case token.XOR:
-		return UnaryOpXor
+		return UnaryOpBitNot
 	default:
 		spew.Dump(op)
 		panic("unreachable")
