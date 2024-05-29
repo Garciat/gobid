@@ -271,6 +271,16 @@ func (s Signature) GetVariadicParam() (ParameterDecl, int) {
 	return ParameterDecl{}, -1
 }
 
+func (s Signature) HasNamedResults() bool {
+	// TODO all should be named?
+	for _, param := range s.Results.Params {
+		if param.Name != IgnoreIdent {
+			return true
+		}
+	}
+	return false
+}
+
 func (s Signature) String() string {
 	if len(s.TypeParams.Params) == 0 {
 		return fmt.Sprintf("(%v) (%v)", s.Params, s.Results)
@@ -833,9 +843,9 @@ type TypeSwitchCase struct {
 
 type SwitchStmt struct {
 	StatementBase
-	Init Statement
-	Tag  Expr // ???
-	Body []SwitchCase
+	Init  Statement
+	Tag   Expr // ???
+	Cases []SwitchCase
 }
 
 type SwitchCase struct {
@@ -1799,6 +1809,8 @@ func (c *Checker) CheckStatement(stmt Statement) {
 		// nothing?
 	case *ForStmt:
 		c.CheckForStmt(stmt)
+	case *SwitchStmt:
+		c.CheckSwitchStmt(stmt)
 	default:
 		spew.Dump(stmt)
 		panic("unreachable")
@@ -1860,6 +1872,8 @@ func (c *Checker) CheckReturnStmt(stmt *ReturnStmt) {
 		default:
 			panic("non-tuple type")
 		}
+	} else if len(stmt.Results) == 0 && fn.HasNamedResults() {
+		return
 	} else {
 		panic("wrong number of expressions in return")
 	}
@@ -1869,7 +1883,10 @@ func (c *Checker) CheckIfStmt(stmt *IfStmt) {
 	if stmt.Init != nil {
 		c.CheckStatement(stmt.Init)
 	}
-	c.CheckExpr(stmt.Cond, c.BuiltinType("bool"))
+	if stmt.Cond != nil {
+		// TODO only allowed for else
+		c.CheckExpr(stmt.Cond, c.BuiltinType("bool"))
+	}
 	c.CheckStatementList(stmt.Body)
 	if stmt.Else != nil {
 		c.CheckStatement(stmt.Else)
@@ -1940,6 +1957,26 @@ func (c *Checker) CheckForStmt(stmt *ForStmt) {
 		scope.CheckStatement(stmt.Post)
 	}
 	scope.CheckStatementList(stmt.Body)
+}
+
+func (c *Checker) CheckSwitchStmt(stmt *SwitchStmt) {
+	scope := c.BeginScope()
+	if stmt.Init != nil {
+		scope.CheckStatement(stmt.Init)
+	}
+	if stmt.Tag != nil {
+		panic("PANIC what is a tag?")
+	}
+	for _, caseStmt := range stmt.Cases {
+		scope.CheckSwitchCaseStmt(caseStmt)
+	}
+}
+
+func (c *Checker) CheckSwitchCaseStmt(stmt SwitchCase) {
+	for _, expr := range stmt.Exprs {
+		c.CheckExpr(expr, c.BuiltinType("bool"))
+	}
+	c.CheckStatementList(stmt.Body)
 }
 
 // ========================
@@ -2747,6 +2784,8 @@ func (c *Checker) ApplySubst(ty Type, subst Subst) Type {
 		return ty
 	case *TypeOfType:
 		return &TypeOfType{Type: c.ApplySubst(ty.Type, subst)}
+	case *QualIdentifier:
+		return ty
 	default:
 		spew.Dump(ty)
 		panic("unreachable")
@@ -3417,6 +3456,8 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 		return false
 	case *UntypedConstantType:
 		return false // TODO ???
+	case *NilType:
+		return false // TODO ???
 	default:
 		spew.Dump(ty1, ty2)
 		panic("unreachable")
@@ -3844,10 +3885,18 @@ func ReadResultsList(list *ast.FieldList) ParameterList {
 	}
 	var params []ParameterDecl
 	for _, field := range list.List {
-		params = append(params, ParameterDecl{
-			Name: IgnoreIdent,
-			Type: ReadType(field.Type),
-		})
+		if len(field.Names) == 0 {
+			params = append(params, ParameterDecl{
+				Name: IgnoreIdent,
+				Type: ReadType(field.Type),
+			})
+		}
+		for _, name := range field.Names {
+			params = append(params, ParameterDecl{
+				Name: NewIdentifier(name.Name),
+				Type: ReadType(field.Type),
+			})
+		}
 	}
 	return ParameterList{Params: params}
 }
@@ -4077,9 +4126,9 @@ func ReadSwitchStmt(stmt *ast.SwitchStmt) Statement {
 		tag = ReadExpr(stmt.Tag)
 	}
 	return &SwitchStmt{
-		Init: init,
-		Tag:  tag,
-		Body: ReadSwitchCases(stmt.Body.List),
+		Init:  init,
+		Tag:   tag,
+		Cases: ReadSwitchCases(stmt.Body.List),
 	}
 }
 
@@ -4734,7 +4783,7 @@ func callParse() (int, error) {
 	_ = src
 
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "example.go", src, parser.ParseComments)
+	f, err := parser.ParseFile(fset, "example.go", nil, parser.ParseComments)
 	if err != nil {
 		panic(err)
 	}
