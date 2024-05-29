@@ -46,9 +46,13 @@ type TypeBase struct{}
 
 func (*TypeBase) _Type() {}
 
-type TypeInType struct {
+type TypeOfType struct {
 	TypeBase
 	Type Type
+}
+
+func (t *TypeOfType) String() string {
+	return fmt.Sprintf("type(%v)", t.Type)
 }
 
 type LazyType struct {
@@ -119,7 +123,7 @@ func (t *UntypedConstantType) IsCompatible(builtin string) bool {
 }
 
 func (t *UntypedConstantType) String() string {
-	return fmt.Sprintf("type(untyped %s)", t.Kind.String())
+	return fmt.Sprintf("untyped(%s)", t.Kind.String())
 }
 
 type MethodType struct {
@@ -144,6 +148,10 @@ func (t *ImportType) String() string {
 type TypeBuiltin struct {
 	TypeBase
 	Name Identifier
+}
+
+func NewBuiltinType(name string) *TypeBuiltin {
+	return &TypeBuiltin{Name: Identifier{Value: name}}
 }
 
 func (t *TypeBuiltin) String() string {
@@ -314,7 +322,7 @@ type FieldDecl struct {
 
 type PointerType struct {
 	TypeBase
-	BaseType Type
+	BaseType Type // TODO rename to ElemType
 }
 
 func (t *PointerType) String() string {
@@ -338,10 +346,6 @@ func (t *InterfaceType) String() string {
 	}
 
 	return fmt.Sprintf("interface{%v}", strings.Join(parts, "; "))
-}
-
-func (t *InterfaceType) IsEmpty() bool {
-	return len(t.Methods) == 0 && len(t.Constraints) == 0
 }
 
 func EmptyInterface() Type {
@@ -1016,6 +1020,8 @@ func (c *TypeContext) Fork() TypeContext {
 
 }
 
+// ========================
+
 type VarContext struct {
 	Parent *VarContext
 	Types  map[Identifier]Type
@@ -1033,11 +1039,27 @@ func (c VarContext) String() string {
 	return strings.Join(parts, "\n")
 }
 
-func (c *VarContext) Def(name Identifier, ty Type) {
-	if name == IgnoreIdent {
-		return
+func (c *VarContext) Def(name Identifier, ty Type) Type {
+	if name != IgnoreIdent {
+		c.Types[name] = ty
 	}
-	c.Types[name] = ty
+	return ty
+}
+
+func (c *VarContext) DefBuiltinFunction(name string) Type {
+	return c.Def(NewIdentifier(name), &BuiltinFunctionType{Name: name})
+}
+
+func (c *VarContext) DefType(name Identifier, ty Type) Type {
+	return c.Def(name, &TypeOfType{Type: ty})
+}
+
+func (c *VarContext) DefNamedType(name Identifier, under Type) Type {
+	return c.DefType(name, &NamedType{Name: name, Type: under})
+}
+
+func (c *VarContext) DefBuiltinType(name string) Type {
+	return c.DefType(NewIdentifier(name), NewBuiltinType(name))
 }
 
 func (c *VarContext) Lookup(name Identifier) (Type, bool) {
@@ -1061,6 +1083,72 @@ func (c *VarContext) Iter(f func(Identifier, Type)) {
 	}
 }
 
+// ========================
+
+func MakeBuiltins() VarContext {
+	scope := EmptyVarContext()
+
+	scope.DefBuiltinType("bool")
+	scope.Def(NewIdentifier("true"), &UntypedConstantType{Kind: UntypedConstantBool})
+	scope.Def(NewIdentifier("false"), &UntypedConstantType{Kind: UntypedConstantBool})
+
+	scope.DefBuiltinType("uint8")
+	scope.DefBuiltinType("uint16")
+	scope.DefBuiltinType("uint32")
+	scope.DefBuiltinType("uint64")
+
+	scope.DefBuiltinType("int8")
+	scope.DefBuiltinType("int16")
+	scope.DefBuiltinType("int32")
+	scope.DefBuiltinType("int64")
+
+	scope.DefBuiltinType("float32")
+	scope.DefBuiltinType("float64")
+
+	scope.DefBuiltinType("complex64")
+	scope.DefBuiltinType("complex128")
+
+	scope.DefBuiltinType("string")
+
+	scope.DefBuiltinType("int")
+	scope.DefBuiltinType("uint")
+	scope.DefBuiltinType("uintptr")
+
+	scope.DefBuiltinType("byte")
+	scope.DefBuiltinType("rune")
+
+	scope.DefType(NewIdentifier("any"), EmptyInterface())
+
+	// TODO comparable constraint
+
+	scope.Def(NewIdentifier("iota"), &UntypedConstantType{Kind: UntypedConstantInt})
+
+	scope.Def(NewIdentifier("nil"), &NilType{})
+
+	scope.DefBuiltinFunction("append")
+	scope.DefBuiltinFunction("copy")
+	scope.DefBuiltinFunction("delete")
+	scope.DefBuiltinFunction("len")
+	scope.DefBuiltinFunction("cap")
+	scope.DefBuiltinFunction("make")
+	scope.DefBuiltinFunction("max")
+	scope.DefBuiltinFunction("min")
+	scope.DefBuiltinFunction("new")
+	scope.DefBuiltinFunction("complex")
+	scope.DefBuiltinFunction("real")
+	scope.DefBuiltinFunction("imag")
+	scope.DefBuiltinFunction("clear")
+	scope.DefBuiltinFunction("close")
+	scope.DefBuiltinFunction("panic")
+	scope.DefBuiltinFunction("recover")
+	scope.DefBuiltinFunction("print")
+	scope.DefBuiltinFunction("println")
+
+	scope.DefNamedType(NewIdentifier("error"), ParseType("interface{Error() string}"))
+
+	return scope
+}
+
 type Checker struct {
 	Fresh *int
 
@@ -1074,56 +1162,15 @@ type Checker struct {
 }
 
 func NewChecker() *Checker {
-	builtins := VarContext{Types: map[Identifier]Type{
-		NewIdentifier("any"): EmptyInterface(),
-
-		NewIdentifier("bool"): &TypeBuiltin{Name: Identifier{Value: "bool"}},
-
-		NewIdentifier("byte"): &TypeBuiltin{Name: Identifier{Value: "byte"}},
-		NewIdentifier("rune"): &TypeBuiltin{Name: Identifier{Value: "rune"}},
-
-		NewIdentifier("int"):     &TypeBuiltin{Name: Identifier{Value: "int"}},
-		NewIdentifier("int8"):    &TypeBuiltin{Name: Identifier{Value: "int8"}},
-		NewIdentifier("int16"):   &TypeBuiltin{Name: Identifier{Value: "int16"}},
-		NewIdentifier("int32"):   &TypeBuiltin{Name: Identifier{Value: "int32"}},
-		NewIdentifier("int64"):   &TypeBuiltin{Name: Identifier{Value: "int64"}},
-		NewIdentifier("uint"):    &TypeBuiltin{Name: Identifier{Value: "uint"}},
-		NewIdentifier("uint8"):   &TypeBuiltin{Name: Identifier{Value: "uint8"}},
-		NewIdentifier("uint16"):  &TypeBuiltin{Name: Identifier{Value: "uint16"}},
-		NewIdentifier("uint32"):  &TypeBuiltin{Name: Identifier{Value: "uint32"}},
-		NewIdentifier("uint64"):  &TypeBuiltin{Name: Identifier{Value: "uint64"}},
-		NewIdentifier("uintptr"): &TypeBuiltin{Name: Identifier{Value: "uintptr"}},
-		NewIdentifier("float32"): &TypeBuiltin{Name: Identifier{Value: "float32"}},
-		NewIdentifier("float64"): &TypeBuiltin{Name: Identifier{Value: "float64"}},
-
-		NewIdentifier("IntegerType"): &TypeBuiltin{Name: Identifier{Value: "int"}}, // TODO hack
-
-		NewIdentifier("string"): &TypeBuiltin{Name: Identifier{Value: "string"}},
-
-		NewIdentifier("true"):  &TypeBuiltin{Name: Identifier{Value: "bool"}},
-		NewIdentifier("false"): &TypeBuiltin{Name: Identifier{Value: "bool"}},
-		NewIdentifier("nil"):   &NilType{},
-		NewIdentifier("error"): &NamedType{Name: Identifier{Value: "error"}, Type: ParseType("interface{Error() string}")},
-
-		NewIdentifier("len"):    &BuiltinFunctionType{Name: "len"},
-		NewIdentifier("cap"):    &BuiltinFunctionType{Name: "cap"},
-		NewIdentifier("copy"):   &BuiltinFunctionType{Name: "copy"},
-		NewIdentifier("delete"): &BuiltinFunctionType{Name: "delete"},
-		NewIdentifier("append"): &BuiltinFunctionType{Name: "append"},
-		NewIdentifier("close"):  &BuiltinFunctionType{Name: "close"},
-		NewIdentifier("make"):   &BuiltinFunctionType{Name: "make"},
-		NewIdentifier("new"):    &BuiltinFunctionType{Name: "new"},
-		NewIdentifier("panic"):  &BuiltinFunctionType{Name: "panic"},
-
-		NewIdentifier("iota"): &UntypedConstantType{Kind: UntypedConstantInt},
-	}}
 	return &Checker{
 		Fresh:    Ptr(0),
 		TyCtx:    TypeContext{},
 		VarCtx:   EmptyVarContext(),
-		Builtins: builtins,
+		Builtins: MakeBuiltins(),
 	}
 }
+
+// ========================
 
 func (c *Checker) FreshTypeName() Identifier {
 	*c.Fresh = *c.Fresh + 1
@@ -1142,17 +1189,84 @@ func (c *Checker) Lookup(name Identifier) Type {
 	panic(fmt.Errorf("undefined: %v", name))
 }
 
-func (c *Checker) Define(name Identifier, ty Type) {
+func (c *Checker) DefineValue(name Identifier, ty Type) {
 	c.VarCtx.Def(name, ty)
 }
 
-func (c *Checker) Builtin(name string) Type {
+func (c *Checker) DefineType(name Identifier, ty Type) {
+	c.VarCtx.Def(name, &TypeOfType{Type: ty})
+}
+
+func (c *Checker) BuiltinValue(name string) Type {
 	ty, ok := c.Builtins.Lookup(NewIdentifier(name))
 	if !ok {
 		panic(fmt.Errorf("undefined builtin: %v", name))
 	}
 	return ty
 }
+
+func (c *Checker) BuiltinType(name string) Type {
+	ty, ok := c.Builtins.Lookup(NewIdentifier(name))
+	if !ok {
+		panic(fmt.Errorf("undefined builtin: %v", name))
+	}
+	realTy, ok := ty.(*TypeOfType)
+	if !ok {
+		panic(fmt.Errorf("not a builtin type: %v", ty))
+	}
+	return realTy.Type
+}
+
+// ========================
+
+func (c *Checker) ResolveValue(ty Type) Type {
+	switch ty := ty.(type) {
+	case *TypeName:
+		return c.Lookup(ty.Name)
+	case *QualIdentifier:
+		// TODO hacky
+		if ty.Package == "" {
+			return c.Lookup(ty.Name)
+		}
+		pkg := c.Lookup(NewIdentifier(ty.Package))
+		imp, ok := pkg.(*ImportType)
+		if !ok {
+			panic("not an import")
+		}
+		retTy, ok := imp.Scope.Lookup(ty.Name)
+		if !ok {
+			panic(fmt.Sprintf("definition %v not found in package %v", ty.Name, ty.Package))
+		}
+		return retTy
+	default:
+		return ty
+	}
+}
+
+func (c *Checker) ResolveType(ty Type) Type {
+	var valueTy Type
+	switch ty := ty.(type) {
+	case *TypeName:
+		valueTy = c.ResolveValue(ty)
+	case *QualIdentifier:
+		valueTy = c.ResolveValue(ty)
+	default:
+		return ty
+	}
+
+	switch valueTy := valueTy.(type) {
+	case *TypeOfType:
+		return valueTy.Type
+	default:
+		panic(fmt.Errorf("not a type: %v", ty))
+	}
+}
+
+func (c *Checker) CheckAssignableTo(src, dst Type) {
+	c.TyCtx.AddRelation(RelationSubtype{Sub: src, Super: dst})
+}
+
+// ========================
 
 func (c *Checker) BeginScope() *Checker {
 	return &Checker{
@@ -1246,21 +1360,21 @@ func (c *Checker) DefineImportDecl(decl *ImportDecl) {
 		scope = c.ReadPackage(decl)
 	}
 
-	c.Define(NewIdentifier(decl.EffectiveName()), &ImportType{Decl: *decl, Scope: scope})
+	c.DefineValue(NewIdentifier(decl.EffectiveName()), &ImportType{Decl: *decl, Scope: scope})
 
 	fmt.Printf("=== done DefineImportDecl(%v) ===\n", decl.Path)
 }
 
 func (c *Checker) ReadUnsafePackage() VarContext {
-	return VarContext{Types: map[Identifier]Type{
-		NewIdentifier("Pointer"):    &TypeBuiltin{Name: Identifier{Value: "Pointer"}},
-		NewIdentifier("Sizeof"):     ParseType("func(interface{}) uintptr"),
-		NewIdentifier("Offsetof"):   ParseType("func(interface{}) uintptr"),
-		NewIdentifier("Alignof"):    ParseType("func(interface{}) uintptr"),
-		NewIdentifier("Add"):        ParseType("func(Pointer, int) Pointer"),
-		NewIdentifier("String"):     ParseType("func(*byte, int) string"),
-		NewIdentifier("StringData"): ParseType("func(string) *byte"),
-	}}
+	scope := EmptyVarContext()
+	scope.DefType(NewIdentifier("Pointer"), NewBuiltinType("Pointer"))
+	scope.Def(NewIdentifier("Sizeof"), ParseType("func(interface{}) uintptr"))
+	scope.Def(NewIdentifier("Offsetof"), ParseType("func(interface{}) uintptr"))
+	scope.Def(NewIdentifier("Alignof"), ParseType("func(interface{}) uintptr"))
+	scope.Def(NewIdentifier("Add"), ParseType("func(Pointer, int) Pointer"))
+	scope.Def(NewIdentifier("String"), ParseType("func(*byte, int) string"))
+	scope.Def(NewIdentifier("StringData"), ParseType("func(string) *byte"))
+	return scope
 }
 
 var packageCache = map[string]VarContext{} // TODO are paths relative or module-based?
@@ -1344,7 +1458,7 @@ func (c *Checker) DefineConstDecl(decl *ConstDecl) {
 		if elemTy == nil {
 			panic("OOPS")
 		}
-		c.Define(elem.Name, elemTy)
+		c.DefineValue(elem.Name, elemTy)
 	}
 	spew.Dump(c.VarCtx)
 }
@@ -1399,11 +1513,11 @@ func (c *Checker) DefineTypeDecl(decl *TypeDecl) {
 	} else {
 		ty = &NamedType{Name: decl.Name, Type: decl.Type}
 	}
-	c.Define(decl.Name, ty)
+	c.DefineType(decl.Name, ty)
 }
 
 func (c *Checker) DefineAliasDecl(decl *AliasDecl) {
-	c.Define(decl.Name, decl.Type)
+	c.DefineType(decl.Name, decl.Type)
 }
 
 func (c *Checker) DefineVarDecl(decl *VarDecl) {
@@ -1413,11 +1527,11 @@ func (c *Checker) DefineVarDecl(decl *VarDecl) {
 	} else {
 		ty = decl.Type
 	}
-	c.Define(decl.Name, ty)
+	c.DefineValue(decl.Name, ty)
 }
 
 func (c *Checker) DefineFunctionDecl(decl *FunctionDecl) {
-	c.Define(decl.Name, &FunctionType{Signature: decl.Signature})
+	c.DefineValue(decl.Name, &FunctionType{Signature: decl.Signature})
 }
 
 func (c *Checker) DefineMethodDecl(decl *MethodDecl) {
@@ -1451,7 +1565,7 @@ func (c *Checker) DefineMethodDecl(decl *MethodDecl) {
 
 	methodName := NewIdentifier(fmt.Sprintf("%s.%s", methodHolder.Value, decl.Name.Value))
 
-	c.Define(methodName, methodTy)
+	c.DefineValue(methodName, methodTy)
 }
 
 // ========================
@@ -1492,7 +1606,7 @@ func (c *Checker) CheckTypeDecl(decl *TypeDecl) {
 	scope := c.BeginTypeScope(decl)
 
 	for _, tyParam := range decl.TypeParams.Params {
-		scope.VarCtx.Def(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
+		scope.DefineType(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
 	}
 
 	scope.CheckTypeDeclType(decl.Type)
@@ -1503,7 +1617,7 @@ func (c *Checker) CheckTypeDecl(decl *TypeDecl) {
 }
 
 func (c *Checker) CheckTypeDeclType(ty Type) {
-	switch ty := c.Resolve(ty).(type) {
+	switch ty := c.ResolveType(ty).(type) {
 	case *TypeBuiltin:
 		// nothing to do
 	case *TypeParam:
@@ -1571,32 +1685,25 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 
 	scope := c.BeginFunctionScope(&decl.Signature)
 
-	var receiverTy Type = decl.Receiver.Type
+	var receiverTy Type = c.ResolveType(decl.Receiver.Type)
 	var pointerReceiver bool
 
 	if pointerTy, ok := receiverTy.(*PointerType); ok {
 		pointerReceiver = true
-		receiverTy = pointerTy.BaseType
+		receiverTy = c.ResolveType(pointerTy.BaseType)
 	}
 
 	var methodHolder *NamedType
 
 	switch ty := receiverTy.(type) {
-	case *TypeName:
-		under := c.Lookup(ty.Name)
-		named, ok := c.Resolve(under).(*NamedType)
-		if !ok {
-			spew.Dump(under)
-			panic("method on non-named type")
-		}
-		methodHolder = named
+	case *NamedType:
+		methodHolder = ty
 	case *TypeApplication:
-		under := c.Resolve(&ty.ID)
-		named, ok := c.Resolve(under).(*NamedType)
+		named, ok := c.ResolveType(&ty.ID).(*NamedType)
 		if !ok {
 			panic("method on non-named type")
 		}
-		gen, ok := c.Resolve(named.Type).(*GenericType)
+		gen, ok := named.Type.(*GenericType)
 		if !ok {
 			panic("not a generic type")
 		}
@@ -1604,7 +1711,7 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 			panic("wrong number of type arguments")
 		}
 		for _, tyParam := range gen.TypeParams.Params {
-			scope.VarCtx.Def(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
+			scope.DefineType(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
 		}
 		methodHolder = named
 	default:
@@ -1612,17 +1719,17 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 	}
 
 	for _, tyParam := range decl.Signature.TypeParams.Params {
-		scope.VarCtx.Def(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
+		scope.DefineType(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
 	}
 
-	scope.VarCtx.Def(decl.Receiver.Name, decl.Receiver.Type)
+	scope.DefineValue(decl.Receiver.Name, decl.Receiver.Type)
 
 	for _, param := range decl.Signature.Params.Params {
-		scope.VarCtx.Def(param.Name, param.Type)
+		scope.DefineValue(param.Name, param.Type)
 	}
 
 	for _, result := range decl.Signature.Results.Params {
-		scope.VarCtx.Def(result.Name, result.Type)
+		scope.DefineValue(result.Name, result.Type)
 	}
 
 	scope.CheckStatementList(decl.Body)
@@ -1640,19 +1747,19 @@ func (c *Checker) CheckFunctionDecl(decl *FunctionDecl) {
 	scope := c.BeginFunctionScope(&decl.Signature)
 
 	for _, tyParam := range decl.Signature.TypeParams.Params {
-		scope.VarCtx.Def(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
+		scope.DefineType(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
 	}
 
 	for _, param := range decl.Signature.Params.Params {
 		if param.Variadic {
-			scope.VarCtx.Def(param.Name, &SliceType{ElemType: param.Type})
+			scope.DefineValue(param.Name, &SliceType{ElemType: param.Type})
 		} else {
-			scope.VarCtx.Def(param.Name, param.Type)
+			scope.DefineValue(param.Name, param.Type)
 		}
 	}
 
 	for _, result := range decl.Signature.Results.Params {
-		scope.VarCtx.Def(result.Name, result.Type)
+		scope.DefineValue(result.Name, result.Type)
 	}
 
 	scope.CheckStatementList(decl.Body)
@@ -1702,7 +1809,7 @@ func (c *Checker) CheckShortVarDecl(stmt *ShortVarDecl) {
 	if len(stmt.Names) == len(stmt.Exprs) {
 		for i, name := range stmt.Names {
 			ty := c.Synth(stmt.Exprs[i])
-			c.Define(name, ty)
+			c.DefineValue(name, ty)
 		}
 	} else if len(stmt.Names) > 1 && len(stmt.Exprs) == 1 {
 		ty := c.Synth(stmt.Exprs[0])
@@ -1712,7 +1819,7 @@ func (c *Checker) CheckShortVarDecl(stmt *ShortVarDecl) {
 				panic("wrong number of return in tuple expansion")
 			}
 			for i, name := range stmt.Names {
-				c.Define(name, ty.Elems[i])
+				c.DefineValue(name, ty.Elems[i])
 			}
 		default:
 			panic("non-tuple type")
@@ -1762,7 +1869,7 @@ func (c *Checker) CheckIfStmt(stmt *IfStmt) {
 	if stmt.Init != nil {
 		c.CheckStatement(stmt.Init)
 	}
-	c.CheckExpr(stmt.Cond, c.Builtin("bool"))
+	c.CheckExpr(stmt.Cond, c.BuiltinType("bool"))
 	c.CheckStatementList(stmt.Body)
 	if stmt.Else != nil {
 		c.CheckStatement(stmt.Else)
@@ -1786,14 +1893,14 @@ func (c *Checker) CheckRangeStmt(stmt *RangeStmt) {
 	case *SliceType:
 		if stmt.Key != nil {
 			if stmt.Assign {
-				scope.VarCtx.Def(stmt.Key.(*NameExpr).Name, scope.Builtin("int"))
+				scope.DefineValue(stmt.Key.(*NameExpr).Name, scope.BuiltinType("int"))
 			} else {
-				scope.CheckAssignableTo(c.Builtin("int"), scope.Synth(stmt.Key))
+				scope.CheckAssignableTo(c.BuiltinType("int"), scope.Synth(stmt.Key))
 			}
 		}
 		if stmt.Value != nil {
 			if stmt.Assign {
-				scope.VarCtx.Def(stmt.Value.(*NameExpr).Name, targetTy.ElemType)
+				scope.DefineValue(stmt.Value.(*NameExpr).Name, targetTy.ElemType)
 			} else {
 				scope.CheckAssignableTo(targetTy.ElemType, scope.Synth(stmt.Value))
 			}
@@ -1801,14 +1908,14 @@ func (c *Checker) CheckRangeStmt(stmt *RangeStmt) {
 	case *MapType:
 		if stmt.Key != nil {
 			if stmt.Assign {
-				scope.VarCtx.Def(stmt.Key.(*NameExpr).Name, targetTy.KeyType)
+				scope.DefineValue(stmt.Key.(*NameExpr).Name, targetTy.KeyType)
 			} else {
 				scope.CheckAssignableTo(targetTy.KeyType, scope.Synth(stmt.Key))
 			}
 		}
 		if stmt.Value != nil {
 			if stmt.Assign {
-				scope.VarCtx.Def(stmt.Value.(*NameExpr).Name, targetTy.ElemType)
+				scope.DefineValue(stmt.Value.(*NameExpr).Name, targetTy.ElemType)
 			} else {
 				scope.CheckAssignableTo(targetTy.ElemType, scope.Synth(stmt.Value))
 			}
@@ -1827,7 +1934,7 @@ func (c *Checker) CheckForStmt(stmt *ForStmt) {
 		scope.CheckStatement(stmt.Init)
 	}
 	if stmt.Cond != nil {
-		scope.CheckExpr(stmt.Cond, c.Builtin("bool"))
+		scope.CheckExpr(stmt.Cond, c.BuiltinType("bool"))
 	}
 	if stmt.Post != nil {
 		scope.CheckStatement(stmt.Post)
@@ -1897,7 +2004,7 @@ func (c *Checker) CheckSubst(tyParams TypeParamList, subst Subst) {
 			continue // TODO: is this ok?
 		}
 		if single, ok := IsSingleTypeUnion(tyParam.Constraint); ok {
-			if c.Identical(tySub, single) {
+			if c.Identical(tySub, c.ResolveType(single)) {
 				continue
 			}
 		}
@@ -1974,7 +2081,7 @@ func (c *Checker) CheckIndexExpr(expr *IndexExpr, ty Type) {
 		if len(expr.Indices) != 1 {
 			panic("indexing a slice with multiple indices")
 		}
-		c.CheckExpr(expr.Indices[0], c.Builtin("int"))
+		c.CheckExpr(expr.Indices[0], c.BuiltinType("int"))
 		c.TyCtx.AddEq(ty, exprTy.ElemType)
 	default:
 		spew.Dump(expr)
@@ -2005,10 +2112,6 @@ func (c *Checker) CheckCompositeLitExpr(expr *CompositeLitExpr, ty Type) {
 	}
 }
 
-func (c *Checker) CheckAssignableTo(src, dst Type) {
-	c.TyCtx.AddRelation(RelationSubtype{Sub: src, Super: dst})
-}
-
 // ========================
 
 func (c *Checker) Synth(expr Expr) Type {
@@ -2032,7 +2135,7 @@ func (c *Checker) Synth(expr Expr) Type {
 	case *LiteralExpr:
 		return c.SynthLiteralExpr(expr)
 	case *TypeExpr:
-		return expr.Type
+		return &TypeOfType{Type: c.ResolveType(expr.Type)}
 	case *CompositeLitExpr:
 		return c.SynthCompositeLitExpr(expr)
 	case *SliceExpr:
@@ -2050,7 +2153,7 @@ func (c *Checker) SynthBinaryExpr(expr *BinaryExpr) Type {
 		leftTy := c.Synth(expr.Left)
 		rightTy := c.Synth(expr.Right)
 		c.TyCtx.AddEq(leftTy, rightTy)
-		return c.Builtin("bool")
+		return c.BuiltinType("bool")
 	case BinaryOpAdd, BinaryOpSub, BinaryOpMul, BinaryOpQuo, BinaryOpRem:
 		// TODO check numeric?
 		leftTy := c.Synth(expr.Left)
@@ -2058,9 +2161,9 @@ func (c *Checker) SynthBinaryExpr(expr *BinaryExpr) Type {
 		c.TyCtx.AddEq(leftTy, rightTy)
 		return leftTy
 	case BinaryOpLAnd, BinaryOpLOr:
-		c.CheckExpr(expr.Left, c.Builtin("bool"))
-		c.CheckExpr(expr.Right, c.Builtin("bool"))
-		return c.Builtin("bool")
+		c.CheckExpr(expr.Left, c.BuiltinType("bool"))
+		c.CheckExpr(expr.Right, c.BuiltinType("bool"))
+		return c.BuiltinType("bool")
 	case BinaryOpAnd, BinaryOpOr, BinaryOpXor, BinaryOpAndNot, BinaryOpShl, BinaryOpShr:
 		// TODO check numeric?
 		leftTy := c.Synth(expr.Left)
@@ -2080,17 +2183,19 @@ func (c *Checker) SynthUnaryExpr(expr *UnaryExpr) Type {
 		// TODO check numeric?
 		return ty
 	case UnaryOpNot:
-		c.CheckExpr(expr.Expr, c.Builtin("bool"))
-		return c.Builtin("bool")
+		c.CheckExpr(expr.Expr, c.BuiltinType("bool"))
+		return c.BuiltinType("bool")
 	case UnaryOpAddr:
 		return &PointerType{BaseType: ty}
 	case UnaryOpDeref:
 		switch ty := ty.(type) {
 		case *PointerType:
 			return ty.BaseType
+		case *TypeOfType:
+			return &TypeOfType{Type: &PointerType{BaseType: ty.Type}}
 		default:
-			// TODO yikes?
-			return &TypeInType{Type: &PointerType{BaseType: ty}}
+			spew.Dump(expr)
+			panic(fmt.Sprintf("cannot dereference %v of type %v", expr, ty))
 		}
 	default:
 		spew.Dump(expr)
@@ -2099,25 +2204,27 @@ func (c *Checker) SynthUnaryExpr(expr *UnaryExpr) Type {
 }
 
 func (c *Checker) SynthSelectorExpr(expr *SelectorExpr) Type {
-	exprTy := c.Synth(expr.Expr)
-	return c.DoSelect(exprTy, expr.Sel)
+	return c.DoSelect(c.Synth(expr.Expr), expr.Sel)
 }
 
 func (c *Checker) DoSelect(exprTy Type, sel Identifier) Type {
-	checkTy := exprTy
-
-	switch ty := c.Resolve(checkTy).(type) {
+	switch ty := c.ResolveValue(exprTy).(type) {
 	case *ImportType:
 		defTy, ok := ty.Scope.Lookup(sel)
 		if !ok {
 			panic(fmt.Sprintf("import %v has no definition %v", exprTy, sel))
 		}
 		return defTy
-	case *PointerType:
-		checkTy = ty.BaseType
 	}
 
-	switch ty := c.Resolve(checkTy).(type) {
+	checkTy := c.ResolveType(exprTy)
+
+	switch ty := checkTy.(type) {
+	case *PointerType:
+		checkTy = c.ResolveType(ty.BaseType)
+	}
+
+	switch ty := checkTy.(type) {
 	case *NamedType:
 		for _, m := range c.NamedTypeMethods(ty) {
 			if m.Name == sel {
@@ -2125,15 +2232,6 @@ func (c *Checker) DoSelect(exprTy Type, sel Identifier) Type {
 			}
 		}
 		checkTy = ty.Type
-	}
-
-	switch ty := c.Under(checkTy).(type) {
-	case *StructType:
-		for _, field := range ty.Fields {
-			if field.Name == sel {
-				return field.Type
-			}
-		}
 	case *TypeParam:
 		if ty.Bound != nil {
 			set := c.InterfaceTypeSet(ty.Bound)
@@ -2143,9 +2241,19 @@ func (c *Checker) DoSelect(exprTy Type, sel Identifier) Type {
 				}
 			}
 			if len(set.Types) == 1 {
-				return c.DoSelect(c.Resolve(set.Types[0]), sel)
+				return c.DoSelect(c.ResolveType(set.Types[0]), sel)
 			}
 		}
+	}
+
+	switch ty := c.Under(checkTy).(type) {
+	case *StructType:
+		for _, field := range ty.Fields {
+			if field.Name == sel {
+				return field.Type
+			}
+		}
+
 	case *InterfaceType:
 		for _, m := range ty.Methods {
 			if m.Name == sel {
@@ -2164,7 +2272,7 @@ func (c *Checker) SynthIndexExpr(expr *IndexExpr) Type {
 		if len(expr.Indices) != 1 {
 			panic("indexing a slice with multiple indices")
 		}
-		c.CheckExpr(expr.Indices[0], c.Builtin("int"))
+		c.CheckExpr(expr.Indices[0], c.BuiltinType("int"))
 		return exprTy.ElemType
 	case *MapType:
 		if len(expr.Indices) != 1 {
@@ -2184,13 +2292,13 @@ func (c *Checker) SynthSliceExpr(expr *SliceExpr) Type {
 	switch exprTy := c.Synth(expr.Expr).(type) {
 	case *SliceType:
 		if expr.Low != nil {
-			c.CheckExpr(expr.Low, c.Builtin("int"))
+			c.CheckExpr(expr.Low, c.BuiltinType("int"))
 		}
 		if expr.High != nil {
-			c.CheckExpr(expr.High, c.Builtin("int"))
+			c.CheckExpr(expr.High, c.BuiltinType("int"))
 		}
 		if expr.Max != nil {
-			c.CheckExpr(expr.Max, c.Builtin("int"))
+			c.CheckExpr(expr.Max, c.BuiltinType("int"))
 		}
 		return exprTy
 	default:
@@ -2223,7 +2331,7 @@ func (c *Checker) SynthCallExpr(expr *CallExpr) Type {
 			switch elemType := c.Under(ty.ElemType).(type) {
 			case *TypeBuiltin:
 				if elemType.Name.Value == "byte" {
-					c.CheckAssignableTo(c.Synth(expr.Args[0]), c.Builtin("string"))
+					c.CheckAssignableTo(c.Synth(expr.Args[0]), c.BuiltinType("string"))
 					return ty
 				}
 			}
@@ -2233,7 +2341,7 @@ func (c *Checker) SynthCallExpr(expr *CallExpr) Type {
 				panic("conversion without exactly one argument")
 			}
 			return c.SynthBuiltinConversion(expr.Args[0], ty)
-		case *TypeInType:
+		case *TypeOfType:
 			return c.SynthConversionExpr(&ConversionExpr{Expr: expr.Func, Type: ty.Type})
 		default:
 			spew.Dump(ty)
@@ -2341,14 +2449,22 @@ func (c *Checker) SynthBuiltinNewCall(expr *CallExpr) Type {
 	if len(expr.Args) != 1 {
 		panic("builtin new() takes exactly one argument")
 	}
-	return &PointerType{BaseType: c.Synth(expr.Args[0])}
+	argTy, ok := c.Synth(expr.Args[0]).(*TypeOfType)
+	if !ok {
+		panic("new() with non-type argument")
+	}
+	return &PointerType{BaseType: argTy.Type}
 }
 
 func (c *Checker) SynthBuiltinMakeCall(expr *CallExpr) Type {
 	if len(expr.Args) == 0 {
 		panic("builtin make() takes at least one argument")
 	}
-	elemTy := c.Synth(expr.Args[0])
+	argTy, ok := c.Synth(expr.Args[0]).(*TypeOfType)
+	if !ok {
+		panic("make() with non-type argument")
+	}
+	elemTy := argTy.Type
 	switch elemTy.(type) {
 	case *SliceType:
 	case *MapType:
@@ -2357,7 +2473,7 @@ func (c *Checker) SynthBuiltinMakeCall(expr *CallExpr) Type {
 		panic("make() with non-slice, non-map, non-channel type")
 	}
 	for _, arg := range expr.Args[1:] {
-		c.CheckExpr(arg, c.Builtin("int"))
+		c.CheckExpr(arg, c.BuiltinType("int"))
 	}
 	return elemTy
 }
@@ -2390,11 +2506,11 @@ func (c *Checker) SynthBuiltinLenCall(expr *CallExpr) Type {
 	default:
 		panic(fmt.Sprintf("len() on incompatible type %v", argTy))
 	}
-	return c.Builtin("int")
+	return c.BuiltinType("int")
 }
 
 func (c *Checker) SynthNameExpr(expr *NameExpr) Type {
-	return c.Resolve(c.Lookup(expr.Name))
+	return c.Lookup(expr.Name)
 }
 
 func (c *Checker) SynthLiteralExpr(expr *LiteralExpr) Type {
@@ -2418,15 +2534,15 @@ func (c *Checker) SynthLiteralExpr(expr *LiteralExpr) Type {
 func (c *Checker) UntypedDefaultType(ty *UntypedConstantType) Type {
 	switch ty.Kind {
 	case UntypedConstantInt:
-		return c.Builtin("int")
+		return c.BuiltinType("int")
 	case UntypedConstantBool:
-		return c.Builtin("bool")
+		return c.BuiltinType("bool")
 	case UntypedConstantString:
-		return c.Builtin("string")
+		return c.BuiltinType("string")
 	case UntypedConstantFloat:
-		return c.Builtin("float64")
+		return c.BuiltinType("float64")
 	case UntypedConstantRune:
-		return c.Builtin("rune")
+		return c.BuiltinType("rune")
 	default:
 		panic("unreachable")
 	}
@@ -2437,6 +2553,8 @@ func (c *Checker) SynthCompositeLitExpr(expr *CompositeLitExpr) Type {
 }
 
 func (c *Checker) MakeCompositeLit(expr *CompositeLitExpr, targetTy Type) Type {
+	targetTy = c.ResolveType(targetTy)
+
 	switch exprTy := c.Under(targetTy).(type) {
 	case *StructType:
 		return c.MakeCompositeLitStruct(expr, exprTy)
@@ -2503,7 +2621,7 @@ func (c *Checker) TypeApplication(app *TypeApplication) Type {
 
 func (c *Checker) TypeApplicationFunc(app *TypeApplication, argF func(tyParam TypeParamDecl, tyArg Type)) Type {
 	named, subst := c.InstantiateTypeFunc(app, argF)
-	gen := c.Resolve(named.Type).(*GenericType)
+	gen := c.ResolveType(named.Type).(*GenericType)
 	return c.ApplySubst(gen.Type, subst)
 }
 
@@ -2512,12 +2630,11 @@ func (c *Checker) InstantiateType(app *TypeApplication) (*NamedType, Subst) {
 }
 
 func (c *Checker) InstantiateTypeFunc(app *TypeApplication, argF func(tyParam TypeParamDecl, tyArg Type)) (*NamedType, Subst) {
-	under := c.Resolve(&app.ID)
-	named, ok := c.Resolve(under).(*NamedType)
+	named, ok := c.ResolveType(&app.ID).(*NamedType)
 	if !ok {
 		panic("can only instantiate named types?")
 	}
-	gen, ok := c.Resolve(named.Type).(*GenericType)
+	gen, ok := c.ResolveType(named.Type).(*GenericType)
 	if !ok {
 		panic("not a generic type")
 	}
@@ -2628,6 +2745,8 @@ func (c *Checker) ApplySubst(ty Type, subst Subst) Type {
 		return ty
 	case *UntypedConstantType:
 		return ty
+	case *TypeOfType:
+		return &TypeOfType{Type: c.ApplySubst(ty.Type, subst)}
 	default:
 		spew.Dump(ty)
 		panic("unreachable")
@@ -2798,8 +2917,8 @@ func IntersectInterfaces(elems ...*InterfaceType) *InterfaceType {
 }
 
 func (c *Checker) UnifyEq(left, right Type, subst Subst) {
-	left = c.Resolve(left)
-	right = c.Resolve(right)
+	left = c.ResolveType(left)
+	right = c.ResolveType(right)
 
 	fmt.Printf("? %v = %v %v\n", left, right, subst)
 
@@ -2818,6 +2937,10 @@ func (c *Checker) UnifyEq(left, right Type, subst Subst) {
 		}
 		c.UnifyEq(right, left, subst)
 	case *TypeParam:
+		if right, ok := right.(*UntypedConstantType); ok {
+			c.UnifyEq(left, c.UntypedDefaultType(right), subst)
+			return
+		}
 		if s, ok := subst[left.Name]; ok {
 			if !c.Identical(s, right) {
 				c.UnifyEq(s, right, subst)
@@ -2877,17 +3000,17 @@ func (c *Checker) UnifyEq(left, right Type, subst Subst) {
 }
 
 func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
-	sub = c.Resolve(sub)
-	super = c.Resolve(super)
+	sub = c.ResolveType(sub)
+	super = c.ResolveType(super)
 
 	fmt.Printf("? %v <: %v %v\n", sub, super, subst)
 
-	if sub, ok := c.Resolve(sub).(*TypeParam); ok {
+	if sub, ok := c.ResolveType(sub).(*TypeParam); ok {
 		if !c.Identical(sub, super) && c.ContainsTypeParam(super, sub) {
 			panic(fmt.Sprintf("circular constraint: %v <: %v", sub, super))
 		}
 	}
-	if super, ok := c.Resolve(super).(*TypeParam); ok {
+	if super, ok := c.ResolveType(super).(*TypeParam); ok {
 		if !c.Identical(sub, super) && c.ContainsTypeParam(sub, super) {
 			panic(fmt.Sprintf("circular constraint: %v <: %v", sub, super))
 		}
@@ -2927,7 +3050,7 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 		}
 		c.UnifySubtype(sub, c.Under(super), subst)
 	case *TypeParam:
-		if subTy, ok := c.Resolve(sub).(*TypeParam); ok {
+		if subTy, ok := c.ResolveType(sub).(*TypeParam); ok {
 			if subTy.Name == super.Name {
 				return
 			}
@@ -2942,18 +3065,19 @@ func (c *Checker) UnifySubtype(sub, super Type, subst Subst) {
 }
 
 func (c *Checker) UnifySatisfies(sub Type, inter *InterfaceType, subst Subst) {
-	sub = c.Resolve(sub)
+	sub = c.ResolveType(sub)
 
 	var typeset *TypeSet
 	c.BasicSatisfy(sub, inter, subst, &typeset)
 
-	if typeset != nil {
+	if typeset != nil && !typeset.Universe {
 		for _, term := range typeset.Types {
-			if !c.IsConcreteType(term) {
+			termTy := c.ResolveType(term)
+			if !c.IsConcreteType(termTy) {
 				panic("cannot make union of non-concrete types")
 			}
-			if c.Identical(sub, term) {
-				c.UnifyEq(sub, term, subst) // necessary?
+			if c.Identical(sub, termTy) {
+				c.UnifyEq(sub, termTy, subst) // necessary?
 				return
 			}
 		}
@@ -2964,19 +3088,19 @@ func (c *Checker) UnifySatisfies(sub Type, inter *InterfaceType, subst Subst) {
 // TODO this seems unprincipled
 func (c *Checker) BasicSatisfy(sub Type, inter *InterfaceType, subst Subst, out **TypeSet) {
 	inter = c.SimplifyInterface(inter)
-	if inter.IsEmpty() {
-		return
-	}
 	supertypeset := c.InterfaceTypeSet(inter)
 	if !supertypeset.Universe && len(supertypeset.Types) == 0 {
 		panic("cannot satisfy empty set")
 	}
 	if len(supertypeset.Types) == 1 {
+		single := c.ResolveType(supertypeset.Types[0])
 		// TODO hacky
-		if c.Identical(sub, supertypeset.Types[0]) {
+		if c.Identical(sub, single) {
 			return
 		}
-		c.UnifyEq(sub, supertypeset.Types[0], subst)
+		if c.IsConcreteType(single) {
+			c.UnifyEq(sub, single, subst)
+		}
 		// c.UnifySatisfies(sub, &InterfaceType{Methods: supertypeset.Methods}, subst)
 		c.TyCtx.AddRelation(RelationSubtype{Sub: sub, Super: &InterfaceType{Methods: supertypeset.Methods}})
 		return // leave for next iteration?
@@ -2999,7 +3123,7 @@ func (c *Checker) BasicSatisfy(sub Type, inter *InterfaceType, subst Subst, out 
 			panic(fmt.Sprintf("type %v doesn't have method %v", sub, superMethod))
 		}
 	}
-	if tyPar, ok := c.Resolve(sub).(*TypeParam); ok {
+	if tyPar, ok := c.ResolveType(sub).(*TypeParam); ok {
 		var bound Type = tyPar.Bound
 		if tyPar.Bound == nil {
 			bound = EmptyInterface()
@@ -3007,18 +3131,17 @@ func (c *Checker) BasicSatisfy(sub Type, inter *InterfaceType, subst Subst, out 
 		c.UnifySubtype(bound, inter, subst)
 		return
 	}
-	if sub, ok := c.Resolve(sub).(*InterfaceType); ok {
-		if sub.IsEmpty() {
-			return
-		}
+	if sub, ok := c.ResolveType(sub).(*InterfaceType); ok {
 		subtypeset := c.InterfaceTypeSet(sub)
 		if len(subtypeset.Methods) != 0 {
 			panic("TODO")
 		}
 		for _, term := range subtypeset.Types {
+			termTy := c.ResolveType(term)
 			found := false
 			for _, superTerm := range supertypeset.Types {
-				if c.Identical(term, superTerm) {
+				superTermTy := c.ResolveType(superTerm)
+				if c.Identical(termTy, superTermTy) {
 					found = true
 				}
 			}
@@ -3035,31 +3158,8 @@ func (c *Checker) BasicSatisfy(sub Type, inter *InterfaceType, subst Subst, out 
 	*out = &supertypeset
 }
 
-func (c *Checker) Resolve(ty Type) Type {
-	switch ty := ty.(type) {
-	case *TypeName:
-		return c.Resolve(c.Lookup(ty.Name))
-	case *QualIdentifier:
-		if ty.Package == "" {
-			return c.Resolve(c.Lookup(ty.Name))
-		}
-		pkg := c.Lookup(NewIdentifier(ty.Package))
-		imp, ok := c.Resolve(pkg).(*ImportType)
-		if !ok {
-			panic("not an import")
-		}
-		retTy, ok := imp.Scope.Lookup(ty.Name)
-		if !ok {
-			panic(fmt.Sprintf("definition %v not found in package %v", ty.Name, ty.Package))
-		}
-		return retTy
-	default:
-		return ty
-	}
-}
-
 func (c *Checker) Under(ty Type) Type {
-	switch ty := c.Resolve(ty).(type) {
+	switch ty := ty.(type) {
 	case *NamedType:
 		return c.Under(ty.Type)
 	case *TypeApplication:
@@ -3071,7 +3171,7 @@ func (c *Checker) Under(ty Type) Type {
 }
 
 func (c *Checker) ContainsTypeParam(ty Type, tyParam *TypeParam) bool {
-	switch ty := c.Resolve(ty).(type) {
+	switch ty := ty.(type) {
 	case *TypeParam:
 		return ty.Name == tyParam.Name
 	case *TypeApplication:
@@ -3139,7 +3239,7 @@ func (c *Checker) ContainsTypeParam(ty Type, tyParam *TypeParam) bool {
 }
 
 func (c *Checker) MethodSet(ty Type) ([]MethodElem, bool) {
-	ty = c.Resolve(ty)
+	ty = c.ResolveType(ty)
 
 	var pointerReceiver bool
 	if pointerTy, ok := ty.(*PointerType); ok {
@@ -3147,7 +3247,7 @@ func (c *Checker) MethodSet(ty Type) ([]MethodElem, bool) {
 		pointerReceiver = true
 	}
 
-	switch ty := c.Resolve(ty).(type) {
+	switch ty := c.ResolveType(ty).(type) {
 	case *InterfaceType:
 		return ty.Methods, false
 	case *NamedType:
@@ -3191,7 +3291,7 @@ func (c *Checker) NamedTypeMethods(namedTy *NamedType) []MethodElem {
 }
 
 func (c *Checker) IsTypeParam(ty Type) bool {
-	switch c.Resolve(ty).(type) {
+	switch ty.(type) {
 	case *TypeParam:
 		return true
 	default:
@@ -3200,7 +3300,9 @@ func (c *Checker) IsTypeParam(ty Type) bool {
 }
 
 func (c *Checker) IsConcreteType(ty Type) bool {
-	switch ty := c.Resolve(ty).(type) {
+	switch ty := ty.(type) {
+	case *TypeOfType:
+		return c.IsConcreteType(ty.Type)
 	case *TypeBuiltin:
 		return true
 	case *InterfaceType:
@@ -3231,26 +3333,19 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 	// fmt.Printf("== Identical(%v, %v) ==\n", ty1, ty2)
 	// TODO recursive types?
 	switch ty1 := ty1.(type) {
-	case *TypeName:
-		if ty2, ok := ty2.(*TypeName); ok {
-			if ty1.Name == ty2.Name {
-				return true
-			}
-		}
-		return c.Identical(ty2, c.Resolve(ty1))
 	case *NamedType:
 		if ty2, ok := ty2.(*NamedType); ok {
 			return ty1.Name == ty2.Name
 		}
 		return false
 	case *TypeBuiltin:
-		ty, ok := c.Resolve(ty2).(*TypeBuiltin)
+		ty, ok := ty2.(*TypeBuiltin)
 		if !ok {
 			return false
 		}
 		return ty1.Name == ty.Name
 	case *TypeParam:
-		if ty2, ok := c.Resolve(ty2).(*TypeParam); ok {
+		if ty2, ok := ty2.(*TypeParam); ok {
 			return ty1.Name == ty2.Name
 		}
 		return false
@@ -3267,7 +3362,7 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 		return false
 	case *PointerType:
 		if ty2, ok := ty2.(*PointerType); ok {
-			return c.Identical(ty1.BaseType, ty2.BaseType)
+			return c.Identical(c.ResolveType(ty1.BaseType), c.ResolveType(ty2.BaseType))
 		}
 		return false
 	case *TypeApplication:
@@ -3279,7 +3374,7 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 				return false
 			}
 			for i, arg := range ty1.Args {
-				if !c.Identical(arg, ty2.Args[i]) {
+				if !c.Identical(c.ResolveType(arg), c.ResolveType(ty2.Args[i])) {
 					return false
 				}
 			}
@@ -3312,7 +3407,7 @@ func (c *Checker) Identical(ty1, ty2 Type) bool {
 		return false
 	case *SliceType:
 		if ty2, ok := ty2.(*SliceType); ok {
-			return c.Identical(ty1.ElemType, ty2.ElemType)
+			return c.Identical(c.ResolveType(ty1.ElemType), c.ResolveType(ty2.ElemType))
 		}
 		return false
 	case *FunctionType:
@@ -3345,14 +3440,14 @@ func (c *Checker) IdenticalFunctionTypes(ty1, ty2 *FunctionType) bool {
 		// TODO variadic
 		par1 := ty1.Signature.Params.Params[i]
 		par2 := ty2.Signature.Params.Params[i]
-		if !c.Identical(par1.Type, par2.Type) {
+		if !c.Identical(c.ResolveType(par1.Type), c.ResolveType(par2.Type)) {
 			return false
 		}
 	}
 	for i := range ty1.Signature.Results.Params {
 		par1 := ty1.Signature.Results.Params[i]
 		par2 := ty2.Signature.Results.Params[i]
-		if !c.Identical(par1.Type, par2.Type) {
+		if !c.Identical(c.ResolveType(par1.Type), c.ResolveType(par2.Type)) {
 			return false
 		}
 	}
@@ -3376,7 +3471,8 @@ func (c *Checker) InterfaceTypeSet(ty *InterfaceType) TypeSet {
 			if term.Tilde {
 				panic("TODO")
 			}
-			switch underTy := c.Under(term.Type).(type) {
+			termTy := c.ResolveType(term.Type)
+			switch underTy := c.Under(termTy).(type) {
 			case *InterfaceType:
 				next = c.InterfaceTypeSet(underTy)
 			case *TypeParam:
@@ -3386,7 +3482,7 @@ func (c *Checker) InterfaceTypeSet(ty *InterfaceType) TypeSet {
 					next = TypeSet{Types: []Type{underTy}, Universe: false}
 				}
 			default:
-				next = TypeSet{Types: []Type{term.Type}, Universe: false}
+				next = TypeSet{Types: []Type{termTy}, Universe: false}
 			}
 		} else {
 			var types []Type
@@ -3394,7 +3490,8 @@ func (c *Checker) InterfaceTypeSet(ty *InterfaceType) TypeSet {
 				if term.Tilde {
 					panic("TODO")
 				}
-				switch ty := c.Under(term.Type).(type) {
+				termTy := c.ResolveType(term.Type)
+				switch ty := c.Under(termTy).(type) {
 				case *InterfaceType:
 					if len(ty.Methods) == 0 {
 						spew.Dump(ty)
@@ -3420,7 +3517,8 @@ func (c *Checker) TypeSet(con TypeConstraint) TypeSet {
 		if term.Tilde {
 			panic("TODO")
 		}
-		switch ty := c.Under(term.Type).(type) {
+		termTy := c.ResolveType(term.Type)
+		switch ty := c.Under(termTy).(type) {
 		case *InterfaceType:
 			return c.InterfaceTypeSet(ty)
 		case *TypeParam:
@@ -3437,7 +3535,8 @@ func (c *Checker) TypeSet(con TypeConstraint) TypeSet {
 		if term.Tilde {
 			panic("TODO")
 		}
-		switch ty := c.Under(term.Type).(type) {
+		termTy := c.ResolveType(term.Type)
+		switch ty := c.Under(termTy).(type) {
 		case *InterfaceType:
 			if len(ty.Methods) == 0 {
 				spew.Dump(ty)
@@ -4635,7 +4734,7 @@ func callParse() (int, error) {
 	_ = src
 
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "example.go", nil, parser.ParseComments)
+	f, err := parser.ParseFile(fset, "example.go", src, parser.ParseComments)
 	if err != nil {
 		panic(err)
 	}
