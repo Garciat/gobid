@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/davecgh/go-spew/spew"
 )
@@ -45,6 +47,10 @@ type Type interface {
 type TypeBase struct{}
 
 func (*TypeBase) _Type() {}
+
+type VoidType struct {
+	TypeBase
+}
 
 type BottomType struct {
 	TypeBase
@@ -593,6 +599,11 @@ type EllipsisExpr struct {
 	ExprBase
 }
 
+type ConstIntExpr struct {
+	ExprBase
+	Value int
+}
+
 type BinaryExpr struct {
 	ExprBase
 	Op    BinaryOp
@@ -662,6 +673,11 @@ type CallExpr struct {
 type NameExpr struct {
 	ExprBase
 	Name Identifier
+}
+
+func IsIgnoreName(e Expr) bool {
+	name, ok := e.(*NameExpr)
+	return ok && name.Name == IgnoreIdent
 }
 
 type LiteralExpr struct {
@@ -854,7 +870,7 @@ type TypeSwitchCase struct {
 type SwitchStmt struct {
 	StatementBase
 	Init  Statement
-	Tag   Expr // ???
+	Tag   Expr
 	Cases []SwitchCase
 }
 
@@ -1182,6 +1198,7 @@ type Checker struct {
 	LazyWaiters    map[Identifier]chan struct{}
 	DoneLoadingSem chan struct{}
 	DefinerMailbox chan DefineElem
+	DefinerDone    chan struct{}
 }
 
 type DefineElem struct {
@@ -1197,6 +1214,8 @@ func NewChecker() *Checker {
 		Builtins:       MakeBuiltins(),
 		LazyWaiters:    map[Identifier]chan struct{}{},
 		DoneLoadingSem: make(chan struct{}),
+		DefinerMailbox: make(chan DefineElem),
+		DefinerDone:    make(chan struct{}),
 	}
 	c.RunDefiner()
 	return c
@@ -1213,20 +1232,21 @@ func (c *Checker) Copy() *Checker {
 		LazyWaiters:    c.LazyWaiters,
 		DoneLoadingSem: c.DoneLoadingSem,
 		DefinerMailbox: c.DefinerMailbox,
+		DefinerDone:    c.DefinerDone,
 	}
 }
 
 func (c *Checker) RunDefiner() {
-	c.DefinerMailbox = make(chan DefineElem)
 	go func() {
 		for {
 			elem, ok := <-c.DefinerMailbox
 			if !ok {
-				return
+				break
 			}
 			c.DefineValue(elem.Identifier, elem.Type)
 			fmt.Printf("LAZY defined %v = %v\n", elem.Identifier, elem.Type)
 		}
+		close(c.DefinerDone)
 	}()
 }
 
@@ -1250,6 +1270,7 @@ func (c *Checker) Lookup(name Identifier) Type {
 }
 
 func (c *Checker) DefineValue(name Identifier, ty Type) {
+	fmt.Printf("DEFINING %v = %v\n", name, ty)
 	c.VarCtx.Def(name, ty)
 }
 
@@ -1276,6 +1297,7 @@ func (c *Checker) DefineLazyValue(name Identifier, f func() Type) {
 }
 
 func (c *Checker) DefineType(name Identifier, ty Type) {
+	fmt.Printf("DEFINING TYPE %v = %v\n", name, ty)
 	c.VarCtx.Def(name, &TypeOfType{Type: ty})
 }
 
@@ -1386,8 +1408,12 @@ func (c *Checker) AssertInFunctionScope() *Signature {
 // ========================
 
 func (c *Checker) AcceptFiles(files []File) {
+	later := []func(){}
 	for _, file := range files {
-		c.LoadFile(file)
+		later = append(later, c.LoadFile(file))
+	}
+	for _, f := range later {
+		f()
 	}
 	c.DoneLoading()
 	for _, file := range files {
@@ -1395,7 +1421,7 @@ func (c *Checker) AcceptFiles(files []File) {
 	}
 }
 
-func (c *Checker) LoadFile(file File) {
+func (c *Checker) LoadFile(file File) func() {
 	fmt.Printf("=== LoadFile(%v) ===\n", file.Path)
 	later := []Decl{}
 	for _, decl := range file.Decls {
@@ -1406,13 +1432,20 @@ func (c *Checker) LoadFile(file File) {
 			c.DefineDecl(decl)
 		}
 	}
-	for _, decl := range later {
-		c.DefineDecl(decl)
+	return func() {
+		for _, decl := range later {
+			c.DefineDecl(decl)
+		}
 	}
 }
 
 func (c *Checker) DoneLoading() {
 	close(c.DoneLoadingSem)
+	for _, sem := range c.LazyWaiters {
+		<-sem
+	}
+	close(c.DefinerMailbox)
+	<-c.DefinerDone
 }
 
 func (c *Checker) CheckFile(file File) {
@@ -1455,6 +1488,8 @@ func (c *Checker) DefineImportDecl(decl *ImportDecl) {
 	var scope VarContext
 
 	switch decl.Path {
+	case "C":
+		scope = EmptyVarContext() // TODO screwed
 	case "unsafe":
 		scope = c.ReadUnsafePackage()
 	default:
@@ -1558,7 +1593,7 @@ func (c *Checker) DefineConstDecl(decl *ConstDecl) {
 		if elemTy == nil {
 			panic("OOPS")
 		}
-		c.DefineValue(elem.Name, elemTy)
+		c.DefineValue(elem.Name, c.ResolveType(elemTy))
 	}
 }
 
@@ -1608,15 +1643,15 @@ func ContainsIota(expr Expr) bool {
 func (c *Checker) DefineTypeDecl(decl *TypeDecl) {
 	var ty Type
 	if len(decl.TypeParams.Params) > 0 {
-		ty = &NamedType{Name: decl.Name, Type: &GenericType{TypeParams: decl.TypeParams, Type: decl.Type}}
+		ty = &NamedType{Name: decl.Name, Type: &GenericType{TypeParams: decl.TypeParams, Type: c.ResolveType(decl.Type)}}
 	} else {
-		ty = &NamedType{Name: decl.Name, Type: decl.Type}
+		ty = &NamedType{Name: decl.Name, Type: c.ResolveType(decl.Type)}
 	}
 	c.DefineType(decl.Name, ty)
 }
 
 func (c *Checker) DefineAliasDecl(decl *AliasDecl) {
-	c.DefineType(decl.Name, decl.Type)
+	c.DefineType(decl.Name, c.ResolveType(decl.Type))
 }
 
 func (c *Checker) DefineVarDecl(decl *VarDecl) {
@@ -1628,37 +1663,45 @@ func (c *Checker) DefineVarDecl(decl *VarDecl) {
 					panic("cannot use tuple as value")
 				}
 				if decl.Type != nil {
-					c.CheckAssignableTo(ty, decl.Type)
-					return decl.Type
+					declTy := c.ResolveType(decl.Type)
+					c.CheckAssignableTo(ty, declTy)
+					return declTy
 				} else {
 					return ty
 				}
 			})
 		}
 	} else if len(decl.Names) > 1 && len(decl.Exprs) == 1 {
-		expr := decl.Exprs[0]
-		exprTy := c.Synth(expr)
-		tupleTy, ok := exprTy.(*TupleType)
-		if !ok {
-			panic("multiple-value return in single-value context")
-		}
-		if len(tupleTy.Elems) != len(decl.Names) {
-			panic(fmt.Sprintf("assignment mismatch: %v variables but RHS returns %v values", len(decl.Names), len(tupleTy.Elems)))
-		}
-		for i, name := range decl.Names {
-			if decl.Type != nil {
-				c.CheckAssignableTo(tupleTy.Elems[i], decl.Type)
-				c.DefineValue(name, decl.Type)
-			} else {
-				c.DefineValue(name, tupleTy.Elems[i])
+		tupleTy := sync.OnceValue(func() *TupleType {
+			expr := decl.Exprs[0]
+			exprTy := c.Synth(expr)
+			tupleTy, ok := exprTy.(*TupleType)
+			if !ok {
+				panic("multiple-value return in single-value context")
 			}
+			if len(tupleTy.Elems) != len(decl.Names) {
+				panic(fmt.Sprintf("assignment mismatch: %v variables but RHS returns %v values", len(decl.Names), len(tupleTy.Elems)))
+			}
+			return tupleTy
+		})
+		for i, name := range decl.Names {
+			c.DefineLazyValue(name, func() Type {
+				elemTy := c.ResolveType(tupleTy().Elems[i])
+				if decl.Type != nil {
+					declTy := c.ResolveType(decl.Type)
+					c.CheckAssignableTo(elemTy, declTy)
+					return declTy
+				} else {
+					return elemTy
+				}
+			})
 		}
 	} else if len(decl.Names) > 0 && len(decl.Exprs) == 0 {
 		if decl.Type == nil {
 			panic("variable declaration without type or initializing expression")
 		}
 		for _, name := range decl.Names {
-			c.DefineValue(name, decl.Type)
+			c.DefineValue(name, c.ResolveType(decl.Type))
 		}
 	} else {
 		spew.Dump(decl)
@@ -1814,26 +1857,30 @@ func (c *Checker) CheckVarDecl(decl *VarDecl) {
 	// nothing to do?
 }
 
+func (c *Checker) CheckFunctionDecl(decl *FunctionDecl) {
+	fmt.Printf("=== CheckFunctionDecl(%v) ===\n", decl.Name)
+
+	scope := c.BeginFunctionScope(&decl.Signature)
+
+	scope.DoFunctionDecl(decl.Signature, decl.Body)
+}
+
 func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 	fmt.Printf("=== CheckMethodDecl(%v) ===\n", decl.Name)
 
 	scope := c.BeginFunctionScope(&decl.Signature)
 
-	var receiverTy Type = c.ResolveType(decl.Receiver.Type)
-	var pointerReceiver bool
+	var receiverTy Type = scope.ResolveType(decl.Receiver.Type)
 
 	if pointerTy, ok := receiverTy.(*PointerType); ok {
-		pointerReceiver = true
-		receiverTy = c.ResolveType(pointerTy.BaseType)
+		receiverTy = scope.ResolveType(pointerTy.BaseType)
 	}
-
-	var methodHolder *NamedType
 
 	switch ty := receiverTy.(type) {
 	case *NamedType:
-		methodHolder = ty
+		// nothing to do
 	case *TypeApplication:
-		named, ok := c.ResolveType(&ty.ID).(*NamedType)
+		named, ok := scope.ResolveType(&ty.ID).(*NamedType)
 		if !ok {
 			panic("method on non-named type")
 		}
@@ -1847,59 +1894,37 @@ func (c *Checker) CheckMethodDecl(decl *MethodDecl) {
 		for _, tyParam := range gen.TypeParams.Params {
 			scope.DefineType(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
 		}
-		methodHolder = named
 	default:
+		spew.Dump(ty)
 		panic("method on non-named type")
-	}
-
-	for _, tyParam := range decl.Signature.TypeParams.Params {
-		scope.DefineType(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
 	}
 
 	scope.DefineValue(decl.Receiver.Name, decl.Receiver.Type)
 
-	for _, param := range decl.Signature.Params.Params {
-		scope.DefineValue(param.Name, param.Type)
-	}
-
-	for _, result := range decl.Signature.Results.Params {
-		scope.DefineValue(result.Name, result.Type)
-	}
-
-	scope.CheckStatementList(decl.Body)
-
-	subst := scope.Verify()
-	scope.CheckSubst(decl.Signature.TypeParams, subst)
-
-	_ = methodHolder
-	_ = pointerReceiver
+	scope.DoFunctionDecl(decl.Signature, decl.Body)
 }
 
-func (c *Checker) CheckFunctionDecl(decl *FunctionDecl) {
-	fmt.Printf("=== CheckFunctionDecl(%v) ===\n", decl.Name)
-
-	scope := c.BeginFunctionScope(&decl.Signature)
-
-	for _, tyParam := range decl.Signature.TypeParams.Params {
-		scope.DefineType(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
+func (c *Checker) DoFunctionDecl(sig Signature, stmts StatementList) {
+	for _, tyParam := range sig.TypeParams.Params {
+		c.DefineType(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
 	}
 
-	for _, param := range decl.Signature.Params.Params {
+	for _, param := range sig.Params.Params {
 		if param.Variadic {
-			scope.DefineValue(param.Name, &SliceType{ElemType: param.Type})
+			c.DefineValue(param.Name, &SliceType{ElemType: c.ResolveType(param.Type)})
 		} else {
-			scope.DefineValue(param.Name, param.Type)
+			c.DefineValue(param.Name, c.ResolveType(param.Type))
 		}
 	}
 
-	for _, result := range decl.Signature.Results.Params {
-		scope.DefineValue(result.Name, result.Type)
+	for _, result := range sig.Results.Params {
+		c.DefineValue(result.Name, c.ResolveType(result.Type))
 	}
 
-	scope.CheckStatementList(decl.Body)
+	c.CheckStatementList(stmts)
 
-	subst := scope.Verify()
-	scope.CheckSubst(decl.Signature.TypeParams, subst)
+	subst := c.Verify()
+	c.CheckSubst(sig.TypeParams, subst)
 }
 
 func (c *Checker) CheckStatementList(list StatementList) {
@@ -1966,13 +1991,31 @@ func (c *Checker) CheckShortVarDecl(stmt *ShortVarDecl) {
 }
 
 func (c *Checker) CheckAssignmentStmt(stmt *AssignmentStmt) {
-	if len(stmt.LHS) != len(stmt.RHS) {
-		// TODO tuple assignment
+	if len(stmt.LHS) == len(stmt.RHS) {
+		for i := range stmt.LHS {
+			if IsIgnoreName(stmt.LHS[i]) {
+				continue
+			}
+			c.CheckAssignableTo(c.Synth(stmt.RHS[i]), c.Synth(stmt.LHS[i]))
+		}
+	} else if len(stmt.LHS) > 1 && len(stmt.RHS) == 1 {
+		ty := c.Synth(stmt.RHS[0])
+		switch ty := c.Under(ty).(type) {
+		case *TupleType:
+			if len(stmt.LHS) != len(ty.Elems) {
+				panic("wrong number of return in tuple expansion")
+			}
+			for i := range stmt.LHS {
+				if IsIgnoreName(stmt.LHS[i]) {
+					continue
+				}
+				c.CheckAssignableTo(c.ResolveType(ty.Elems[i]), c.Synth(stmt.LHS[i]))
+			}
+		default:
+			panic("non-tuple type")
+		}
+	} else {
 		panic("wrong number of expressions")
-	}
-	for i, lhs := range stmt.LHS {
-		ty := c.Synth(stmt.RHS[i])
-		c.CheckAssignableTo(ty, c.Synth(lhs))
 	}
 }
 
@@ -2020,6 +2063,7 @@ func (c *Checker) CheckIfStmt(stmt *IfStmt) {
 func (c *Checker) CheckIncDecStmt(stmt *IncDecStmt) {
 	exprTy := c.Synth(stmt.Expr)
 	if !c.IsNumeric(exprTy) {
+		spew.Dump(exprTy)
 		panic("non-numeric type")
 	}
 	// TODO emit relation instead of greedy check
@@ -2085,23 +2129,23 @@ func (c *Checker) CheckForStmt(stmt *ForStmt) {
 
 func (c *Checker) CheckSwitchStmt(stmt *SwitchStmt) {
 	scope := c.BeginScope()
+	var tagTy Type
 	if stmt.Init != nil {
 		scope.CheckStatement(stmt.Init)
 	}
 	if stmt.Tag != nil {
-		spew.Dump(stmt)
-		panic("PANIC what is a tag?")
+		tagTy = scope.Synth(stmt.Tag)
 	}
 	for _, caseStmt := range stmt.Cases {
-		scope.CheckSwitchCaseStmt(caseStmt)
+		for _, expr := range caseStmt.Exprs {
+			if tagTy != nil {
+				c.CheckExpr(expr, tagTy)
+			} else {
+				c.CheckExpr(expr, c.BuiltinType("bool"))
+			}
+		}
+		c.CheckStatementList(caseStmt.Body)
 	}
-}
-
-func (c *Checker) CheckSwitchCaseStmt(stmt SwitchCase) {
-	for _, expr := range stmt.Exprs {
-		c.CheckExpr(expr, c.BuiltinType("bool"))
-	}
-	c.CheckStatementList(stmt.Body)
 }
 
 // ========================
@@ -2454,9 +2498,27 @@ func (c *Checker) SynthIndexExpr(expr *IndexExpr) Type {
 		}
 		c.CheckExpr(expr.Indices[0], c.BuiltinType("int"))
 		return exprTy.ElemType
+	case *TypeBuiltin:
+		if exprTy.Name.Value == "string" {
+			if len(expr.Indices) != 1 {
+				panic("indexing a string with multiple indices")
+			}
+			c.CheckExpr(expr.Indices[0], c.BuiltinType("int"))
+			return c.BuiltinType("byte")
+		}
+		panic(fmt.Sprintf("cannot index type %v", exprTy))
+	case *UntypedConstantType:
+		if exprTy.IsCompatible("string") {
+			if len(expr.Indices) != 1 {
+				panic("indexing a string with multiple indices")
+			}
+			c.CheckExpr(expr.Indices[0], c.BuiltinType("int"))
+			return c.BuiltinType("byte")
+		}
+		panic(fmt.Sprintf("cannot index type %v", exprTy))
 	default:
 		spew.Dump(reflect.TypeOf(exprTy))
-		panic("unreachable")
+		panic("cannot index type")
 	}
 }
 
@@ -2613,6 +2675,10 @@ func (c *Checker) SynthBuiltinFunctionCall(f *BuiltinFunctionType, expr *CallExp
 		return c.SynthBuiltinLenCall(expr)
 	case "panic":
 		return c.SynthBuiltinPanicCall(expr)
+	case "print":
+		return c.SynthBuiltinPrintCall(expr)
+	case "println":
+		return c.SynthBuiltinPrintlnCall(expr)
 	default:
 		spew.Dump(f)
 		panic("unreachable")
@@ -2692,6 +2758,20 @@ func (c *Checker) SynthBuiltinPanicCall(expr *CallExpr) Type {
 	return &BottomType{}
 }
 
+func (c *Checker) SynthBuiltinPrintCall(expr *CallExpr) Type {
+	for _, arg := range expr.Args {
+		c.Synth(arg)
+	}
+	return &VoidType{}
+}
+
+func (c *Checker) SynthBuiltinPrintlnCall(expr *CallExpr) Type {
+	for _, arg := range expr.Args {
+		c.Synth(arg)
+	}
+	return &VoidType{}
+}
+
 func (c *Checker) SynthNameExpr(expr *NameExpr) Type {
 	return c.Lookup(expr.Name)
 }
@@ -2744,9 +2824,9 @@ func (c *Checker) MakeCompositeLit(expr *CompositeLitExpr, targetTy Type) Type {
 	case *SliceType:
 		return c.MakeCompositeLitSlice(expr, exprTy)
 	case *MapType:
-		panic("TODO")
+		return c.MakeCompositeLitMap(expr, exprTy)
 	case *ArrayType:
-		panic("TODO")
+		return c.MakeCompositeLitArray(expr, exprTy)
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
@@ -2799,6 +2879,92 @@ func (c *Checker) MakeCompositeLitSlice(expr *CompositeLitExpr, sliceTy *SliceTy
 		c.CheckExpr(elem.Value, sliceTy.ElemType)
 	}
 	return expr.Type
+}
+
+func (c *Checker) MakeCompositeLitMap(expr *CompositeLitExpr, mapTy *MapType) Type {
+	panic("TODO")
+}
+
+func (c *Checker) MakeCompositeLitArray(expr *CompositeLitExpr, arrayTy *ArrayType) Type {
+	var arrayLen int
+	switch arrayTy.Len.(type) {
+	case *EllipsisExpr:
+		arrayLen = -1
+	default:
+		arrayLen = c.EvaluateConstantIntExpr(arrayTy.Len)
+		if len(expr.Elems) > arrayLen {
+			panic("composite literal with wrong number of elements")
+		}
+	}
+	for _, elem := range expr.Elems {
+		c.CheckExpr(elem.Value, arrayTy.ElemType)
+	}
+	if arrayLen == -1 {
+		return &ArrayType{ElemType: arrayTy.ElemType, Len: ConstIntExpr{Value: len(expr.Elems)}}
+	} else {
+		return &ArrayType{ElemType: arrayTy.ElemType, Len: ConstIntExpr{Value: arrayLen}}
+	}
+}
+
+func (c *Checker) EvaluateConstantIntExpr(expr Expr) int {
+	switch expr := expr.(type) {
+	case *ConstIntExpr:
+		return expr.Value
+	case *LiteralExpr:
+		switch lit := expr.Literal.(type) {
+		case *LiteralInt:
+			value, err := strconv.Atoi(lit.Value)
+			if err != nil {
+				panic(fmt.Errorf("invalid integer literal %v", lit.Value))
+			}
+			return value
+		default:
+			panic("non-integer literal")
+		}
+	case *BinaryExpr:
+		left := c.EvaluateConstantIntExpr(expr.Left)
+		right := c.EvaluateConstantIntExpr(expr.Right)
+		switch expr.Op {
+		case BinaryOpAdd:
+			return left + right
+		case BinaryOpSub:
+			return left - right
+		case BinaryOpMul:
+			return left * right
+		case BinaryOpQuo:
+			return left / right
+		case BinaryOpRem:
+			return left % right
+		case BinaryOpAnd:
+			return left & right
+		case BinaryOpOr:
+			return left | right
+		case BinaryOpXor:
+			return left ^ right
+		case BinaryOpAndNot:
+			return left &^ right
+		case BinaryOpShl:
+			return left << uint(right)
+		case BinaryOpShr:
+			return left >> uint(right)
+		default:
+			panic("non-integer binary operator")
+		}
+	case *UnaryExpr:
+		value := c.EvaluateConstantIntExpr(expr.Expr)
+		switch expr.Op {
+		case UnaryOpPos:
+			return value
+		case UnaryOpNeg:
+			return -value
+		case UnaryOpBitNot:
+			return ^value
+		default:
+			panic("non-integer unary operator")
+		}
+	default:
+		panic("non-integer expression")
+	}
 }
 
 func (c *Checker) TypeApplication(app *TypeApplication) Type {
@@ -3148,7 +3314,10 @@ func (c *Checker) UnifyEq(left, right Type, subst Subst) {
 
 	switch left := left.(type) {
 	case *TypeBuiltin:
-		if _, ok := right.(*TypeBuiltin); ok {
+		if right, ok := right.(*TypeBuiltin); ok {
+			if c.IsNumeric(left) && c.IsNumeric(right) {
+				return // TODO ok?
+			}
 			panic(fmt.Sprintf("cannot unify: %v = %v", left, right))
 		}
 		c.UnifyEq(right, left, subst)
