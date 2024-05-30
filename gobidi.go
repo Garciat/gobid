@@ -122,6 +122,19 @@ type UntypedConstantType struct {
 	Kind UntypedConstantKind
 }
 
+func UntypedInt() *UntypedConstantType {
+	return &UntypedConstantType{Kind: UntypedConstantInt}
+}
+
+func (t *UntypedConstantType) IsNumeric() bool {
+	switch t.Kind {
+	case UntypedConstantInt, UntypedConstantFloat, UntypedConstantComplex, UntypedConstantRune:
+		return true
+	default:
+		return false
+	}
+}
+
 func (t *UntypedConstantType) IsCompatible(builtin string) bool {
 	switch t.Kind {
 	case UntypedConstantInt:
@@ -166,11 +179,16 @@ func (t *ImportType) String() string {
 
 type TypeBuiltin struct {
 	TypeBase
-	Name Identifier
+	Name      Identifier
+	IsNumeric bool
 }
 
 func NewBuiltinType(name string) *TypeBuiltin {
 	return &TypeBuiltin{Name: Identifier{Value: name}}
+}
+
+func NewBuiltinNumericType(name string) *TypeBuiltin {
+	return &TypeBuiltin{Name: Identifier{Value: name}, IsNumeric: true}
 }
 
 func (t *TypeBuiltin) String() string {
@@ -257,6 +275,12 @@ type FunctionType struct {
 	Signature Signature
 }
 
+func (s *FunctionType) WithTypeParams(names ...string) *FunctionType {
+	return &FunctionType{
+		Signature: s.Signature.WithTypeParams(names...),
+	}
+}
+
 func (t *FunctionType) String() string {
 	return fmt.Sprintf("func%v", t.Signature)
 }
@@ -279,6 +303,20 @@ type Signature struct {
 	TypeParams TypeParamList
 	Params     ParameterList
 	Results    ParameterList
+}
+
+func (s Signature) WithTypeParams(names ...string) Signature {
+	if len(s.TypeParams.Params) > 0 {
+		panic("already has type params")
+	}
+	typeParams := TypeParamList{}
+	for _, name := range names {
+		typeParams.Params = append(typeParams.Params, TypeParamDecl{
+			Name:       NewIdentifier(name),
+			Constraint: EmptyInterface(),
+		})
+	}
+	return Signature{TypeParams: typeParams, Params: s.Params, Results: s.Results}
 }
 
 func (s Signature) GetVariadicParam() (ParameterDecl, int) {
@@ -377,7 +415,7 @@ func (t *InterfaceType) String() string {
 	return fmt.Sprintf("interface{%v}", strings.Join(parts, "; "))
 }
 
-func EmptyInterface() Type {
+func EmptyInterface() *InterfaceType {
 	return &InterfaceType{Methods: nil, Constraints: nil}
 }
 
@@ -656,6 +694,11 @@ type SliceExpr struct {
 }
 
 // TODO: SliceExpr
+
+type TypeSwitchAssertionExpr struct {
+	ExprBase
+	Expr Expr
+}
 
 type TypeAssertionExpr struct {
 	ExprBase
@@ -1098,6 +1141,10 @@ func (c *VarContext) DefBuiltinType(name string) Type {
 	return c.DefType(NewIdentifier(name), NewBuiltinType(name))
 }
 
+func (c *VarContext) DefBuiltinNumericType(name string) Type {
+	return c.DefType(NewIdentifier(name), NewBuiltinNumericType(name))
+}
+
 func (c *VarContext) Lookup(name Identifier) (Type, bool) {
 	ty, ok := c.Types[name]
 	if !ok && c.Parent != nil {
@@ -1128,30 +1175,30 @@ func MakeBuiltins() VarContext {
 	scope.Def(NewIdentifier("true"), &UntypedConstantType{Kind: UntypedConstantBool})
 	scope.Def(NewIdentifier("false"), &UntypedConstantType{Kind: UntypedConstantBool})
 
-	scope.DefBuiltinType("uint8")
-	scope.DefBuiltinType("uint16")
-	scope.DefBuiltinType("uint32")
-	scope.DefBuiltinType("uint64")
+	uint8Ty := scope.DefBuiltinNumericType("uint8")
+	scope.DefBuiltinNumericType("uint16")
+	scope.DefBuiltinNumericType("uint32")
+	scope.DefBuiltinNumericType("uint64")
 
-	scope.DefBuiltinType("int8")
-	scope.DefBuiltinType("int16")
-	scope.DefBuiltinType("int32")
-	scope.DefBuiltinType("int64")
+	scope.DefBuiltinNumericType("int8")
+	scope.DefBuiltinNumericType("int16")
+	int32Ty := scope.DefBuiltinNumericType("int32")
+	scope.DefBuiltinNumericType("int64")
 
-	scope.DefBuiltinType("float32")
-	scope.DefBuiltinType("float64")
+	scope.DefBuiltinNumericType("float32")
+	scope.DefBuiltinNumericType("float64")
 
-	scope.DefBuiltinType("complex64")
-	scope.DefBuiltinType("complex128")
+	scope.DefBuiltinNumericType("complex64")
+	scope.DefBuiltinNumericType("complex128")
 
 	scope.DefBuiltinType("string")
 
-	scope.DefBuiltinType("int")
-	scope.DefBuiltinType("uint")
-	scope.DefBuiltinType("uintptr")
+	scope.DefBuiltinNumericType("int")
+	scope.DefBuiltinNumericType("uint")
+	scope.DefBuiltinNumericType("uintptr")
 
-	scope.DefType(NewIdentifier("byte"), NewBuiltinType("uint8"))
-	scope.DefType(NewIdentifier("rune"), NewBuiltinType("int32"))
+	scope.Def(NewIdentifier("byte"), uint8Ty) // already TypeOfType
+	scope.Def(NewIdentifier("rune"), int32Ty) // already TypeOfType
 
 	scope.DefType(NewIdentifier("any"), EmptyInterface())
 
@@ -1275,30 +1322,28 @@ func (c *Checker) DefineValue(name Identifier, ty Type) {
 }
 
 func (c *Checker) DefineLazyValue(name Identifier, f func() Type) {
-	fmt.Printf("LAZY start %v\n", name)
-	c.LazyWaiters[name] = make(chan struct{})
-	c.DefineValue(name, NewLazyType(name, c.LazyWaiters[name]))
-	go func() {
-		<-c.DoneLoadingSem
-		ty := f()
-		c.DefinerMailbox <- struct {
-			Identifier
-			Type
-		}{name, ty}
-		close(c.LazyWaiters[name])
-	}()
 	select {
 	case <-c.DoneLoadingSem:
-		fmt.Printf("LAZY immediate %v\n", name)
-		<-c.LazyWaiters[name]
+		c.DefineValue(name, f())
 	default:
-		return
+		fmt.Printf("LAZY start %v\n", name)
+		c.LazyWaiters[name] = make(chan struct{})
+		c.DefineValue(name, NewLazyType(name, c.LazyWaiters[name]))
+		go func() {
+			<-c.DoneLoadingSem
+			ty := f()
+			c.DefinerMailbox <- struct {
+				Identifier
+				Type
+			}{name, ty}
+			close(c.LazyWaiters[name])
+		}()
 	}
 }
 
 func (c *Checker) DefineType(name Identifier, ty Type) {
 	fmt.Printf("DEFINING TYPE %v = %v\n", name, ty)
-	c.VarCtx.Def(name, &TypeOfType{Type: ty})
+	c.VarCtx.DefType(name, ty)
 }
 
 func (c *Checker) BuiltinValue(name string) Type {
@@ -1508,6 +1553,8 @@ func (c *Checker) ReadUnsafePackage() VarContext {
 	scope.Def(NewIdentifier("Offsetof"), ParseType("func(interface{}) uintptr"))
 	scope.Def(NewIdentifier("Alignof"), ParseType("func(interface{}) uintptr"))
 	scope.Def(NewIdentifier("Add"), ParseType("func(Pointer, int) Pointer"))
+	scope.Def(NewIdentifier("Slice"), ParseFuncType("func(T, int) []T").WithTypeParams("T"))
+	scope.Def(NewIdentifier("SliceData"), ParseFuncType("func([]T) *T").WithTypeParams("T"))
 	scope.Def(NewIdentifier("String"), ParseType("func(*byte, int) string"))
 	scope.Def(NewIdentifier("StringData"), ParseType("func(string) *byte"))
 	return scope
@@ -1529,7 +1576,7 @@ func (c *Checker) ReadPackage(decl *ImportDecl) VarContext {
 	goroot := strings.TrimSpace(string(out))
 	path := filepath.Join(goroot, "src", decl.Path)
 
-	fmt.Printf("parsing %v\n", path)
+	fmt.Printf("PARSING PACKAGE %v\n", path)
 
 	packages, err := parser.ParseDir(token.NewFileSet(), path, nil, parser.ParseComments)
 	if err != nil {
@@ -1551,6 +1598,7 @@ func (c *Checker) ReadPackage(decl *ImportDecl) VarContext {
 				fmt.Printf("skipping test file %v\n", filename)
 				continue
 			}
+			fmt.Printf("PARSING FILE %v\n", filename)
 			files = append(files, ReadAST(filename, f))
 		}
 	}
@@ -1643,15 +1691,15 @@ func ContainsIota(expr Expr) bool {
 func (c *Checker) DefineTypeDecl(decl *TypeDecl) {
 	var ty Type
 	if len(decl.TypeParams.Params) > 0 {
-		ty = &NamedType{Name: decl.Name, Type: &GenericType{TypeParams: decl.TypeParams, Type: c.ResolveType(decl.Type)}}
+		ty = &NamedType{Name: decl.Name, Type: &GenericType{TypeParams: decl.TypeParams, Type: decl.Type}}
 	} else {
-		ty = &NamedType{Name: decl.Name, Type: c.ResolveType(decl.Type)}
+		ty = &NamedType{Name: decl.Name, Type: decl.Type}
 	}
 	c.DefineType(decl.Name, ty)
 }
 
 func (c *Checker) DefineAliasDecl(decl *AliasDecl) {
-	c.DefineType(decl.Name, c.ResolveType(decl.Type))
+	c.DefineType(decl.Name, decl.Type)
 }
 
 func (c *Checker) DefineVarDecl(decl *VarDecl) {
@@ -1701,7 +1749,7 @@ func (c *Checker) DefineVarDecl(decl *VarDecl) {
 			panic("variable declaration without type or initializing expression")
 		}
 		for _, name := range decl.Names {
-			c.DefineValue(name, c.ResolveType(decl.Type))
+			c.DefineValue(name, decl.Type)
 		}
 	} else {
 		spew.Dump(decl)
@@ -1788,7 +1836,7 @@ func (c *Checker) CheckTypeDecl(decl *TypeDecl) {
 		scope.DefineType(tyParam.Name, &TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
 	}
 
-	scope.CheckTypeDeclType(decl.Type)
+	scope.CheckTypeDeclType(c.ResolveType(decl.Type))
 
 	subst := scope.Verify()
 
@@ -1796,18 +1844,18 @@ func (c *Checker) CheckTypeDecl(decl *TypeDecl) {
 }
 
 func (c *Checker) CheckTypeDeclType(ty Type) {
-	switch ty := c.ResolveType(ty).(type) {
+	switch ty := ty.(type) {
 	case *TypeBuiltin:
 		// nothing to do
 	case *TypeParam:
 		// nothing to do
 	case *TypeApplication:
 		c.TypeApplicationFunc(ty, func(tyParam TypeParamDecl, tyArg Type) {
-			c.CheckTypeDeclType(tyArg)
+			c.CheckTypeDeclType(c.ResolveType(tyArg))
 		})
 	case *StructType:
 		for _, field := range ty.Fields {
-			c.CheckTypeDeclType(field.Type)
+			c.CheckTypeDeclType(c.ResolveType(field.Type))
 		}
 	case *InterfaceType:
 		for _, m := range ty.Methods {
@@ -1815,22 +1863,22 @@ func (c *Checker) CheckTypeDeclType(ty Type) {
 		}
 		for _, ctr := range ty.Constraints {
 			for _, term := range ctr.TypeElem.Union {
-				c.CheckTypeDeclType(term.Type)
+				c.CheckTypeDeclType(c.ResolveType(term.Type))
 			}
 		}
 	case *FunctionType:
 		c.CheckTypeDeclSignature(ty.Signature)
 	case *SliceType:
-		c.CheckTypeDeclType(ty.ElemType)
+		c.CheckTypeDeclType(c.ResolveType(ty.ElemType))
 	case *NamedType:
-		c.CheckTypeDeclType(ty.Type)
+		c.CheckTypeDeclType(c.ResolveType(ty.Type))
 	case *PointerType:
-		c.CheckTypeDeclType(ty.BaseType)
+		c.CheckTypeDeclType(c.ResolveType(ty.BaseType))
 	case *ArrayType:
-		c.CheckTypeDeclType(ty.ElemType)
+		c.CheckTypeDeclType(c.ResolveType(ty.ElemType))
 	case *MapType:
-		c.CheckTypeDeclType(ty.KeyType)
-		c.CheckTypeDeclType(ty.ElemType)
+		c.CheckTypeDeclType(c.ResolveType(ty.KeyType))
+		c.CheckTypeDeclType(c.ResolveType(ty.ElemType))
 	default:
 		spew.Dump(ty)
 		panic("unreachable")
@@ -1842,10 +1890,10 @@ func (c *Checker) CheckTypeDeclSignature(sig Signature) {
 		panic("function type with type parameters")
 	}
 	for _, param := range sig.Params.Params {
-		c.CheckTypeDeclType(param.Type)
+		c.CheckTypeDeclType(c.ResolveType(param.Type))
 	}
 	for _, result := range sig.Results.Params {
-		c.CheckTypeDeclType(result.Type)
+		c.CheckTypeDeclType(c.ResolveType(result.Type))
 	}
 }
 
@@ -2062,11 +2110,12 @@ func (c *Checker) CheckIfStmt(stmt *IfStmt) {
 
 func (c *Checker) CheckIncDecStmt(stmt *IncDecStmt) {
 	exprTy := c.Synth(stmt.Expr)
+	exprTy = c.ResolveType(exprTy)
 	if !c.IsNumeric(exprTy) {
 		spew.Dump(exprTy)
 		panic("non-numeric type")
 	}
-	// TODO emit relation instead of greedy check
+	// TODO emit relation instead of greedy check?
 }
 
 func (c *Checker) CheckRangeStmt(stmt *RangeStmt) {
@@ -2074,40 +2123,37 @@ func (c *Checker) CheckRangeStmt(stmt *RangeStmt) {
 
 	targetTy := scope.Synth(stmt.X)
 
+	var keyTy, valueTy Type
+
 	switch targetTy := scope.Under(targetTy).(type) {
 	case *SliceType:
-		if stmt.Key != nil {
-			if stmt.Assign {
-				scope.DefineValue(stmt.Key.(*NameExpr).Name, scope.BuiltinType("int"))
-			} else {
-				scope.CheckAssignableTo(c.BuiltinType("int"), scope.Synth(stmt.Key))
-			}
-		}
-		if stmt.Value != nil {
-			if stmt.Assign {
-				scope.DefineValue(stmt.Value.(*NameExpr).Name, targetTy.ElemType)
-			} else {
-				scope.CheckAssignableTo(targetTy.ElemType, scope.Synth(stmt.Value))
-			}
-		}
+		keyTy = scope.BuiltinType("int")
+		valueTy = scope.ResolveType(targetTy.ElemType)
 	case *MapType:
-		if stmt.Key != nil {
-			if stmt.Assign {
-				scope.DefineValue(stmt.Key.(*NameExpr).Name, targetTy.KeyType)
-			} else {
-				scope.CheckAssignableTo(targetTy.KeyType, scope.Synth(stmt.Key))
-			}
-		}
-		if stmt.Value != nil {
-			if stmt.Assign {
-				scope.DefineValue(stmt.Value.(*NameExpr).Name, targetTy.ElemType)
-			} else {
-				scope.CheckAssignableTo(targetTy.ElemType, scope.Synth(stmt.Value))
-			}
-		}
-	default:
-		spew.Dump(targetTy)
+		keyTy = scope.ResolveType(targetTy.KeyType)
+		valueTy = scope.ResolveType(targetTy.ElemType)
+	case *ArrayType:
+		keyTy = scope.BuiltinType("int")
+		valueTy = scope.ResolveType(targetTy.ElemType)
+	}
+
+	if keyTy == nil || valueTy == nil {
 		panic(fmt.Sprintf("cannot range over %v", targetTy))
+	}
+
+	if stmt.Key != nil {
+		if stmt.Assign {
+			scope.DefineValue(stmt.Key.(*NameExpr).Name, keyTy)
+		} else {
+			scope.CheckAssignableTo(keyTy, scope.Synth(stmt.Key))
+		}
+	}
+	if stmt.Value != nil {
+		if stmt.Assign {
+			scope.DefineValue(stmt.Value.(*NameExpr).Name, valueTy)
+		} else {
+			scope.CheckAssignableTo(valueTy, scope.Synth(stmt.Value))
+		}
 	}
 
 	scope.CheckStatementList(stmt.Body)
@@ -2139,12 +2185,12 @@ func (c *Checker) CheckSwitchStmt(stmt *SwitchStmt) {
 	for _, caseStmt := range stmt.Cases {
 		for _, expr := range caseStmt.Exprs {
 			if tagTy != nil {
-				c.CheckExpr(expr, tagTy)
+				scope.CheckExpr(expr, tagTy)
 			} else {
-				c.CheckExpr(expr, c.BuiltinType("bool"))
+				scope.CheckExpr(expr, scope.BuiltinType("bool"))
 			}
 		}
-		c.CheckStatementList(caseStmt.Body)
+		scope.CheckStatementList(caseStmt.Body)
 	}
 }
 
@@ -2220,12 +2266,12 @@ func (c *Checker) CheckSubst(tyParams TypeParamList, subst Subst) {
 
 // ========================
 
-var NumericTypes = [...]string{"int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "float32", "float64"}
-
 func (c *Checker) IsNumeric(ty Type) bool {
 	switch ty := c.Under(ty).(type) {
 	case *TypeBuiltin:
-		return slices.Contains(NumericTypes[:], ty.Name.Value)
+		return ty.IsNumeric
+	case *UntypedConstantType:
+		return ty.IsNumeric()
 	default:
 		return false
 	}
@@ -2272,6 +2318,14 @@ func (c *Checker) CheckUnaryExpr(expr *UnaryExpr, ty Type) {
 		c.CheckExpr(expr.Expr, c.BuiltinType("bool"))
 	case UnaryOpAddr:
 		c.CheckAssignableTo(&PointerType{BaseType: exprTy}, ty)
+	case UnaryOpDeref:
+		switch exprTy := c.Under(exprTy).(type) {
+		case *PointerType:
+			c.CheckAssignableTo(c.ResolveType(exprTy.BaseType), ty)
+		default:
+			spew.Dump(expr)
+			panic("cannot dereference non-pointer")
+		}
 	default:
 		spew.Dump(expr, ty)
 		panic("unreachable")
@@ -2477,68 +2531,76 @@ func (c *Checker) DoSelect(exprTy Type, sel Identifier) Type {
 }
 
 func (c *Checker) SynthIndexExpr(expr *IndexExpr) Type {
-	switch exprTy := c.Synth(expr.Expr).(type) {
-	case *SliceType:
-		if len(expr.Indices) != 1 {
-			panic("indexing a slice with multiple indices")
-		}
-		c.CheckExpr(expr.Indices[0], c.BuiltinType("int"))
-		return exprTy.ElemType
-	case *MapType:
-		if len(expr.Indices) != 1 {
-			panic("indexing a map with multiple indices")
-		}
-		c.CheckExpr(expr.Indices[0], exprTy.KeyType)
-		return exprTy.ElemType
+	exprTy := c.Synth(expr.Expr)
+
+	var indexTy, resultTy Type
+	switch exprTy := exprTy.(type) {
 	case *FunctionType:
 		panic("unexpected function type (should be handled by CallExpr)")
+	case *SliceType:
+		indexTy = UntypedInt()
+		resultTy = c.ResolveType(exprTy.ElemType)
+	case *MapType:
+		indexTy = c.ResolveType(exprTy.KeyType)
+		resultTy = c.ResolveType(exprTy.ElemType)
 	case *ArrayType:
-		if len(expr.Indices) != 1 {
-			panic("indexing an array with multiple indices")
-		}
-		c.CheckExpr(expr.Indices[0], c.BuiltinType("int"))
-		return exprTy.ElemType
+		indexTy = UntypedInt()
+		resultTy = c.ResolveType(exprTy.ElemType)
 	case *TypeBuiltin:
 		if exprTy.Name.Value == "string" {
-			if len(expr.Indices) != 1 {
-				panic("indexing a string with multiple indices")
-			}
-			c.CheckExpr(expr.Indices[0], c.BuiltinType("int"))
-			return c.BuiltinType("byte")
+			indexTy = UntypedInt()
+			resultTy = c.BuiltinType("byte")
 		}
-		panic(fmt.Sprintf("cannot index type %v", exprTy))
 	case *UntypedConstantType:
 		if exprTy.IsCompatible("string") {
-			if len(expr.Indices) != 1 {
-				panic("indexing a string with multiple indices")
-			}
-			c.CheckExpr(expr.Indices[0], c.BuiltinType("int"))
-			return c.BuiltinType("byte")
+			indexTy = UntypedInt()
+			resultTy = c.BuiltinType("byte")
 		}
-		panic(fmt.Sprintf("cannot index type %v", exprTy))
-	default:
-		spew.Dump(reflect.TypeOf(exprTy))
-		panic("cannot index type")
 	}
+
+	if resultTy == nil || indexTy == nil {
+		spew.Dump(reflect.TypeOf(exprTy))
+		panic(fmt.Sprintf("cannot index type %v", exprTy))
+	}
+
+	return resultTy
 }
 
 func (c *Checker) SynthSliceExpr(expr *SliceExpr) Type {
-	switch exprTy := c.Synth(expr.Expr).(type) {
+	exprTy := c.Synth(expr.Expr)
+
+	var resultTy Type
+	switch exprTy := exprTy.(type) {
 	case *SliceType:
-		if expr.Low != nil {
-			c.CheckExpr(expr.Low, c.BuiltinType("int"))
+		resultTy = exprTy
+	case *TypeBuiltin:
+		if exprTy.Name.Value == "string" {
+			resultTy = c.BuiltinType("string")
 		}
-		if expr.High != nil {
-			c.CheckExpr(expr.High, c.BuiltinType("int"))
+	case *ArrayType:
+		resultTy = &SliceType{ElemType: exprTy.ElemType}
+	case *UntypedConstantType:
+		if exprTy.IsCompatible("string") {
+			resultTy = c.BuiltinType("string")
 		}
-		if expr.Max != nil {
-			c.CheckExpr(expr.Max, c.BuiltinType("int"))
-		}
-		return exprTy
-	default:
-		spew.Dump(exprTy)
-		panic("unreachable")
 	}
+
+	if resultTy == nil {
+		spew.Dump(exprTy)
+		panic(fmt.Sprintf("cannot slice type %v", exprTy))
+	}
+
+	if expr.Low != nil {
+		c.CheckExpr(expr.Low, UntypedInt())
+	}
+	if expr.High != nil {
+		c.CheckExpr(expr.High, UntypedInt())
+	}
+	if expr.Max != nil {
+		c.CheckExpr(expr.Max, UntypedInt())
+	}
+
+	return resultTy
 }
 
 func (c *Checker) SynthCallExpr(expr *CallExpr) Type {
@@ -2737,17 +2799,44 @@ func (c *Checker) SynthBuiltinLenCall(expr *CallExpr) Type {
 	if len(expr.Args) != 1 {
 		panic("builtin len() takes exactly one argument")
 	}
+
 	argTy := c.Synth(expr.Args[0])
-	switch c.Under(argTy).(type) {
+
+	if !c.IsSliceLike(argTy) {
+		panic(fmt.Sprintf("len() on incompatible type %v", argTy))
+	}
+
+	return c.BuiltinType("int")
+}
+
+func (c *Checker) IsSliceLike(ty Type) bool {
+	switch argTy := c.Under(ty).(type) {
 	case *SliceType:
 	case *ArrayType:
 	case *MapType:
 	case *ChannelType:
+	case *TypeBuiltin:
+		if argTy.Name.Value != "string" {
+			return false
+		}
+	case *UntypedConstantType:
+		if !argTy.IsCompatible("string") {
+			return false
+		}
+	case *TypeParam:
+		tyset := c.InterfaceTypeSet(argTy.Bound)
+		if tyset.Universe {
+			return false
+		}
+		for _, t := range tyset.Types {
+			if !c.IsSliceLike(t) {
+				return false
+			}
+		}
 	default:
-		spew.Dump(argTy)
-		panic(fmt.Sprintf("len() on incompatible type %v", argTy))
+		return false
 	}
-	return c.BuiltinType("int")
+	return true
 }
 
 func (c *Checker) SynthBuiltinPanicCall(expr *CallExpr) Type {
@@ -3289,7 +3378,7 @@ func (c *Checker) UnifyEq(left, right Type, subst Subst) {
 	}
 
 	if _, ok := right.(*NilType); ok {
-		switch left := left.(type) {
+		switch left := c.Under(left).(type) {
 		case *PointerType:
 			return
 		case *ChannelType:
@@ -4038,9 +4127,13 @@ func ReadConstDecl(decl *ast.GenDecl) []Decl {
 			if spec.Values != nil {
 				value = ReadExpr(spec.Values[i])
 			}
+			var declTy Type
+			if spec.Type != nil {
+				declTy = ReadType(spec.Type)
+			}
 			elems = append(elems, ConstDeclElem{
 				Name:  NewIdentifier(name.Name),
-				Type:  ReadType(spec.Type),
+				Type:  declTy,
 				Value: value,
 			})
 		}
@@ -4073,9 +4166,13 @@ func ReadVarDecl(decl *ast.GenDecl) []Decl {
 		for _, expr := range spec.Values {
 			exprs = append(exprs, ReadExpr(expr))
 		}
+		var declTy Type
+		if spec.Type != nil {
+			declTy = ReadType(spec.Type)
+		}
 		decls = append(decls, &VarDecl{
 			Names: names,
-			Type:  ReadType(spec.Type),
+			Type:  declTy,
 			Exprs: exprs,
 		})
 	}
@@ -4429,10 +4526,17 @@ func ReadAssignStmt(stmt *ast.AssignStmt) Statement {
 }
 
 func ReadRangeStmt(stmt *ast.RangeStmt) Statement {
+	var key, value Expr
+	if stmt.Key != nil {
+		key = ReadExpr(stmt.Key)
+	}
+	if stmt.Value != nil {
+		value = ReadExpr(stmt.Value)
+	}
 	return &RangeStmt{
 		Assign: stmt.Tok == token.DEFINE,
-		Key:    ReadExpr(stmt.Key),
-		Value:  ReadExpr(stmt.Value),
+		Key:    key,
+		Value:  value,
 		X:      ReadExpr(stmt.X),
 		Body:   ReadStatementList(stmt.Body),
 	}
@@ -4468,8 +4572,47 @@ func ReadTypeSwitchStmt(stmt *ast.TypeSwitchStmt) Statement {
 	}
 	return &TypeSwitchStmt{
 		Init:   init,
-		Assign: ReadStmt(stmt.Assign),
+		Assign: ReadTypeSwitchAssign(stmt.Assign),
 		Body:   ReadTypeSwitchCases(stmt.Body.List),
+	}
+}
+
+func ReadTypeSwitchAssign(stmt ast.Stmt) Statement {
+	switch stmt := stmt.(type) {
+	case *ast.AssignStmt:
+		if stmt.Tok != token.DEFINE {
+			panic("expected define")
+		}
+		if len(stmt.Lhs) != 1 {
+			panic("expected single lhs")
+		}
+		if len(stmt.Rhs) != 1 {
+			panic("expected single rhs")
+		}
+		return &ShortVarDecl{
+			Names: []Identifier{NewIdentifier(stmt.Lhs[0].(*ast.Ident).Name)},
+			Exprs: []Expr{ReadTypeSwitchTypeAssert(stmt.Rhs[0])},
+		}
+	case *ast.ExprStmt:
+		return &ExpressionStmt{Expr: ReadTypeSwitchTypeAssert(stmt.X)}
+	default:
+		spew.Dump(stmt)
+		panic("unreachable")
+	}
+}
+
+func ReadTypeSwitchTypeAssert(expr ast.Expr) Expr {
+	switch expr := expr.(type) {
+	case *ast.TypeAssertExpr:
+		if expr.Type != nil {
+			panic("type switch type assert with type")
+		}
+		return &TypeSwitchAssertionExpr{
+			Expr: ReadExpr(expr.X),
+		}
+	default:
+		spew.Dump(expr)
+		panic("unreachable")
 	}
 }
 
@@ -4558,6 +4701,9 @@ func ReadForStmt(stmt *ast.ForStmt) Statement {
 }
 
 func ReadExpr(expr ast.Expr) Expr {
+	if expr == nil {
+		panic("NOPE")
+	}
 	switch expr := expr.(type) {
 	case *ast.BinaryExpr:
 		return ReadBinaryExpr(expr)
@@ -4594,6 +4740,9 @@ func ReadExpr(expr ast.Expr) Expr {
 			Sel:  NewIdentifier(expr.Sel.Name),
 		}
 	case *ast.TypeAssertExpr:
+		if expr.Type == nil {
+			panic("cannot .(type) outside type switch")
+		}
 		return &TypeAssertionExpr{
 			Expr: ReadExpr(expr.X),
 			Type: ReadType(expr.Type),
@@ -4764,8 +4913,12 @@ func ReadNameExpr(expr *ast.Ident) Expr {
 }
 
 func ReadCompositeLit(expr *ast.CompositeLit) Expr {
+	var compositeTy Type
+	if expr.Type != nil {
+		compositeTy = ReadType(expr.Type)
+	}
 	return &CompositeLitExpr{
-		Type:  ReadType(expr.Type),
+		Type:  compositeTy,
 		Elems: ReadCompositeLitElems(expr.Elts),
 	}
 }
@@ -4809,7 +4962,7 @@ func ReadLiteral(lit *ast.BasicLit) Literal {
 
 func ReadType(expr ast.Expr) Type {
 	if expr == nil {
-		return nil
+		panic("NOPE")
 	}
 	switch expr := expr.(type) {
 	case *ast.Ident:
@@ -4963,6 +5116,14 @@ func ParseType(src string) Type {
 		panic(err)
 	}
 	return ReadType(expr)
+}
+
+func ParseFuncType(src string) *FunctionType {
+	expr, err := parser.ParseExpr(src)
+	if err != nil {
+		panic(err)
+	}
+	return ReadType(expr).(*FunctionType)
 }
 
 // ========================
@@ -5156,7 +5317,7 @@ func callParse() (int, error) {
 	_ = src
 
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "example.go", nil, parser.ParseComments)
+	f, err := parser.ParseFile(fset, "example.go", src, parser.ParseComments)
 	if err != nil {
 		panic(err)
 	}
