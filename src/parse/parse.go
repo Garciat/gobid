@@ -142,6 +142,22 @@ func ReadConstDecl(decl *ast.GenDecl) []tree.Decl {
 
 	for _, spec := range decl.Specs {
 		spec := spec.(*ast.ValueSpec)
+
+		if len(spec.Names) > 1 && len(spec.Values) > 1 {
+			var declTy tree.Type
+			if spec.Type != nil {
+				declTy = ReadType(spec.Type)
+			}
+			for i := range spec.Names {
+				decls = append(decls, &tree.ConstDecl{
+					Name:  NewIdentifier(spec.Names[i].Name),
+					Type:  declTy,
+					Value: ReadExpr(spec.Values[i]),
+				})
+			}
+			continue
+		}
+
 		if len(spec.Names) > 1 {
 			panic("multiple names in const declaration")
 		}
