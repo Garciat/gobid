@@ -7,20 +7,20 @@ import (
 )
 
 type Package struct {
-	ImportPath ImportPath
-	Depends    []ImportPath
-	Name       string
-	Files      []*tree.FileDef
-	Checker    *check.Checker
+	ImportPath   ImportPath
+	Dependencies map[ImportPath]struct{}
+	Name         string
+	Files        []*tree.FileDef
+	Checker      *check.Checker
 }
 
 func NewPackage(ip ImportPath) *Package {
 	return &Package{
-		ImportPath: ip,
-		Depends:    nil,
-		Name:       ip.PackageName(),
-		Files:      nil,
-		Checker:    check.NewChecker(),
+		ImportPath:   ip,
+		Dependencies: make(map[ImportPath]struct{}),
+		Name:         ip.PackageName(),
+		Files:        nil,
+		Checker:      check.NewChecker(),
 	}
 }
 
@@ -29,5 +29,5 @@ func (p *Package) AddFile(file *tree.FileDef) {
 }
 
 func (p *Package) AddDependency(ip ImportPath) {
-	p.Depends = append(p.Depends, ip)
+	p.Dependencies[ip] = struct{}{}
 }
