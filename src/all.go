@@ -1,10 +1,11 @@
-package main
+package gobid
 
 import (
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -164,6 +165,13 @@ type MethodType struct {
 	Type            *FunctionType
 }
 
+func (t *MethodType) String() string {
+	if t.PointerReceiver {
+		return fmt.Sprintf("method (*) %v", t.Type)
+	}
+	return fmt.Sprintf("method (_) %v", t.Type)
+}
+
 type ImportType struct {
 	TypeBase
 	Decl  ImportDecl
@@ -172,9 +180,9 @@ type ImportType struct {
 
 func (t *ImportType) String() string {
 	if t.Decl.Alias != nil {
-		return fmt.Sprintf("import(\"%v\" as %v)", t.Decl.Path, t.Decl.Alias)
+		return fmt.Sprintf("import(\"%v\" as %v)", t.Decl.ImportPath, t.Decl.Alias)
 	}
-	return fmt.Sprintf("import(%v)", t.Decl.Path)
+	return fmt.Sprintf("import(%v)", t.Decl.ImportPath)
 }
 
 type TypeBuiltin struct {
@@ -933,6 +941,29 @@ type StatementList struct {
 
 // ========================
 
+type ImportPath string
+
+func (p ImportPath) PackageName() string {
+	parts := strings.Split(p.String(), "/")
+	return parts[len(parts)-1]
+}
+
+func (p ImportPath) String() string {
+	return string(p)
+}
+
+type ImportDecl struct {
+	ImportPath ImportPath
+	Alias      *Identifier
+}
+
+func (d *ImportDecl) EffectiveName() string {
+	if d.Alias != nil {
+		return d.Alias.Value
+	}
+	return d.ImportPath.PackageName()
+}
+
 type Decl interface {
 	_Decl()
 }
@@ -940,20 +971,6 @@ type Decl interface {
 type DeclBase struct{}
 
 func (DeclBase) _Decl() {}
-
-type ImportDecl struct {
-	DeclBase
-	Path  string
-	Alias *Identifier
-}
-
-func (d *ImportDecl) EffectiveName() string {
-	if d.Alias != nil {
-		return d.Alias.Value
-	}
-	parts := strings.Split(d.Path, "/")
-	return parts[len(parts)-1]
-}
 
 type ConstDecl struct {
 	DeclBase
@@ -1021,9 +1038,191 @@ type TypeParamDecl struct {
 
 // ========================
 
-type File struct {
-	Path  string
-	Decls []Decl
+type FileDef struct {
+	Path    string
+	Package string
+	Imports []ImportDecl
+	Decls   []Decl
+}
+
+// ========================
+
+// ========================
+
+type CompilationUnit struct {
+	GOROOT   string
+	GOPATH   string
+	FileSet  *token.FileSet
+	Root     ImportPath
+	Packages map[ImportPath]*Package
+	Files    map[string]*FileDef
+}
+
+type Package struct {
+	ImportPath ImportPath
+	Path       string
+	Name       string
+	Files      []*FileDef
+	Checker    *Checker
+}
+
+func NewPackage(path string, ip ImportPath) *Package {
+	return &Package{
+		ImportPath: ip,
+		Path:       path,
+		Name:       ip.PackageName(),
+		Files:      nil,
+		Checker:    NewChecker(),
+	}
+}
+
+func (p *Package) AddFile(file *FileDef) {
+	if p.Name != file.Package {
+		panic(fmt.Errorf("package name mismatch: %v != %v", p.Name, file.Package))
+	}
+	p.Files = append(p.Files, file)
+}
+
+func NewCompilationUnit(root ImportPath) *CompilationUnit {
+	return &CompilationUnit{
+		GOROOT:  GetGOROOT(),
+		GOPATH:  GetGOPATH(),
+		FileSet: token.NewFileSet(),
+		Root:    root,
+		Packages: map[ImportPath]*Package{
+			root: NewPackage("", root),
+		},
+		Files: map[string]*FileDef{},
+	}
+}
+
+func GetGOROOT() string {
+	out, err := exec.Command("go", "env", "GOROOT").Output()
+	if err != nil {
+		panic(fmt.Errorf("failed to get GOROOT: %w", err))
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func GetGOPATH() string {
+	out, err := exec.Command("go", "env", "GOPATH").Output()
+	if err != nil {
+		panic(fmt.Errorf("failed to get GOPATH: %w", err))
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func (u *CompilationUnit) AddFile(path string) {
+	fast, err := parser.ParseFile(u.FileSet, path, nil, parser.ParseComments)
+	if err != nil {
+		panic(err)
+	}
+	file := u.ParseFileAST(path, fast)
+	u.Packages[u.Root].AddFile(file)
+	u.LoadFile(file)
+}
+
+func (u *CompilationUnit) ParseFileAST(path string, fast *ast.File) *FileDef {
+	fmt.Printf("=== ParseFileAST(%v) ===\n", path)
+	return ReadFile(path, fast)
+}
+
+func (u *CompilationUnit) LoadFile(file *FileDef) {
+	if _, ok := u.Files[file.Path]; ok {
+		return
+	}
+
+	fmt.Printf("=== LoadFile(%v) ===\n", file.Path)
+
+	u.Files[file.Path] = file
+
+	for _, decl := range file.Imports {
+		u.LoadPackage(decl)
+	}
+}
+
+func (u *CompilationUnit) FindImport(ip ImportPath) (string, error) {
+	path := ip.String()
+
+	candidates := []string{
+		filepath.Join(u.GOROOT, "src", path),
+		filepath.Join(u.GOROOT, "src", "vendor", path),
+	}
+
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("import not found: %v", path)
+}
+
+func (u *CompilationUnit) LoadPackage(decl ImportDecl) {
+	if decl.ImportPath == "C" {
+		fmt.Printf("skipping C import\n")
+		return
+	}
+
+	if decl.ImportPath == "unsafe" {
+		fmt.Printf("skipping unsafe import\n")
+		return
+	}
+
+	if _, ok := u.Packages[decl.ImportPath]; ok {
+		return
+	}
+
+	fmt.Printf("=== LoadImport(%v) ===\n", decl.ImportPath)
+
+	path, err := u.FindImport(decl.ImportPath)
+	if err != nil {
+		panic(fmt.Errorf("failed to find import: %w", err))
+	}
+
+	packages, err := parser.ParseDir(u.FileSet, path, nil, parser.ParseComments)
+	if err != nil {
+		panic(fmt.Errorf("failed to parse GOROOT: %w", err))
+	}
+
+	p := NewPackage(path, decl.ImportPath)
+
+	for _, pkg := range packages {
+		if pkg.Name != decl.ImportPath.PackageName() {
+			fmt.Printf("skipping package %v\n", pkg.Name)
+			continue
+		}
+		for path, f := range pkg.Files {
+			if strings.HasSuffix(path, "_test.go") {
+				fmt.Printf("skipping test file %v\n", path)
+				continue
+			}
+			p.AddFile(u.ParseFileAST(path, f))
+		}
+	}
+
+	u.Packages[decl.ImportPath] = p
+
+	for _, file := range p.Files {
+		u.LoadFile(file)
+	}
+}
+
+func (u *CompilationUnit) Compile() {
+	for _, file := range u.Files {
+		c := NewChecker()
+
+		for _, decl := range file.Decls {
+			switch decl := decl.(type) {
+			case *ConstDecl:
+
+			case *VarDecl:
+				// TODO
+			default:
+				c.DefineDecl(decl)
+			}
+		}
+	}
 }
 
 // ========================
@@ -1130,6 +1329,9 @@ func (c *VarContext) DefBuiltinFunction(name string) Type {
 }
 
 func (c *VarContext) DefType(name Identifier, ty Type) Type {
+	if _, ok := ty.(*TypeOfType); ok {
+		panic("BUG")
+	}
 	return c.Def(name, &TypeOfType{Type: ty})
 }
 
@@ -1321,6 +1523,21 @@ func (c *Checker) DefineValue(name Identifier, ty Type) {
 	c.VarCtx.Def(name, ty)
 }
 
+func (c *Checker) DefineFunction(name Identifier, ty *FunctionType) {
+	fmt.Printf("DEFINING func %v%v\n", name, ty.Signature)
+	c.VarCtx.Def(name, ty)
+}
+
+func (c *Checker) DefineMethod(holder, name Identifier, ty *MethodType) {
+	var prefix string
+	if ty.PointerReceiver {
+		prefix = "*"
+	}
+	fmt.Printf("DEFINING func (%s%v) %v%v\n", prefix, holder, name, ty.Type.Signature)
+	methodName := NewIdentifier(fmt.Sprintf("%s.%s", holder.Value, name.Value))
+	c.VarCtx.Def(methodName, ty)
+}
+
 func (c *Checker) DefineLazyValue(name Identifier, f func() Type) {
 	select {
 	case <-c.DoneLoadingSem:
@@ -1452,63 +1669,8 @@ func (c *Checker) AssertInFunctionScope() *Signature {
 
 // ========================
 
-func (c *Checker) AcceptFiles(files []File) {
-	later := []func(){}
-	for _, file := range files {
-		later = append(later, c.LoadFile(file))
-	}
-	for _, f := range later {
-		f()
-	}
-	c.DoneLoading()
-	for _, file := range files {
-		c.CheckFile(file)
-	}
-}
-
-func (c *Checker) LoadFile(file File) func() {
-	fmt.Printf("=== LoadFile(%v) ===\n", file.Path)
-	later := []Decl{}
-	for _, decl := range file.Decls {
-		switch decl.(type) {
-		case *VarDecl, *ConstDecl:
-			later = append(later, decl)
-		default:
-			c.DefineDecl(decl)
-		}
-	}
-	return func() {
-		for _, decl := range later {
-			c.DefineDecl(decl)
-		}
-	}
-}
-
-func (c *Checker) DoneLoading() {
-	close(c.DoneLoadingSem)
-	for _, sem := range c.LazyWaiters {
-		<-sem
-	}
-	close(c.DefinerMailbox)
-	<-c.DefinerDone
-}
-
-func (c *Checker) CheckFile(file File) {
-	fmt.Printf("=== CheckFile(%v) ===\n", file.Path)
-	for _, decl := range file.Decls {
-		c.CheckDecl(decl)
-	}
-	fmt.Printf("=== verifying CheckFile(%v) ===\n", file.Path)
-	c.Verify()
-	fmt.Printf("=== DONE CheckFile(%v) ===\n", file.Path)
-}
-
-// ========================
-
 func (c *Checker) DefineDecl(decl Decl) {
 	switch decl := decl.(type) {
-	case *ImportDecl:
-		c.DefineImportDecl(decl)
 	case *ConstDecl:
 		c.DefineConstDecl(decl)
 	case *TypeDecl:
@@ -1528,22 +1690,24 @@ func (c *Checker) DefineDecl(decl Decl) {
 }
 
 func (c *Checker) DefineImportDecl(decl *ImportDecl) {
-	fmt.Printf("=== DefineImportDecl(%v) ===\n", decl.Path)
+	fmt.Printf("=== DefineImportDecl(%v) ===\n", decl.ImportPath)
 
-	var scope VarContext
+	c.DefineLazyValue(NewIdentifier(decl.EffectiveName()), func() Type {
+		var scope VarContext
 
-	switch decl.Path {
-	case "C":
-		scope = EmptyVarContext() // TODO screwed
-	case "unsafe":
-		scope = c.ReadUnsafePackage()
-	default:
-		scope = c.ReadPackage(decl)
-	}
+		switch decl.ImportPath {
+		case "C":
+			scope = EmptyVarContext() // TODO screwed
+		case "unsafe":
+			scope = c.ReadUnsafePackage()
+		default:
+			// scope = c.ReadPackage(decl)
+		}
 
-	c.DefineValue(NewIdentifier(decl.EffectiveName()), &ImportType{Decl: *decl, Scope: scope})
+		fmt.Printf("=== done DefineImportDecl(%v) ===\n", decl.ImportPath)
 
-	fmt.Printf("=== done DefineImportDecl(%v) ===\n", decl.Path)
+		return &ImportType{Decl: *decl, Scope: scope}
+	})
 }
 
 func (c *Checker) ReadUnsafePackage() VarContext {
@@ -1558,56 +1722,6 @@ func (c *Checker) ReadUnsafePackage() VarContext {
 	scope.Def(NewIdentifier("String"), ParseType("func(*byte, int) string"))
 	scope.Def(NewIdentifier("StringData"), ParseType("func(string) *byte"))
 	return scope
-}
-
-var packageCache = map[string]VarContext{} // TODO are paths relative or module-based?
-
-func (c *Checker) ReadPackage(decl *ImportDecl) VarContext {
-	if cached, ok := packageCache[decl.Path]; ok {
-		fmt.Printf("using cached %v\n", decl.Path)
-		return cached
-	}
-
-	out, err := exec.Command("go", "env", "GOROOT").Output()
-	if err != nil {
-		panic(fmt.Errorf("failed to get GOROOT: %w", err))
-	}
-
-	goroot := strings.TrimSpace(string(out))
-	path := filepath.Join(goroot, "src", decl.Path)
-
-	fmt.Printf("PARSING PACKAGE %v\n", path)
-
-	packages, err := parser.ParseDir(token.NewFileSet(), path, nil, parser.ParseComments)
-	if err != nil {
-		panic(fmt.Errorf("failed to parse GOROOT: %w", err))
-	}
-
-	child := NewChecker()
-
-	files := []File{}
-	for _, pkg := range packages {
-		fmt.Printf("package %v\n", pkg.Name)
-		if strings.HasSuffix(pkg.Name, "_test") {
-			// TODO handle "." import
-			fmt.Printf("skipping test package\n")
-			continue
-		}
-		for filename, f := range pkg.Files {
-			if strings.HasSuffix(filename, "_test.go") {
-				fmt.Printf("skipping test file %v\n", filename)
-				continue
-			}
-			fmt.Printf("PARSING FILE %v\n", filename)
-			files = append(files, ReadAST(filename, f))
-		}
-	}
-
-	packageCache[decl.Path] = child.VarCtx
-
-	child.AcceptFiles(files)
-
-	return child.VarCtx
 }
 
 func (c *Checker) DefineConstDecl(decl *ConstDecl) {
@@ -1758,7 +1872,7 @@ func (c *Checker) DefineVarDecl(decl *VarDecl) {
 }
 
 func (c *Checker) DefineFunctionDecl(decl *FunctionDecl) {
-	c.DefineValue(decl.Name, &FunctionType{Signature: decl.Signature})
+	c.DefineFunction(decl.Name, &FunctionType{Signature: decl.Signature})
 }
 
 func (c *Checker) DefineMethodDecl(decl *MethodDecl) {
@@ -1790,17 +1904,13 @@ func (c *Checker) DefineMethodDecl(decl *MethodDecl) {
 		Type:            &FunctionType{Signature: decl.Signature},
 	}
 
-	methodName := NewIdentifier(fmt.Sprintf("%s.%s", methodHolder.Value, decl.Name.Value))
-
-	c.DefineValue(methodName, methodTy)
+	c.DefineMethod(methodHolder, decl.Name, methodTy)
 }
 
 // ========================
 
 func (c *Checker) CheckDecl(decl Decl) {
 	switch decl := decl.(type) {
-	case *ImportDecl:
-		c.CheckImportDecl(decl)
 	case *ConstDecl:
 		c.CheckConstDecl(decl)
 	case *TypeDecl:
@@ -2308,7 +2418,7 @@ func (c *Checker) CheckExpr(expr Expr, ty Type) {
 }
 
 func (c *Checker) CheckBinaryExpr(expr *BinaryExpr, ty Type) {
-	c.CheckAssignableTo(c.Synth(expr), ty)
+	c.CheckAssignableTo(c.Synth(expr), c.ResolveType(ty))
 }
 
 func (c *Checker) CheckUnaryExpr(expr *UnaryExpr, ty Type) {
@@ -2317,11 +2427,11 @@ func (c *Checker) CheckUnaryExpr(expr *UnaryExpr, ty Type) {
 	case UnaryOpNot:
 		c.CheckExpr(expr.Expr, c.BuiltinType("bool"))
 	case UnaryOpAddr:
-		c.CheckAssignableTo(&PointerType{BaseType: exprTy}, ty)
+		c.CheckAssignableTo(&PointerType{BaseType: exprTy}, c.ResolveType(ty))
 	case UnaryOpDeref:
 		switch exprTy := c.Under(exprTy).(type) {
 		case *PointerType:
-			c.CheckAssignableTo(c.ResolveType(exprTy.BaseType), ty)
+			c.CheckAssignableTo(c.ResolveType(exprTy.BaseType), c.ResolveType(ty))
 		default:
 			spew.Dump(expr)
 			panic("cannot dereference non-pointer")
@@ -2333,7 +2443,7 @@ func (c *Checker) CheckUnaryExpr(expr *UnaryExpr, ty Type) {
 }
 
 func (c *Checker) CheckSelectorExpr(expr *SelectorExpr, ty Type) {
-	c.CheckAssignableTo(c.Synth(expr), ty)
+	c.CheckAssignableTo(c.Synth(expr), c.ResolveType(ty))
 }
 
 func (c *Checker) CheckIndexExpr(expr *IndexExpr, ty Type) {
@@ -2342,8 +2452,8 @@ func (c *Checker) CheckIndexExpr(expr *IndexExpr, ty Type) {
 		if len(expr.Indices) != 1 {
 			panic("indexing a slice with multiple indices")
 		}
-		c.CheckExpr(expr.Indices[0], c.BuiltinType("int"))
-		c.TyCtx.AddEq(ty, exprTy.ElemType)
+		c.CheckExpr(expr.Indices[0], UntypedInt())
+		c.TyCtx.AddEq(c.ResolveType(exprTy.ElemType), c.ResolveType(ty))
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
@@ -2352,24 +2462,24 @@ func (c *Checker) CheckIndexExpr(expr *IndexExpr, ty Type) {
 
 func (c *Checker) CheckCallExpr(expr *CallExpr, ty Type) {
 	callTy := c.Synth(expr)
-	c.CheckAssignableTo(callTy, ty)
+	c.CheckAssignableTo(callTy, c.ResolveType(ty))
 }
 
 func (c *Checker) CheckNameExpr(expr *NameExpr, ty Type) {
-	c.TyCtx.AddEq(c.Lookup(expr.Name), ty)
+	c.TyCtx.AddEq(c.Lookup(expr.Name), c.ResolveType(ty))
 }
 
 func (c *Checker) CheckLiteralExpr(expr *LiteralExpr, ty Type) {
 	exprTy := c.Synth(expr)
-	c.CheckAssignableTo(exprTy, ty)
+	c.CheckAssignableTo(exprTy, c.ResolveType(ty))
 }
 
 func (c *Checker) CheckCompositeLitExpr(expr *CompositeLitExpr, ty Type) {
 	if expr.Type == nil {
-		c.MakeCompositeLit(expr, ty)
+		c.MakeCompositeLit(expr, c.ResolveType(ty))
 	} else {
 		exprTy := c.Synth(expr)
-		c.CheckAssignableTo(exprTy, ty)
+		c.CheckAssignableTo(exprTy, c.ResolveType(ty))
 	}
 }
 
@@ -2901,12 +3011,10 @@ func (c *Checker) UntypedDefaultType(ty *UntypedConstantType) Type {
 }
 
 func (c *Checker) SynthCompositeLitExpr(expr *CompositeLitExpr) Type {
-	return c.MakeCompositeLit(expr, expr.Type)
+	return c.MakeCompositeLit(expr, c.ResolveType(expr.Type))
 }
 
 func (c *Checker) MakeCompositeLit(expr *CompositeLitExpr, targetTy Type) Type {
-	targetTy = c.ResolveType(targetTy)
-
 	switch exprTy := c.Under(targetTy).(type) {
 	case *StructType:
 		return c.MakeCompositeLitStruct(expr, exprTy)
@@ -2965,13 +3073,17 @@ func (c *Checker) MakeCompositeLitStruct(expr *CompositeLitExpr, structTy *Struc
 
 func (c *Checker) MakeCompositeLitSlice(expr *CompositeLitExpr, sliceTy *SliceType) Type {
 	for _, elem := range expr.Elems {
-		c.CheckExpr(elem.Value, sliceTy.ElemType)
+		c.CheckExpr(elem.Value, c.ResolveType(sliceTy.ElemType))
 	}
 	return expr.Type
 }
 
 func (c *Checker) MakeCompositeLitMap(expr *CompositeLitExpr, mapTy *MapType) Type {
-	panic("TODO")
+	for _, elem := range expr.Elems {
+		c.CheckExpr(elem.Key, c.ResolveType(mapTy.KeyType))
+		c.CheckExpr(elem.Value, c.ResolveType(mapTy.ElemType))
+	}
+	return expr.Type
 }
 
 func (c *Checker) MakeCompositeLitArray(expr *CompositeLitExpr, arrayTy *ArrayType) Type {
@@ -4062,14 +4174,33 @@ func IsSingleTypeUnion(ty *InterfaceType) (Type, bool) {
 
 // ========================
 
-func ReadAST(path string, file *ast.File) File {
+func ReadFile(path string, file *ast.File) *FileDef {
+	var imports []ImportDecl
 	var decls []Decl
+	for _, spec := range file.Imports {
+		imports = append(imports, ReadImport(spec))
+	}
 	for _, decl := range file.Decls {
 		decls = append(decls, ReadDecl(decl)...)
 	}
-	return File{
-		Path:  path,
-		Decls: decls,
+	return &FileDef{
+		Path:    path,
+		Package: file.Name.Name,
+		Imports: imports,
+		Decls:   decls,
+	}
+}
+
+func ReadImport(spec *ast.ImportSpec) ImportDecl {
+	var name *Identifier
+	if spec.Name != nil {
+		name = Ptr(NewIdentifier(spec.Name.Name))
+	}
+	path := spec.Path.Value
+	path = path[1 : len(path)-1] // remove quotes
+	return ImportDecl{
+		ImportPath: ImportPath(path),
+		Alias:      name,
 	}
 }
 
@@ -4093,29 +4224,12 @@ func ReadGenDecl(decl *ast.GenDecl) []Decl {
 	case token.VAR:
 		return ReadVarDecl(decl)
 	case token.IMPORT:
-		return ReadImport(decl)
+		// handled in top level
+		return []Decl{}
 	default:
 		spew.Dump(decl)
 		panic("unreachable")
 	}
-}
-
-func ReadImport(decl *ast.GenDecl) []Decl {
-	var decls []Decl
-	for _, spec := range decl.Specs {
-		spec := spec.(*ast.ImportSpec)
-		var name *Identifier
-		if spec.Name != nil {
-			name = Ptr(NewIdentifier(spec.Name.Name))
-		}
-		path := spec.Path.Value
-		path = path[1 : len(path)-1] // remove quotes
-		decls = append(decls, &ImportDecl{
-			Path:  path,
-			Alias: name,
-		})
-	}
-	return decls
 }
 
 func ReadConstDecl(decl *ast.GenDecl) []Decl {
@@ -5124,206 +5238,4 @@ func ParseFuncType(src string) *FunctionType {
 		panic(err)
 	}
 	return ReadType(expr).(*FunctionType)
-}
-
-// ========================
-
-func main() {
-	src := `
-package main
-
-func add[T int](x, y T) T {
-	return x + y + 3
-}
-
-func first[T any](x, y T) T {
-	return x
-}
-
-func Nil[T any]() T {
-	var zero T
-	return zero
-}
-
-func firstIndex[T any](x []T) T {
-	return x[Nil()]
-}
-
-func cast[T U, U any](x T) U {
-	return x
-}
-
-type Hello[T string|int] struct{
-	Value T
-}
-
-type HelloInt struct{
-	Value Hello[int]
-}
-
-type TwoHello[T string] struct{
-	Value1 Hello[T]
-	Value2 Hello[int]
-}
-
-type Vec[T any] struct{}
-
-func MakeVec[T any]() Vec[T] {}
-
-func Append[T any](v Vec[T], x T) {}
-
-func ReadVec[T any](v Vec[T]) T {}
-
-func Ptr[T any](x T) *T {
-	return &x
-}
-
-func useVec() {
-	v := MakeVec()
-	Append(v, Nil())
-	Append(v, Ptr(32))
-}
-
-func alloc[T any]() *T {
-	return new(T)
-}
-
-func hello[T int]() []int {
-	return make([]T)
-}
-
-func inferStructField() int {
-	v := MakeVec()
-	Append(v, Nil())
-	return ReadVec(v)
-}
-
-type F = interface{F()[]int}
-
-func hello[T F](t T) []int {
-	return t.F()
-}
-
-func example1[U any](t struct{F U}) U {
-	return t.F
-}
-
-type Pair[T, U any] struct{
-	First T
-	Second U
-}
-
-func makePair[T, U any](x T, y U) Pair[T, U] {
-	return Pair[T, U]{First: x, Second: y}
-}
-
-type TyEq[T, U any] interface{
-	Apply(T) U
-}
-
-type TyEqImpl[T any] struct{}
-func (_ TyEqImpl[T]) Apply(x T) T {
-	return x
-}
-
-func Refl[T any]() TyEq[T, T] {
-	return TyEqImpl[T]{}
-}
-
-type Greeter interface{
-	Greet()
-}
-
-type Person struct{}
-func (*Person) Greet() {}
-
-func MakeGreeter() Greeter {
-	return &Person{}
-}
-
-type Maker[T any] interface{
-	Make() T
-}
-
-type IntMaker struct{}
-func (IntMaker) Make() int { return 0 }
-
-func UseIntMaker() Maker[int] {
-	return &IntMaker{}
-}
-
-func PointerThing[T any, U *T|int](t T) U {
-	var empty U
-	return empty
-}
-
-type Receiver struct{}
-func (*Receiver) Run() {}
-
-type Runner interface{
-	Run()
-}
-
-func PointerReceiverThing[T any, U interface{*T; Runner}](t T) {
-	var u U = &t
-	u.Run()
-}
-
-func UsePointerReceiverThing() {
-	PointerReceiverThing(Receiver{})
-}
-
-type X struct {}
-func (x *X) M() int { return 42 }
-
-func CallX_M(x X) int {
-	return x.M()
-}
-
-func CallHasM[T interface{*X; M() R}, R any](t T) R {
-	return t.M()
-}
-
-func getValue(id *struct{Value int}) int {
-	return id.Value
-}
-
-func variadic(xs ...int) []int {
-	for _, x := range xs {
-
-	}
-	return xs
-}
-
-func useVariadic() {
-	variadic(1, 2, 3)
-	variadic([]int{1,2,3}...)
-}
-
-func parse() (int, error) {
-	return 0, nil
-}
-
-func useParse() bool {
-	i, err := parse()
-	return i == 0 && err == nil
-}
-
-func callParse() (int, error) {
-	return parse()
-}
-`
-
-	_ = src
-
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "example.go", src, parser.ParseComments)
-	if err != nil {
-		panic(err)
-	}
-
-	file := ReadAST("example.go", f)
-
-	c := NewChecker()
-	c.AcceptFiles([]File{file})
 }
