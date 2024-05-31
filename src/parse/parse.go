@@ -136,26 +136,92 @@ func ReadImportDecl(decl *ast.GenDecl) []tree.Decl {
 }
 
 func ReadConstDecl(decl *ast.GenDecl) []tree.Decl {
-	var elems []tree.ConstDeclElem
+	var decls []tree.Decl
+
+	var carry tree.Expr
+
 	for _, spec := range decl.Specs {
 		spec := spec.(*ast.ValueSpec)
-		for i, name := range spec.Names {
-			var value tree.Expr
-			if spec.Values != nil {
-				value = ReadExpr(spec.Values[i])
+		if len(spec.Names) > 1 {
+			panic("multiple names in const declaration")
+		}
+		if len(spec.Values) > 1 {
+			panic("multiple values in const declaration")
+		}
+
+		var declTy tree.Type
+		var declVal tree.Expr
+
+		name := spec.Names[0].Name
+
+		if len(spec.Values) == 0 {
+			if carry == nil {
+				panic("missing init expr for constant")
 			}
-			var declTy tree.Type
-			if spec.Type != nil {
-				declTy = ReadType(spec.Type)
+			declVal = carry // TODO if iota, should +1; but doesn't matter for type-checking
+		} else {
+			declVal = ReadExpr(spec.Values[0])
+			carry = declVal
+		}
+
+		if spec.Type != nil {
+			declTy = ReadType(spec.Type)
+		}
+
+		decls = append(decls, &tree.ConstDecl{
+			Name:  NewIdentifier(name),
+			Type:  declTy,
+			Value: declVal,
+		})
+	}
+
+	return decls
+}
+
+func ReadVarDecl(decl *ast.GenDecl) []tree.Decl {
+	var decls []tree.Decl
+	for _, spec := range decl.Specs {
+		spec := spec.(*ast.ValueSpec)
+
+		var declTy tree.Type
+		if spec.Type != nil {
+			declTy = ReadType(spec.Type)
+		}
+
+		if len(spec.Names) == len(spec.Values) {
+			for i := range spec.Names {
+				decls = append(decls, &tree.VarDecl{
+					Names: []Identifier{NewIdentifier(spec.Names[i].Name)},
+					Type:  declTy,
+					Expr:  ReadExpr(spec.Values[i]),
+				})
 			}
-			elems = append(elems, tree.ConstDeclElem{
-				Name:  NewIdentifier(name.Name),
+		} else if len(spec.Names) > 1 && len(spec.Values) == 1 {
+			names := []Identifier{}
+			for _, name := range spec.Names {
+				names = append(names, NewIdentifier(name.Name))
+			}
+			decls = append(decls, &tree.VarDecl{
+				Names: names,
 				Type:  declTy,
-				Value: value,
+				Expr:  ReadExpr(spec.Values[0]),
 			})
+		} else if len(spec.Names) > 0 && len(spec.Values) == 0 {
+			if declTy == nil {
+				panic("missing type for var declaration")
+			}
+			for _, name := range spec.Names {
+				decls = append(decls, &tree.VarDecl{
+					Names: []Identifier{NewIdentifier(name.Name)},
+					Type:  declTy,
+					Expr:  nil,
+				})
+			}
+		} else {
+			panic("unreachable")
 		}
 	}
-	return []tree.Decl{&tree.ConstDecl{Elems: elems}}
+	return decls
 }
 
 func ReadTypeDecl(decl *ast.GenDecl) []tree.Decl {
@@ -166,31 +232,6 @@ func ReadTypeDecl(decl *ast.GenDecl) []tree.Decl {
 			Name:       NewIdentifier(spec.Name.Name),
 			TypeParams: ReadTypeParamList(spec.TypeParams),
 			Type:       ReadType(spec.Type),
-		})
-	}
-	return decls
-}
-
-func ReadVarDecl(decl *ast.GenDecl) []tree.Decl {
-	var decls []tree.Decl
-	for _, spec := range decl.Specs {
-		spec := spec.(*ast.ValueSpec)
-		names := []Identifier{}
-		exprs := []tree.Expr{}
-		for _, name := range spec.Names {
-			names = append(names, NewIdentifier(name.Name))
-		}
-		for _, expr := range spec.Values {
-			exprs = append(exprs, ReadExpr(expr))
-		}
-		var declTy tree.Type
-		if spec.Type != nil {
-			declTy = ReadType(spec.Type)
-		}
-		decls = append(decls, &tree.VarDecl{
-			Names: names,
-			Type:  declTy,
-			Exprs: exprs,
 		})
 	}
 	return decls

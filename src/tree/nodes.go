@@ -460,13 +460,16 @@ func (d *ImportDecl) EffectiveName() Identifier {
 
 type ConstDecl struct {
 	DeclBase
-	Elems []ConstDeclElem
-}
-
-type ConstDeclElem struct {
 	Name  Identifier
 	Type  Type
 	Value Expr
+}
+
+type VarDecl struct {
+	DeclBase
+	Names []Identifier
+	Type  Type
+	Expr  Expr
 }
 
 type TypeDecl struct {
@@ -480,13 +483,6 @@ type AliasDecl struct {
 	DeclBase
 	Name Identifier
 	Type Type
-}
-
-type VarDecl struct {
-	DeclBase
-	Names []Identifier
-	Type  Type
-	Exprs []Expr
 }
 
 type FunctionDecl struct {

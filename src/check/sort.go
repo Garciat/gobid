@@ -25,10 +25,8 @@ func SortDeclarations(pkg *source.Package) []tree.Decl {
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
 			case *tree.ConstDecl:
-				for _, elem := range decl.Elems {
-					sortableDecls[elem.Name] = decl
-					declKinds[elem.Name] = DeclKindConst
-				}
+				sortableDecls[decl.Name] = decl
+				declKinds[decl.Name] = DeclKindConst
 			case *tree.VarDecl:
 				for _, name := range decl.Names {
 					sortableDecls[name] = decl
@@ -67,13 +65,7 @@ func SortDeclarations(pkg *source.Package) []tree.Decl {
 	sortedDecls := algos.TopologicalSort(sortableDecls, func(decl tree.Decl) map[Identifier]struct{} {
 		switch decl := decl.(type) {
 		case *tree.ConstDecl:
-			combo := map[Identifier]struct{}{}
-			for _, elem := range decl.Elems {
-				for dep := range declDeps[elem.Name] {
-					combo[dep] = struct{}{}
-				}
-			}
-			return combo
+			return declDeps[decl.Name]
 		case *tree.VarDecl:
 			combo := map[Identifier]struct{}{}
 			for _, name := range decl.Names {
@@ -110,18 +102,12 @@ func VarDeclDependencies(
 ) map[Identifier]map[Identifier]struct{} {
 	deps := map[Identifier]map[Identifier]struct{}{}
 
-	if len(decl.Names) == len(decl.Exprs) {
-		for i, name := range decl.Names {
-			deps[name] = VarReferences(declKinds, decl.Exprs[i], DeclKindVar, DeclKindConst)
+	refs := VarReferences(declKinds, decl.Expr, DeclKindVar, DeclKindConst)
+	for _, name := range decl.Names {
+		if name == IgnoreIdent {
+			continue
 		}
-	} else if len(decl.Names) > 1 && len(decl.Exprs) == 1 {
-		refs := VarReferences(declKinds, decl.Exprs[0], DeclKindVar, DeclKindConst)
-		for _, name := range decl.Names {
-			if name == IgnoreIdent {
-				continue
-			}
-			deps[name] = refs
-		}
+		deps[name] = refs
 	}
 
 	return deps
@@ -131,37 +117,9 @@ func ConstDeclDependencies(
 	declKinds map[Identifier]DeclKind,
 	decl *tree.ConstDecl,
 ) map[Identifier]map[Identifier]struct{} {
-	deps := map[Identifier]map[Identifier]struct{}{}
-
-	var carryIndex = -1
-	for i, elem := range decl.Elems {
-		deps[elem.Name] = map[Identifier]struct{}{}
-
-		if elem.Type == nil {
-			if elem.Value == nil {
-				if carryIndex == -1 {
-					panic("mising init expr for constant")
-				}
-				deps[elem.Name][decl.Elems[carryIndex].Name] = struct{}{}
-			} else {
-				deps[elem.Name] = VarReferences(declKinds, elem.Value, DeclKindConst)
-				if ContainsIota(elem.Value) {
-					carryIndex = i
-				}
-			}
-		} else {
-			carryIndex = -1
-			if elem.Value != nil {
-				deps[elem.Name] = VarReferences(declKinds, elem.Value, DeclKindConst)
-				if ContainsIota(elem.Value) {
-					carryIndex = i
-				}
-			} else {
-				panic("mising init expr for constant")
-			}
-		}
+	deps := map[Identifier]map[Identifier]struct{}{
+		decl.Name: VarReferences(declKinds, decl.Value, DeclKindConst),
 	}
-
 	return deps
 }
 
