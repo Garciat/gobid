@@ -1,11 +1,11 @@
 package main
 
 import (
-	"github.com/garciat/gobid"
+	"github.com/garciat/gobid/compile"
 )
 
 func main() {
-	unit := gobid.NewCompilationUnit("main")
+	unit := compile.NewCompilationUnit("main")
 	unit.AddFile("../example.go")
 	unit.Compile()
 }
