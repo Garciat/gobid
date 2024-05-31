@@ -347,15 +347,7 @@ func (c *Checker) Run() {
 		for _, decl := range SortDeclarations(pkg) {
 			fmt.Println(declFile[decl].Path)
 			scope := fileScopes[declFile[decl]]
-
-			_, err := Try(func() struct{} {
-				scope.DefineTopLevelDecl(decl)
-				return struct{}{}
-			})
-
-			if err != nil {
-				panic(fmt.Errorf("error in %v: %v", declFile[decl].Path, err))
-			}
+			scope.DefineTopLevelDecl(decl)
 		}
 
 		c.PackageSymbols[pkg.ImportPath] = packageScopes[pkg].VarCtx
@@ -441,6 +433,16 @@ func (c *Checker) DefineValue(name Identifier, ty tree.Type) {
 	}
 }
 
+func (c *Checker) DefineType(name Identifier, ty tree.Type) {
+	fmt.Printf("DEFINING TYPE %v = %v\n", name, ty)
+	if c.VarCtx.ScopeKind == ScopeKindFile {
+		Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
+		c.VarCtx.Parent.DefType(name, ty)
+	} else {
+		c.VarCtx.DefType(name, ty)
+	}
+}
+
 func (c *Checker) DefineFunction(name Identifier, ty *tree.FunctionType) {
 	if name == NewIdentifier("init") {
 		// init functions are not defined
@@ -488,11 +490,6 @@ func (c *Checker) DefineLazyValue(name Identifier, f func() tree.Type) {
 	//		close(c.LazyWaiters[name])
 	//	}()
 	//}
-}
-
-func (c *Checker) DefineType(name Identifier, ty tree.Type) {
-	fmt.Printf("DEFINING TYPE %v = %v\n", name, ty)
-	c.VarCtx.DefType(name, ty)
 }
 
 func (c *Checker) BuiltinValue(name string) tree.Type {
@@ -654,81 +651,15 @@ func (c *Checker) DefineImportDecl(decl *tree.ImportDecl) {
 }
 
 func (c *Checker) DefineConstDecl(decl *tree.ConstDecl) {
-	var carryTy tree.Type
-	for _, elem := range decl.Elems {
-		var elemTy tree.Type
-		if elem.Type == nil {
-			if elem.Value == nil {
-				if carryTy == nil {
-					panic("mising init expr for constant")
-				}
-				elemTy = carryTy
-			} else {
-				elemTy = c.Synth(elem.Value)
-				if ContainsIota(elem.Value) {
-					carryTy = elemTy
-				}
-			}
-		} else {
-			carryTy = nil
-			elemTy = elem.Type
-			if elem.Value != nil {
-				c.CheckAssignableTo(c.Synth(elem.Value), elemTy)
-				if ContainsIota(elem.Value) {
-					carryTy = elemTy
-				}
-			} else {
-				panic("mising init expr for constant")
-			}
-		}
-		if elemTy == nil {
-			panic("OOPS")
-		}
-		c.DefineValue(elem.Name, c.ResolveType(elemTy))
+	var exprTy tree.Type = c.Synth(decl.Value)
+	var declTy tree.Type
+	if decl.Type != nil {
+		declTy = c.ResolveType(decl.Type)
+		c.CheckAssignableTo(exprTy, declTy)
+	} else {
+		declTy = exprTy
 	}
-}
-
-func ContainsIota(expr tree.Expr) bool {
-	switch expr := expr.(type) {
-	case *tree.NameExpr:
-		return expr.Name.Value == "iota"
-	case *tree.BinaryExpr:
-		return ContainsIota(expr.Left) || ContainsIota(expr.Right)
-	case *tree.UnaryExpr:
-		return ContainsIota(expr.Expr)
-	case *tree.StarExpr:
-		return ContainsIota(expr.Expr)
-	case *tree.AddressExpr:
-		return ContainsIota(expr.Expr)
-	case *tree.ConversionExpr:
-		return ContainsIota(expr.Expr)
-	case *tree.SelectorExpr:
-		return ContainsIota(expr.Expr)
-	case *tree.IndexExpr:
-		return ContainsIota(expr.Expr)
-	case *tree.SliceExpr:
-		return ContainsIota(expr.Expr) || ContainsIota(expr.Low) || ContainsIota(expr.High) || ContainsIota(expr.Max)
-	case *tree.TypeAssertionExpr:
-		return ContainsIota(expr.Expr)
-	case *tree.CallExpr:
-		for _, arg := range expr.Args {
-			if ContainsIota(arg) {
-				return true
-			}
-		}
-		return false
-	case *tree.LiteralExpr:
-		return false
-	case *tree.FuncLitExpr:
-		return false
-	case *tree.CompositeLitExpr:
-		return false
-	case *tree.TypeExpr:
-		return false
-	default:
-		spew.Dump(expr)
-		panic("unreachable")
-	}
+	c.DefineValue(decl.Name, declTy)
 }
 
 func (c *Checker) DefineTypeDecl(decl *tree.TypeDecl) {
@@ -746,10 +677,10 @@ func (c *Checker) DefineAliasDecl(decl *tree.AliasDecl) {
 }
 
 func (c *Checker) DefineVarDecl(decl *tree.VarDecl) {
-	if len(decl.Names) == len(decl.Exprs) {
-		for i, name := range decl.Names {
+	if len(decl.Names) == 1 && decl.Expr != nil {
+		for _, name := range decl.Names {
 			c.DefineLazyValue(name, func() tree.Type {
-				ty := c.Synth(decl.Exprs[i])
+				ty := c.Synth(decl.Expr)
 				if _, ok := ty.(*tree.TupleType); ok {
 					panic("cannot use tuple as value")
 				}
@@ -762,10 +693,9 @@ func (c *Checker) DefineVarDecl(decl *tree.VarDecl) {
 				}
 			})
 		}
-	} else if len(decl.Names) > 1 && len(decl.Exprs) == 1 {
+	} else if len(decl.Names) > 1 && decl.Expr != nil {
 		tupleTy := sync.OnceValue(func() *tree.TupleType {
-			expr := decl.Exprs[0]
-			exprTy := c.Synth(expr)
+			exprTy := c.Synth(decl.Expr)
 			tupleTy, ok := exprTy.(*tree.TupleType)
 			if !ok {
 				panic("multiple-value return in single-value context")
@@ -787,7 +717,7 @@ func (c *Checker) DefineVarDecl(decl *tree.VarDecl) {
 				}
 			})
 		}
-	} else if len(decl.Names) > 0 && len(decl.Exprs) == 0 {
+	} else if len(decl.Names) > 0 && decl.Expr == nil {
 		if decl.Type == nil {
 			panic("variable declaration without type or initializing expression")
 		}
