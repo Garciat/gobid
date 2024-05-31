@@ -2,6 +2,7 @@ package parse
 
 import (
 	"fmt"
+	"github.com/garciat/gobid/source"
 	"go/ast"
 	goparser "go/parser"
 	"go/token"
@@ -14,8 +15,8 @@ import (
 )
 
 type Parser interface {
-	ParseFile(path string) *tree.FileDef
-	ParsePackage(path string) []*tree.FileDef
+	ParseFile(path string) *source.FileDef
+	ParsePackage(path string) []*source.FileDef
 }
 
 func NewParser() Parser {
@@ -28,7 +29,7 @@ type parser struct {
 	gop GoParser
 }
 
-func (p *parser) ParseFile(path string) *tree.FileDef {
+func (p *parser) ParseFile(path string) *source.FileDef {
 	fast, err := p.gop.ParseFile(path)
 	if err != nil {
 		panic(err)
@@ -36,42 +37,39 @@ func (p *parser) ParseFile(path string) *tree.FileDef {
 	return p.readAST(path, fast)
 }
 
-func (p *parser) ParsePackage(path string) []*tree.FileDef {
+func (p *parser) ParsePackage(path string) []*source.FileDef {
 	packages, err := p.gop.ParseDir(path)
 	if err != nil {
 		panic(err)
 	}
 
-	var files []*tree.FileDef
+	var files []*source.FileDef
 
 	for _, pkg := range packages {
-	files:
 		for path, f := range pkg.Files {
+			var buildConstraint string
 			for _, grp := range f.Comments {
 				for _, cmt := range grp.List {
-					if strings.HasPrefix(cmt.Text, "//go:build ignore") {
-						fmt.Printf("skipping build ignore file %v\n", path)
-						continue files
+					if strings.HasPrefix(cmt.Text, "//go:build") {
+						buildConstraint = cmt.Text
 					}
 				}
 			}
-			if strings.HasSuffix(path, "_test.go") {
-				fmt.Printf("skipping test file %v\n", path)
-				continue files
-			}
-			files = append(files, p.readAST(path, f))
+			file := p.readAST(path, f)
+			file.BuildConstraint = buildConstraint
+			files = append(files, file)
 		}
 	}
 
 	return files
 }
 
-func (p *parser) readAST(path string, fast *ast.File) *tree.FileDef {
+func (p *parser) readAST(path string, fast *ast.File) *source.FileDef {
 	fmt.Printf("=== Parser.readAST(%v) ===\n", path)
 	return ReadFile(path, fast)
 }
 
-func ReadFile(path string, file *ast.File) *tree.FileDef {
+func ReadFile(path string, file *ast.File) *source.FileDef {
 	var imports []ImportPath
 	var decls []tree.Decl
 	for _, spec := range file.Imports {
@@ -80,7 +78,7 @@ func ReadFile(path string, file *ast.File) *tree.FileDef {
 	for _, decl := range file.Decls {
 		decls = append(decls, ReadDecl(decl)...)
 	}
-	return &tree.FileDef{
+	return &source.FileDef{
 		Path:        path,
 		PackageName: file.Name.Name,
 		Imports:     imports,

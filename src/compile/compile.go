@@ -2,17 +2,24 @@ package compile
 
 import (
 	"fmt"
+	"github.com/garciat/gobid/check"
 	. "github.com/garciat/gobid/common"
 	"github.com/garciat/gobid/files"
+	"github.com/garciat/gobid/gocompiler"
 	"github.com/garciat/gobid/parse"
-	"github.com/garciat/gobid/tree"
+	"github.com/garciat/gobid/source"
+	"go/build/constraint"
+	"strings"
 )
 
+type BuildTags = map[string]bool
+
 type CompilationUnit struct {
-	finder   files.Finder
-	parser   parse.Parser
-	Root     ImportPath
-	Packages map[ImportPath]*Package
+	finder    files.Finder
+	parser    parse.Parser
+	Root      ImportPath
+	BuildTags BuildTags
+	Packages  map[ImportPath]*source.Package
 }
 
 func NewCompilationUnit(
@@ -22,8 +29,11 @@ func NewCompilationUnit(
 		finder: files.NewFinder(),
 		parser: parse.NewParser(),
 		Root:   root,
-		Packages: map[ImportPath]*Package{
-			root: NewPackage(root),
+		BuildTags: BuildTags{
+			"arm64": true,
+		},
+		Packages: map[ImportPath]*source.Package{
+			root: source.NewPackage(root),
 		},
 	}
 }
@@ -32,10 +42,27 @@ func (u *CompilationUnit) AddFile(path string) {
 	u.LoadFile(u.Root, u.parser.ParseFile(path))
 }
 
-func (u *CompilationUnit) LoadFile(target ImportPath, file *tree.FileDef) {
+func (u *CompilationUnit) LoadFile(target ImportPath, file *source.FileDef) {
 	pkg, ok := u.Packages[target]
 	if !ok {
 		panic(fmt.Errorf("package not found: %v", target))
+	}
+
+	fmt.Printf("loading file %v\n", file.Path)
+
+	if strings.HasSuffix(file.Path, "_test.go") {
+		fmt.Printf("skipping test file %v\n", file.Path)
+		return
+	}
+
+	if !u.EvalArchSuffix(file.Path) {
+		fmt.Printf("skipping file %v with arch suffix\n", file.Path)
+		return
+	}
+
+	if !u.EvalBuildConstraint(file.BuildConstraint) {
+		fmt.Printf("skipping file %v with build constraint '%v'\n", file.Path, file.BuildConstraint)
+		return
 	}
 
 	pkg.AddFile(file)
@@ -44,7 +71,7 @@ func (u *CompilationUnit) LoadFile(target ImportPath, file *tree.FileDef) {
 		pkg.AddDependency(ip)
 
 		if _, ok := u.Packages[ip]; !ok {
-			u.Packages[ip] = NewPackage(ip)
+			u.Packages[ip] = source.NewPackage(ip)
 			for _, f := range u.ReadPackageFiles(ip) {
 				u.LoadFile(ip, f)
 			}
@@ -52,7 +79,31 @@ func (u *CompilationUnit) LoadFile(target ImportPath, file *tree.FileDef) {
 	}
 }
 
-func (u *CompilationUnit) ReadPackageFiles(ip ImportPath) []*tree.FileDef {
+func (u *CompilationUnit) EvalBuildConstraint(bc string) bool {
+	if bc == "" {
+		return true
+	}
+
+	expr, err := constraint.Parse(bc)
+	if err != nil {
+		panic(err)
+	}
+
+	return expr.Eval(func(tag string) bool {
+		_, ok := u.BuildTags[tag]
+		return ok
+	})
+}
+
+func (u *CompilationUnit) EvalArchSuffix(path string) bool {
+	filename := path
+	if i := strings.LastIndex(path, "/"); i != -1 {
+		filename = path[i+1:]
+	}
+	return gocompiler.MatchFile(filename, u.BuildTags)
+}
+
+func (u *CompilationUnit) ReadPackageFiles(ip ImportPath) []*source.FileDef {
 	if ip == "C" {
 		fmt.Printf("skipping C import\n")
 		return nil
@@ -75,11 +126,7 @@ func (u *CompilationUnit) Compile() {
 	u.CheckPackageDeclarations()
 	u.CheckPackageCycles()
 
-	for _, pkg := range u.Packages {
-		for _, file := range pkg.Files {
-			_ = file
-		}
-	}
+	check.NewChecker(u.Packages).Run()
 }
 
 func (u *CompilationUnit) CheckPackageDeclarations() {
@@ -93,7 +140,6 @@ func (u *CompilationUnit) CheckPackageDeclarations() {
 			panic(fmt.Errorf("package %v contains multiple package declarations: %v", pkg.ImportPath, names))
 		}
 	}
-
 }
 
 func (u *CompilationUnit) CheckPackageCycles() {

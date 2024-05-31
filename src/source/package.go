@@ -1,30 +1,24 @@
-package compile
+package source
 
 import (
-	"github.com/garciat/gobid/check"
 	. "github.com/garciat/gobid/common"
-	"github.com/garciat/gobid/tree"
 )
 
 type Package struct {
 	ImportPath   ImportPath
 	Dependencies map[ImportPath]struct{}
-	Name         string
-	Files        []*tree.FileDef
-	Checker      *check.Checker
+	Files        []*FileDef
 }
 
 func NewPackage(ip ImportPath) *Package {
 	return &Package{
 		ImportPath:   ip,
 		Dependencies: make(map[ImportPath]struct{}),
-		Name:         ip.PackageName(),
 		Files:        nil,
-		Checker:      check.NewChecker(),
 	}
 }
 
-func (p *Package) AddFile(file *tree.FileDef) {
+func (p *Package) AddFile(file *FileDef) {
 	p.Files = append(p.Files, file)
 }
 
