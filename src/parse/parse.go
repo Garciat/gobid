@@ -45,10 +45,19 @@ func (p *parser) ParsePackage(path string) []*tree.FileDef {
 	var files []*tree.FileDef
 
 	for _, pkg := range packages {
+	files:
 		for path, f := range pkg.Files {
+			for _, grp := range f.Comments {
+				for _, cmt := range grp.List {
+					if strings.HasPrefix(cmt.Text, "//go:build ignore") {
+						fmt.Printf("skipping build ignore file %v\n", path)
+						continue files
+					}
+				}
+			}
 			if strings.HasSuffix(path, "_test.go") {
 				fmt.Printf("skipping test file %v\n", path)
-				continue
+				continue files
 			}
 			files = append(files, p.readAST(path, f))
 		}
@@ -63,33 +72,26 @@ func (p *parser) readAST(path string, fast *ast.File) *tree.FileDef {
 }
 
 func ReadFile(path string, file *ast.File) *tree.FileDef {
-	var imports []tree.ImportDecl
+	var imports []ImportPath
 	var decls []tree.Decl
 	for _, spec := range file.Imports {
-		imports = append(imports, ReadImport(spec))
+		imports = append(imports, ReadImportPath(spec))
 	}
 	for _, decl := range file.Decls {
 		decls = append(decls, ReadDecl(decl)...)
 	}
 	return &tree.FileDef{
-		Path:    path,
-		Package: file.Name.Name,
-		Imports: imports,
-		Decls:   decls,
+		Path:        path,
+		PackageName: file.Name.Name,
+		Imports:     imports,
+		Decls:       decls,
 	}
 }
 
-func ReadImport(spec *ast.ImportSpec) tree.ImportDecl {
-	var name *Identifier
-	if spec.Name != nil {
-		name = Ptr(NewIdentifier(spec.Name.Name))
-	}
+func ReadImportPath(spec *ast.ImportSpec) ImportPath {
 	path := spec.Path.Value
 	path = path[1 : len(path)-1] // remove quotes
-	return tree.ImportDecl{
-		ImportPath: ImportPath(path),
-		Alias:      name,
-	}
+	return ImportPath(path)
 }
 
 func ReadDecl(decl ast.Decl) []tree.Decl {
@@ -112,12 +114,27 @@ func ReadGenDecl(decl *ast.GenDecl) []tree.Decl {
 	case token.VAR:
 		return ReadVarDecl(decl)
 	case token.IMPORT:
-		// handled in top level
-		return []tree.Decl{}
+		return ReadImportDecl(decl)
 	default:
 		spew.Dump(decl)
 		panic("unreachable")
 	}
+}
+
+func ReadImportDecl(decl *ast.GenDecl) []tree.Decl {
+	var decls []tree.Decl
+	for _, spec := range decl.Specs {
+		spec := spec.(*ast.ImportSpec)
+		var name *Identifier
+		if spec.Name != nil {
+			name = Ptr(NewIdentifier(spec.Name.Name))
+		}
+		decls = append(decls, &tree.ImportDecl{
+			ImportPath: ReadImportPath(spec),
+			Alias:      name,
+		})
+	}
+	return decls
 }
 
 func ReadConstDecl(decl *ast.GenDecl) []tree.Decl {

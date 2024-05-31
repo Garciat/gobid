@@ -417,6 +417,7 @@ type StatementList struct {
 // ========================
 
 type ImportDecl struct {
+	DeclBase
 	ImportPath ImportPath
 	Alias      *Identifier
 }
@@ -486,8 +487,8 @@ type MethodDecl struct {
 // ========================
 
 type FileDef struct {
-	Path    string
-	Package string
-	Imports []ImportDecl
-	Decls   []Decl
+	Path        string
+	PackageName string
+	Imports     []ImportPath
+	Decls       []Decl
 }
