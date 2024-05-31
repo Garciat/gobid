@@ -2,12 +2,11 @@ package main
 
 import "unsafe"
 
-// import "go/ast"
-// import "internal/abi"
+import "fmt"
 
-import "runtime"
-
-// import "os"
+func sayHello() {
+	fmt.Println("Hello, World!")
+}
 
 func example1(p unsafe.Pointer) uintptr {
 	return (uintptr)(p)
@@ -97,11 +96,11 @@ func inferStructField() int {
 
 type F = interface{ F() []int }
 
-func hello[T F](t T) []int {
+func callF[T F](t T) []int {
 	return t.F()
 }
 
-func example1[U any](t struct{ F U }) U {
+func accessField[U any](t struct{ F U }) U {
 	return t.F
 }
 

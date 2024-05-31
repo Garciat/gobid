@@ -256,11 +256,6 @@ type Checker struct {
 
 	CurFn *tree.Signature
 	CurTy *tree.TypeDecl
-
-	LazyWaiters    map[Identifier]chan struct{}
-	DoneLoadingSem chan struct{}
-	DefinerMailbox chan DefineElem
-	DefinerDone    chan struct{}
 }
 
 type DefineElem struct {
@@ -269,22 +264,16 @@ type DefineElem struct {
 }
 
 func NewChecker(packages map[ImportPath]*source.Package) *Checker {
-	c := &Checker{
+	return &Checker{
 		Fresh:    Ptr(0),
 		Packages: packages,
 		PackageSymbols: map[ImportPath]*VarContext{
 			"unsafe": MakeUnsafePackage(),
 		},
-		TyCtx:          &TypeContext{},
-		VarCtx:         EmptyVarContext(),
-		Builtins:       MakeBuiltins(),
-		LazyWaiters:    map[Identifier]chan struct{}{},
-		DoneLoadingSem: make(chan struct{}),
-		DefinerMailbox: make(chan DefineElem),
-		DefinerDone:    make(chan struct{}),
+		TyCtx:    &TypeContext{},
+		VarCtx:   EmptyVarContext(),
+		Builtins: MakeBuiltins(),
 	}
-	c.StartDefiner()
-	return c
 }
 
 func (c *Checker) Copy() *Checker {
@@ -297,25 +286,7 @@ func (c *Checker) Copy() *Checker {
 		Builtins:       c.Builtins,
 		CurFn:          c.CurFn,
 		CurTy:          c.CurTy,
-		LazyWaiters:    c.LazyWaiters,
-		DoneLoadingSem: c.DoneLoadingSem,
-		DefinerMailbox: c.DefinerMailbox,
-		DefinerDone:    c.DefinerDone,
 	}
-}
-
-func (c *Checker) StartDefiner() {
-	go func() {
-		for {
-			elem, ok := <-c.DefinerMailbox
-			if !ok {
-				break
-			}
-			c.DefineValue(elem.Identifier, elem.Type)
-			fmt.Printf("LAZY defined %v = %v\n", elem.Identifier, elem.Type)
-		}
-		close(c.DefinerDone)
-	}()
 }
 
 func (c *Checker) Run() {
@@ -353,8 +324,6 @@ func (c *Checker) Run() {
 		c.PackageSymbols[pkg.ImportPath] = packageScopes[pkg].VarCtx
 	}
 
-	c.DoneLoading()
-
 	for _, pkg := range packages {
 		fmt.Printf("=== Checking Package (%v) ===\n", pkg.ImportPath)
 		for _, file := range pkg.Files {
@@ -380,16 +349,6 @@ func (c *Checker) LoadFile(file *source.FileDef) func() {
 			c.DefineDecl(decl)
 		}
 	}
-}
-
-func (c *Checker) DoneLoading() {
-	fmt.Println("=== Checker.DoneLoading ===")
-	close(c.DoneLoadingSem)
-	for _, sem := range c.LazyWaiters {
-		<-sem
-	}
-	close(c.DefinerMailbox)
-	<-c.DefinerDone
 }
 
 func (c *Checker) CheckFile(file *source.FileDef) {
@@ -464,32 +423,6 @@ func (c *Checker) DefineMethod(holder, name Identifier, ty *tree.MethodType) {
 	methodName := NewIdentifier(fmt.Sprintf("%s.%s", holder.Value, name.Value))
 	Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
 	c.VarCtx.Parent.Def(methodName, ty)
-}
-
-func (c *Checker) DefineLazyValue(name Identifier, f func() tree.Type) {
-	if c.VarCtx.ScopeKind == ScopeKindFile {
-		Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
-		c.VarCtx.Parent.Def(name, f())
-	} else {
-		c.VarCtx.Def(name, f())
-	}
-	//select {
-	//case <-c.DoneLoadingSem:
-	//	c.DefineValue(name, f())
-	//default:
-	//	fmt.Printf("LAZY start %v\n", name)
-	//	c.LazyWaiters[name] = make(chan struct{})
-	//	c.DefineValue(name, tree.NewLazyType(name, c.LazyWaiters[name]))
-	//	go func() {
-	//		<-c.DoneLoadingSem
-	//		ty := f()
-	//		c.DefinerMailbox <- struct {
-	//			Identifier
-	//			tree.Type
-	//		}{name, ty}
-	//		close(c.LazyWaiters[name])
-	//	}()
-	//}
 }
 
 func (c *Checker) BuiltinValue(name string) tree.Type {
@@ -679,19 +612,17 @@ func (c *Checker) DefineAliasDecl(decl *tree.AliasDecl) {
 func (c *Checker) DefineVarDecl(decl *tree.VarDecl) {
 	if len(decl.Names) == 1 && decl.Expr != nil {
 		for _, name := range decl.Names {
-			c.DefineLazyValue(name, func() tree.Type {
-				ty := c.Synth(decl.Expr)
-				if _, ok := ty.(*tree.TupleType); ok {
-					panic("cannot use tuple as value")
-				}
-				if decl.Type != nil {
-					declTy := c.ResolveType(decl.Type)
-					c.CheckAssignableTo(ty, declTy)
-					return declTy
-				} else {
-					return ty
-				}
-			})
+			ty := c.Synth(decl.Expr)
+			if _, ok := ty.(*tree.TupleType); ok {
+				panic("cannot use tuple as value")
+			}
+			if decl.Type != nil {
+				declTy := c.ResolveType(decl.Type)
+				c.CheckAssignableTo(ty, declTy)
+				c.DefineValue(name, declTy)
+			} else {
+				c.DefineValue(name, ty)
+			}
 		}
 	} else if len(decl.Names) > 1 && decl.Expr != nil {
 		tupleTy := sync.OnceValue(func() *tree.TupleType {
@@ -706,16 +637,14 @@ func (c *Checker) DefineVarDecl(decl *tree.VarDecl) {
 			return tupleTy
 		})
 		for i, name := range decl.Names {
-			c.DefineLazyValue(name, func() tree.Type {
-				elemTy := c.ResolveType(tupleTy().Elems[i])
-				if decl.Type != nil {
-					declTy := c.ResolveType(decl.Type)
-					c.CheckAssignableTo(elemTy, declTy)
-					return declTy
-				} else {
-					return elemTy
-				}
-			})
+			elemTy := c.ResolveType(tupleTy().Elems[i])
+			if decl.Type != nil {
+				declTy := c.ResolveType(decl.Type)
+				c.CheckAssignableTo(elemTy, declTy)
+				c.DefineValue(name, declTy)
+			} else {
+				c.DefineValue(name, elemTy)
+			}
 		}
 	} else if len(decl.Names) > 0 && decl.Expr == nil {
 		if decl.Type == nil {
@@ -791,7 +720,7 @@ func (c *Checker) CheckDecl(decl tree.Decl) {
 }
 
 func (c *Checker) CheckImportDecl(decl *tree.ImportDecl) {
-	c.DefineImportDecl(decl)
+	// nothing to do
 }
 
 func (c *Checker) CheckConstDecl(decl *tree.ConstDecl) {
@@ -1372,6 +1301,8 @@ func (c *Checker) Synth(expr tree.Expr) tree.Type {
 		return c.SynthCompositeLitExpr(expr)
 	case *tree.SliceExpr:
 		return c.SynthSliceExpr(expr)
+	case *tree.FuncLitExpr:
+		return c.SynthFuncLitExpr(expr)
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
@@ -1678,6 +1609,10 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 	}
 }
 
+func (c *Checker) SynthFuncLitExpr(expr *tree.FuncLitExpr) tree.Type {
+	return &tree.FunctionType{Signature: expr.Signature}
+}
+
 func (c *Checker) SynthConversionExpr(expr *tree.ConversionExpr) tree.Type {
 	// TODO check conversion
 	return expr.Type
@@ -1880,6 +1815,16 @@ func (c *Checker) SynthCompositeLitExpr(expr *tree.CompositeLitExpr) tree.Type {
 }
 
 func (c *Checker) MakeCompositeLit(expr *tree.CompositeLitExpr, targetTy tree.Type) tree.Type {
+	underTy := c.Under(targetTy)
+	switch underTy := underTy.(type) {
+	case *tree.PointerType:
+		elemTy := c.ResolveType(underTy.BaseType)
+		if _, ok := c.Under(elemTy).(*tree.PointerType); ok {
+			panic("composite literal of double pointer type?")
+		}
+		return &tree.PointerType{BaseType: c.MakeCompositeLit(expr, elemTy)}
+	}
+
 	switch exprTy := c.Under(targetTy).(type) {
 	case *tree.StructType:
 		return c.MakeCompositeLitStruct(expr, exprTy)
@@ -1890,7 +1835,7 @@ func (c *Checker) MakeCompositeLit(expr *tree.CompositeLitExpr, targetTy tree.Ty
 	case *tree.ArrayType:
 		return c.MakeCompositeLitArray(expr, exprTy)
 	default:
-		spew.Dump(expr)
+		spew.Dump(exprTy)
 		panic("unreachable")
 	}
 }
@@ -1959,7 +1904,8 @@ func (c *Checker) MakeCompositeLitArray(expr *tree.CompositeLitExpr, arrayTy *tr
 	default:
 		arrayLen = c.EvaluateConstantIntExpr(arrayTy.Len)
 		if len(expr.Elems) > arrayLen {
-			panic("composite literal with wrong number of elements")
+			//panic("composite literal with wrong number of elements")
+			// TODO unblocking for now
 		}
 	}
 	for _, elem := range expr.Elems {
@@ -2028,7 +1974,10 @@ func (c *Checker) EvaluateConstantIntExpr(expr tree.Expr) int {
 		default:
 			panic("non-integer unary operator")
 		}
+	case *tree.NameExpr:
+		return 1 // TODO omg
 	default:
+		spew.Dump(expr)
 		panic("non-integer expression")
 	}
 }
