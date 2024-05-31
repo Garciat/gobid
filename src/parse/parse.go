@@ -3,14 +3,64 @@ package parse
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
+	goparser "go/parser"
 	"go/token"
 	"slices"
+	"strings"
 
 	"github.com/davecgh/go-spew/spew"
 	. "github.com/garciat/gobid/common"
 	"github.com/garciat/gobid/tree"
 )
+
+type Parser interface {
+	ParseFile(path string) *tree.FileDef
+	ParsePackage(path string) []*tree.FileDef
+}
+
+func NewParser() Parser {
+	return &parser{
+		gop: NewGoParser(),
+	}
+}
+
+type parser struct {
+	gop GoParser
+}
+
+func (p *parser) ParseFile(path string) *tree.FileDef {
+	fast, err := p.gop.ParseFile(path)
+	if err != nil {
+		panic(err)
+	}
+	return p.readAST(path, fast)
+}
+
+func (p *parser) ParsePackage(path string) []*tree.FileDef {
+	packages, err := p.gop.ParseDir(path)
+	if err != nil {
+		panic(err)
+	}
+
+	var files []*tree.FileDef
+
+	for _, pkg := range packages {
+		for path, f := range pkg.Files {
+			if strings.HasSuffix(path, "_test.go") {
+				fmt.Printf("skipping test file %v\n", path)
+				continue
+			}
+			files = append(files, p.readAST(path, f))
+		}
+	}
+
+	return files
+}
+
+func (p *parser) readAST(path string, fast *ast.File) *tree.FileDef {
+	fmt.Printf("=== Parser.readAST(%v) ===\n", path)
+	return ReadFile(path, fast)
+}
 
 func ReadFile(path string, file *ast.File) *tree.FileDef {
 	var imports []tree.ImportDecl
@@ -1055,7 +1105,7 @@ func ReadInterfaceType(expr *ast.InterfaceType) *tree.InterfaceType {
 // ========================
 
 func ParseExpr(src string) tree.Expr {
-	expr, err := parser.ParseExpr(src)
+	expr, err := goparser.ParseExpr(src)
 	if err != nil {
 		panic(err)
 	}
@@ -1063,7 +1113,7 @@ func ParseExpr(src string) tree.Expr {
 }
 
 func ParseType(src string) tree.Type {
-	expr, err := parser.ParseExpr(src)
+	expr, err := goparser.ParseExpr(src)
 	if err != nil {
 		panic(err)
 	}
@@ -1071,7 +1121,7 @@ func ParseType(src string) tree.Type {
 }
 
 func ParseFuncType(src string) *tree.FunctionType {
-	expr, err := parser.ParseExpr(src)
+	expr, err := goparser.ParseExpr(src)
 	if err != nil {
 		panic(err)
 	}
