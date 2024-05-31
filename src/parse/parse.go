@@ -798,22 +798,6 @@ func ReadExpr(expr ast.Expr) tree.Expr {
 	}
 }
 
-func Try[T any](f func() T) (out T, err error) {
-	done := make(chan struct{})
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				err = fmt.Errorf("%v", r)
-				close(done)
-			}
-		}()
-		out = f()
-		close(done)
-	}()
-	<-done
-	return
-}
-
 func ReadExprList(exprs []ast.Expr) []tree.Expr {
 	var result []tree.Expr
 	for _, expr := range exprs {

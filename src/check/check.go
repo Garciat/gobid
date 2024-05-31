@@ -81,23 +81,24 @@ func (c *TypeContext) AddEq(left, right tree.Type) {
 	c.AddRelation(RelationEq{Left: left, Right: right})
 }
 
-func (c *TypeContext) Fork() TypeContext {
-	return TypeContext{Parent: c, Relations: []Relation{}}
+func (c *TypeContext) Fork() *TypeContext {
+	return &TypeContext{Parent: c, Relations: []Relation{}}
 
 }
 
 // ========================
 
 type VarContext struct {
-	Parent *VarContext
-	Types  map[Identifier]tree.Type
+	ScopeKind ScopeKind
+	Parent    *VarContext
+	Types     map[Identifier]tree.Type
 }
 
-func EmptyVarContext() VarContext {
-	return VarContext{Types: map[Identifier]tree.Type{}}
+func EmptyVarContext() *VarContext {
+	return &VarContext{Types: map[Identifier]tree.Type{}}
 }
 
-func (c VarContext) String() string {
+func (c VarContext) Format() string {
 	parts := []string{}
 	c.Iter(func(name Identifier, ty tree.Type) {
 		parts = append(parts, fmt.Sprintf("%v: %v", name, ty))
@@ -146,8 +147,12 @@ func (c *VarContext) Lookup(name Identifier) (tree.Type, bool) {
 	return ty, ok
 }
 
-func (c *VarContext) Fork() VarContext {
-	return VarContext{Parent: c, Types: map[Identifier]tree.Type{}}
+func (c *VarContext) Fork(kind ScopeKind) *VarContext {
+	return &VarContext{
+		ScopeKind: kind,
+		Parent:    c,
+		Types:     map[Identifier]tree.Type{},
+	}
 }
 
 func (c *VarContext) Iter(f func(Identifier, tree.Type)) {
@@ -161,7 +166,7 @@ func (c *VarContext) Iter(f func(Identifier, tree.Type)) {
 
 // ========================
 
-func MakeBuiltins() VarContext {
+func MakeBuiltins() *VarContext {
 	scope := EmptyVarContext()
 
 	scope.DefBuiltinType("bool")
@@ -225,7 +230,7 @@ func MakeBuiltins() VarContext {
 	return scope
 }
 
-func MakeUnsafePackage() VarContext {
+func MakeUnsafePackage() *VarContext {
 	scope := EmptyVarContext()
 	scope.DefType(NewIdentifier("Pointer"), tree.NewBuiltinType("Pointer"))
 	scope.Def(NewIdentifier("Sizeof"), parse.ParseType("func(interface{}) uintptr"))
@@ -242,12 +247,12 @@ func MakeUnsafePackage() VarContext {
 type Checker struct {
 	Fresh *int
 
-	Packages      map[ImportPath]*source.Package
-	PackageScopes map[ImportPath]VarContext
+	Packages       map[ImportPath]*source.Package
+	PackageSymbols map[ImportPath]*VarContext
 
-	TyCtx    TypeContext
-	VarCtx   VarContext
-	Builtins VarContext
+	TyCtx    *TypeContext
+	VarCtx   *VarContext
+	Builtins *VarContext
 
 	CurFn *tree.Signature
 	CurTy *tree.TypeDecl
@@ -267,10 +272,10 @@ func NewChecker(packages map[ImportPath]*source.Package) *Checker {
 	c := &Checker{
 		Fresh:    Ptr(0),
 		Packages: packages,
-		PackageScopes: map[ImportPath]VarContext{
+		PackageSymbols: map[ImportPath]*VarContext{
 			"unsafe": MakeUnsafePackage(),
 		},
-		TyCtx:          TypeContext{},
+		TyCtx:          &TypeContext{},
 		VarCtx:         EmptyVarContext(),
 		Builtins:       MakeBuiltins(),
 		LazyWaiters:    map[Identifier]chan struct{}{},
@@ -286,7 +291,7 @@ func (c *Checker) Copy() *Checker {
 	return &Checker{
 		Fresh:          c.Fresh,
 		Packages:       c.Packages,
-		PackageScopes:  c.PackageScopes,
+		PackageSymbols: c.PackageSymbols,
 		TyCtx:          c.TyCtx,
 		VarCtx:         c.VarCtx,
 		Builtins:       c.Builtins,
@@ -314,36 +319,56 @@ func (c *Checker) StartDefiner() {
 }
 
 func (c *Checker) Run() {
-	topo := source.TopologicalSort(c.Packages)
+	packages := source.TopologicalSort(c.Packages)
 
-	checkers := map[ImportPath]*Checker{}
+	packageScopes := map[*source.Package]*Checker{}
+	fileScopes := map[*source.FileDef]*Checker{}
 
-	for _, pkg := range topo {
+	for _, pkg := range packages {
+		packageScopes[pkg] = c.BeginScope(ScopeKindPackage)
+		for _, file := range pkg.Files {
+			fileScopes[file] = packageScopes[pkg].BeginScope(ScopeKindFile)
+		}
+	}
+
+	for _, pkg := range packages {
 		if pkg.ImportPath == "unsafe" {
 			continue // TODO should not be here
 		}
 
-		fmt.Printf("=== Loading Package (%v) ===\n", pkg.ImportPath)
-		later := []func(){}
-		scope := c.BeginScope()
+		declFile := map[tree.Decl]*source.FileDef{}
 		for _, file := range pkg.Files {
-			later = append(later, scope.LoadFile(file))
+			for _, decl := range file.Decls {
+				declFile[decl] = file
+			}
 		}
-		for _, f := range later {
-			f()
+
+		fmt.Printf("=== Loading Package (%v) ===\n", pkg.ImportPath)
+		for _, decl := range SortDeclarations(pkg) {
+			fmt.Println(declFile[decl].Path)
+			scope := fileScopes[declFile[decl]]
+
+			_, err := Try(func() struct{} {
+				scope.DefineTopLevelDecl(decl)
+				return struct{}{}
+			})
+
+			if err != nil {
+				panic(fmt.Errorf("error in %v: %v", declFile[decl].Path, err))
+			}
 		}
-		checkers[pkg.ImportPath] = scope
+
+		c.PackageSymbols[pkg.ImportPath] = packageScopes[pkg].VarCtx
 	}
 
 	c.DoneLoading()
 
-	for _, pkg := range topo {
+	for _, pkg := range packages {
 		fmt.Printf("=== Checking Package (%v) ===\n", pkg.ImportPath)
-		scope := checkers[pkg.ImportPath]
 		for _, file := range pkg.Files {
+			scope := fileScopes[file]
 			scope.CheckFile(file)
 		}
-		scope.Verify()
 	}
 }
 
@@ -401,14 +426,31 @@ func (c *Checker) Lookup(name Identifier) tree.Type {
 	panic(fmt.Errorf("undefined: %v", name))
 }
 
+func (c *Checker) DefineImport(decl *tree.ImportDecl) {
+	fmt.Printf("DEFINING import %v\n", decl.ImportPath)
+	c.VarCtx.Def(NewIdentifier(decl.EffectiveName().Value), &tree.ImportType{ImportPath: decl.ImportPath})
+}
+
 func (c *Checker) DefineValue(name Identifier, ty tree.Type) {
 	fmt.Printf("DEFINING %v = %v\n", name, ty)
-	c.VarCtx.Def(name, ty)
+	if c.VarCtx.ScopeKind == ScopeKindFile {
+		Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
+		c.VarCtx.Parent.Def(name, ty)
+	} else {
+		c.VarCtx.Def(name, ty)
+	}
 }
 
 func (c *Checker) DefineFunction(name Identifier, ty *tree.FunctionType) {
+	if name == NewIdentifier("init") {
+		// init functions are not defined
+		// TODO check signature
+		fmt.Printf("IGNORING DEFINITION init %v\n", ty.Signature)
+		return
+	}
 	fmt.Printf("DEFINING func %v%v\n", name, ty.Signature)
-	c.VarCtx.Def(name, ty)
+	Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
+	c.VarCtx.Parent.Def(name, ty)
 }
 
 func (c *Checker) DefineMethod(holder, name Identifier, ty *tree.MethodType) {
@@ -418,27 +460,34 @@ func (c *Checker) DefineMethod(holder, name Identifier, ty *tree.MethodType) {
 	}
 	fmt.Printf("DEFINING func (%s%v) %v%v\n", prefix, holder, name, ty.Type.Signature)
 	methodName := NewIdentifier(fmt.Sprintf("%s.%s", holder.Value, name.Value))
-	c.VarCtx.Def(methodName, ty)
+	Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
+	c.VarCtx.Parent.Def(methodName, ty)
 }
 
 func (c *Checker) DefineLazyValue(name Identifier, f func() tree.Type) {
-	select {
-	case <-c.DoneLoadingSem:
-		c.DefineValue(name, f())
-	default:
-		fmt.Printf("LAZY start %v\n", name)
-		c.LazyWaiters[name] = make(chan struct{})
-		c.DefineValue(name, tree.NewLazyType(name, c.LazyWaiters[name]))
-		go func() {
-			<-c.DoneLoadingSem
-			ty := f()
-			c.DefinerMailbox <- struct {
-				Identifier
-				tree.Type
-			}{name, ty}
-			close(c.LazyWaiters[name])
-		}()
+	if c.VarCtx.ScopeKind == ScopeKindFile {
+		Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
+		c.VarCtx.Parent.Def(name, f())
+	} else {
+		c.VarCtx.Def(name, f())
 	}
+	//select {
+	//case <-c.DoneLoadingSem:
+	//	c.DefineValue(name, f())
+	//default:
+	//	fmt.Printf("LAZY start %v\n", name)
+	//	c.LazyWaiters[name] = make(chan struct{})
+	//	c.DefineValue(name, tree.NewLazyType(name, c.LazyWaiters[name]))
+	//	go func() {
+	//		<-c.DoneLoadingSem
+	//		ty := f()
+	//		c.DefinerMailbox <- struct {
+	//			Identifier
+	//			tree.Type
+	//		}{name, ty}
+	//		close(c.LazyWaiters[name])
+	//	}()
+	//}
 }
 
 func (c *Checker) DefineType(name Identifier, ty tree.Type) {
@@ -484,7 +533,7 @@ func (c *Checker) ResolveValue(ty tree.Type) tree.Type {
 		if !ok {
 			panic(fmt.Errorf("not an import: %v", ty.Package))
 		}
-		pkg, ok := c.PackageScopes[imp.ImportPath]
+		pkg, ok := c.PackageSymbols[imp.ImportPath]
 		if !ok {
 			panic(fmt.Errorf("package not loaded: %v", imp.ImportPath))
 		}
@@ -523,25 +572,32 @@ func (c *Checker) CheckAssignableTo(src, dst tree.Type) {
 
 // ========================
 
-func (c *Checker) BeginScope() *Checker {
+type ScopeKind int
+
+const (
+	ScopeKindUnknown ScopeKind = iota
+	ScopeKindPackage
+	ScopeKindFile
+	ScopeKindType
+	ScopeKindFunction
+	ScopeKindBlock
+)
+
+func (c *Checker) BeginScope(kind ScopeKind) *Checker {
 	copy := c.Copy()
-	copy.VarCtx = c.VarCtx.Fork()
 	copy.TyCtx = c.TyCtx.Fork()
+	copy.VarCtx = c.VarCtx.Fork(kind)
 	return copy
 }
 
 func (c *Checker) BeginTypeScope(decl *tree.TypeDecl) *Checker {
-	copy := c.Copy()
-	copy.VarCtx = c.VarCtx.Fork()
-	copy.TyCtx = c.TyCtx.Fork()
+	copy := c.BeginScope(ScopeKindType)
 	copy.CurTy = decl
 	return copy
 }
 
 func (c *Checker) BeginFunctionScope(fn *tree.Signature) *Checker {
-	copy := c.Copy()
-	copy.VarCtx = c.VarCtx.Fork()
-	copy.TyCtx = c.TyCtx.Fork()
+	copy := c.BeginScope(ScopeKindFunction)
 	copy.CurFn = fn
 	return copy
 }
@@ -555,7 +611,7 @@ func (c *Checker) AssertInFunctionScope() *tree.Signature {
 
 // ========================
 
-func (c *Checker) DefineDecl(decl tree.Decl) {
+func (c *Checker) DefineTopLevelDecl(decl tree.Decl) {
 	switch decl := decl.(type) {
 	case *tree.ImportDecl:
 		c.DefineImportDecl(decl)
@@ -577,8 +633,24 @@ func (c *Checker) DefineDecl(decl tree.Decl) {
 	}
 }
 
+func (c *Checker) DefineDecl(decl tree.Decl) {
+	switch decl := decl.(type) {
+	case *tree.ConstDecl:
+		c.DefineConstDecl(decl)
+	case *tree.TypeDecl:
+		c.DefineTypeDecl(decl)
+	case *tree.AliasDecl:
+		c.DefineAliasDecl(decl)
+	case *tree.VarDecl:
+		c.DefineVarDecl(decl)
+	default:
+		spew.Dump(decl)
+		panic("unreachable")
+	}
+}
+
 func (c *Checker) DefineImportDecl(decl *tree.ImportDecl) {
-	c.DefineValue(NewIdentifier(decl.EffectiveName()), &tree.ImportType{ImportPath: decl.ImportPath})
+	c.DefineImport(decl)
 }
 
 func (c *Checker) DefineConstDecl(decl *tree.ConstDecl) {
@@ -789,7 +861,7 @@ func (c *Checker) CheckDecl(decl tree.Decl) {
 }
 
 func (c *Checker) CheckImportDecl(decl *tree.ImportDecl) {
-	// nothing to do
+	c.DefineImportDecl(decl)
 }
 
 func (c *Checker) CheckConstDecl(decl *tree.ConstDecl) {
@@ -1088,7 +1160,7 @@ func (c *Checker) CheckIncDecStmt(stmt *tree.IncDecStmt) {
 }
 
 func (c *Checker) CheckRangeStmt(stmt *tree.RangeStmt) {
-	scope := c.BeginScope()
+	scope := c.BeginScope(ScopeKindBlock)
 
 	targetTy := scope.Synth(stmt.X)
 
@@ -1129,7 +1201,7 @@ func (c *Checker) CheckRangeStmt(stmt *tree.RangeStmt) {
 }
 
 func (c *Checker) CheckForStmt(stmt *tree.ForStmt) {
-	scope := c.BeginScope()
+	scope := c.BeginScope(ScopeKindBlock)
 	if stmt.Init != nil {
 		scope.CheckStatement(stmt.Init)
 	}
@@ -1143,7 +1215,7 @@ func (c *Checker) CheckForStmt(stmt *tree.ForStmt) {
 }
 
 func (c *Checker) CheckSwitchStmt(stmt *tree.SwitchStmt) {
-	scope := c.BeginScope()
+	scope := c.BeginScope(ScopeKindBlock)
 	var tagTy tree.Type
 	if stmt.Init != nil {
 		scope.CheckStatement(stmt.Init)
@@ -1443,7 +1515,7 @@ func (c *Checker) SynthSelectorExpr(expr *tree.SelectorExpr) tree.Type {
 func (c *Checker) DoSelect(exprTy tree.Type, sel Identifier) tree.Type {
 	switch imp := c.ResolveValue(exprTy).(type) {
 	case *tree.ImportType:
-		pkg, ok := c.PackageScopes[imp.ImportPath]
+		pkg, ok := c.PackageSymbols[imp.ImportPath]
 		if !ok {
 			panic(fmt.Errorf("package not loaded: %v", imp.ImportPath))
 		}

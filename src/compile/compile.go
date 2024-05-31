@@ -30,7 +30,9 @@ func NewCompilationUnit(
 		parser: parse.NewParser(),
 		Root:   root,
 		BuildTags: BuildTags{
-			"arm64": true,
+			"arm64":  true,
+			"darwin": true,
+			"unix":   true,
 		},
 		Packages: map[ImportPath]*source.Package{
 			root: source.NewPackage(root),
@@ -48,8 +50,6 @@ func (u *CompilationUnit) LoadFile(target ImportPath, file *source.FileDef) {
 		panic(fmt.Errorf("package not found: %v", target))
 	}
 
-	fmt.Printf("loading file %v\n", file.Path)
-
 	if strings.HasSuffix(file.Path, "_test.go") {
 		fmt.Printf("skipping test file %v\n", file.Path)
 		return
@@ -64,6 +64,8 @@ func (u *CompilationUnit) LoadFile(target ImportPath, file *source.FileDef) {
 		fmt.Printf("skipping file %v with build constraint '%v'\n", file.Path, file.BuildConstraint)
 		return
 	}
+
+	fmt.Printf("loading file %v\n", file.Path)
 
 	pkg.AddFile(file)
 

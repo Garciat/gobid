@@ -1,6 +1,7 @@
 package tree
 
 import (
+	"github.com/davecgh/go-spew/spew"
 	. "github.com/garciat/gobid/common"
 )
 
@@ -108,11 +109,24 @@ func (op UnaryOp) String() string {
 
 // ========================
 
+type Node interface {
+	_Node()
+}
+
+type NodeBase struct{}
+
+func (NodeBase) _Node() {}
+
+// ========================
+
 type Expr interface {
+	Node
 	_Expr()
 }
 
-type ExprBase struct{}
+type ExprBase struct {
+	NodeBase
+}
 
 func (ExprBase) _Expr() {}
 
@@ -278,7 +292,9 @@ type Statement interface {
 	_Statement()
 }
 
-type StatementBase struct{}
+type StatementBase struct {
+	NodeBase
+}
 
 func (StatementBase) _Statement() {}
 
@@ -416,26 +432,31 @@ type StatementList struct {
 
 // ========================
 
+type Decl interface {
+	_Decl()
+}
+
+type DeclBase struct {
+	NodeBase
+}
+
+func (DeclBase) _Decl() {}
+
 type ImportDecl struct {
 	DeclBase
 	ImportPath ImportPath
 	Alias      *Identifier
 }
 
-func (d *ImportDecl) EffectiveName() string {
+func (d *ImportDecl) EffectiveName() Identifier {
+	var name string
 	if d.Alias != nil {
-		return d.Alias.Value
+		name = d.Alias.Value
+	} else {
+		name = d.ImportPath.PackageName()
 	}
-	return d.ImportPath.PackageName()
+	return NewIdentifier(name)
 }
-
-type Decl interface {
-	_Decl()
-}
-
-type DeclBase struct{}
-
-func (DeclBase) _Decl() {}
 
 type ConstDecl struct {
 	DeclBase
@@ -443,7 +464,6 @@ type ConstDecl struct {
 }
 
 type ConstDeclElem struct {
-	DeclBase
 	Name  Identifier
 	Type  Type
 	Value Expr
@@ -482,6 +502,77 @@ type MethodDecl struct {
 	Receiver  FieldDecl
 	Signature Signature
 	Body      StatementList
+}
+
+// ========================
+
+type ExprVisitor interface {
+	Visit(expr Expr) (w ExprVisitor)
+}
+
+type ExprVisitorFunc func(expr Expr)
+
+func (f ExprVisitorFunc) Visit(expr Expr) ExprVisitor {
+	f(expr)
+	return f
+}
+
+func WalkExpr(v ExprVisitor, expr Expr) {
+	if expr == nil {
+		return
+	}
+	if v = v.Visit(expr); v == nil {
+		return
+	}
+
+	switch n := expr.(type) {
+	case *EllipsisExpr:
+	case *ConstIntExpr:
+	case *BinaryExpr:
+		WalkExpr(v, n.Left)
+		WalkExpr(v, n.Right)
+	case *UnaryExpr:
+		WalkExpr(v, n.Expr)
+	case *StarExpr:
+		WalkExpr(v, n.Expr)
+	case *AddressExpr:
+		WalkExpr(v, n.Expr)
+	case *ConversionExpr:
+		WalkExpr(v, n.Expr)
+	case *SelectorExpr:
+		WalkExpr(v, n.Expr)
+	case *IndexExpr:
+		WalkExpr(v, n.Expr)
+		for _, e := range n.Indices {
+			WalkExpr(v, e)
+		}
+	case *SliceExpr:
+		WalkExpr(v, n.Expr)
+		WalkExpr(v, n.Low)
+		WalkExpr(v, n.High)
+		WalkExpr(v, n.Max)
+	case *TypeSwitchAssertionExpr:
+		WalkExpr(v, n.Expr)
+	case *TypeAssertionExpr:
+		WalkExpr(v, n.Expr)
+	case *CallExpr:
+		WalkExpr(v, n.Func)
+		for _, e := range n.Args {
+			WalkExpr(v, e)
+		}
+	case *NameExpr:
+	case *LiteralExpr:
+	case *FuncLitExpr:
+	case *CompositeLitExpr:
+		for _, e := range n.Elems {
+			WalkExpr(v, e.Key)
+			WalkExpr(v, e.Value)
+		}
+	case *TypeExpr:
+	default:
+		spew.Dump(expr)
+		panic("unreachable")
+	}
 }
 
 // ========================
