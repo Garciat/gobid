@@ -485,10 +485,3 @@ type MethodDecl struct {
 }
 
 // ========================
-
-type FileDef struct {
-	Path        string
-	PackageName string
-	Imports     []ImportPath
-	Decls       []Decl
-}
