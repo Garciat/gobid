@@ -15,6 +15,12 @@ const (
 	DeclKindVar
 )
 
+func SortPackages(packages map[ImportPath]*source.Package) []*source.Package {
+	return algos.TopologicalSort(packages, func(pkg *source.Package) map[ImportPath]struct{} {
+		return pkg.Dependencies
+	})
+}
+
 func SortDeclarations(pkg *source.Package) []tree.Decl {
 	fmt.Printf("=== SortDeclarations(%v) ===\n", pkg.ImportPath)
 
