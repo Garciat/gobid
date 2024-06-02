@@ -523,7 +523,7 @@ func ReadStmtList(stmts []ast.Stmt) *tree.StatementList {
 }
 
 func ReadDeclStmt(stmt *ast.DeclStmt) tree.Statement {
-	return &tree.DeclStmt{Decl: ReadDecl(stmt.Decl)[0]}
+	return &tree.DeclStmt{Decls: ReadDecl(stmt.Decl)}
 }
 
 func ReadExprStmt(stmt *ast.ExprStmt) tree.Statement {

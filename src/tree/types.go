@@ -2,6 +2,7 @@ package tree
 
 import (
 	"fmt"
+	"github.com/davecgh/go-spew/spew"
 	"slices"
 	"strings"
 
@@ -238,7 +239,7 @@ type ArrayType struct {
 }
 
 func (t *ArrayType) String() string {
-	return fmt.Sprintf("[%v]%v", t.Len, t.ElemType)
+	return fmt.Sprintf("[%v]%v", spew.Sdump(t.Len), t.ElemType)
 }
 
 type BuiltinFunctionType struct {

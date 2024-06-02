@@ -316,7 +316,7 @@ func (StatementBase) _Statement() {}
 
 type DeclStmt struct {
 	StatementBase
-	Decl Decl
+	Decls []Decl
 }
 
 type ReturnStmt struct {
