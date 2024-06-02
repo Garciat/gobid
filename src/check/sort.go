@@ -8,13 +8,6 @@ import (
 	"github.com/garciat/gobid/tree"
 )
 
-type DeclKind int
-
-const (
-	DeclKindConst DeclKind = iota
-	DeclKindVar
-)
-
 func SortPackages(packages map[ImportPath]*source.Package) []*source.Package {
 	return algos.TopologicalSort(packages, func(pkg *source.Package) Set[ImportPath] {
 		return pkg.Dependencies
@@ -48,6 +41,7 @@ func SortDeclarations(pkg *source.Package) []tree.Decl {
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
 			case *tree.VarDecl:
+
 				for n, d := range VarDeclDependencies(declKinds, decl) {
 					declDeps[n] = d
 				}
@@ -138,7 +132,7 @@ func VarReferences(
 
 	tree.WalkExpr(tree.ExprVisitorFunc(func(expr tree.Expr) {
 		switch expr := expr.(type) {
-		case *tree.NameExpr:
+		case *tree.PackageNameExpr:
 			if kind, ok := declKinds[expr.Name]; ok {
 				for _, want := range wanted {
 					if kind == want {

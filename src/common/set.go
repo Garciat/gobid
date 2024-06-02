@@ -14,3 +14,13 @@ func (s Set[T]) Contains(v T) bool {
 	_, ok := s[v]
 	return ok
 }
+
+func MergeSets[T comparable](sets ...Set[T]) Set[T] {
+	result := NewSet[T]()
+	for _, set := range sets {
+		for v := range set {
+			result.Add(v)
+		}
+	}
+	return result
+}

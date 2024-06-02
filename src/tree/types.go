@@ -9,10 +9,13 @@ import (
 )
 
 type Type interface {
+	Node
 	_Type()
 }
 
-type TypeBase struct{}
+type TypeBase struct {
+	NodeBase
+}
 
 func (*TypeBase) _Type() {}
 
@@ -171,6 +174,12 @@ type TypeName struct {
 	Name Identifier
 }
 
+type PackageTypeName struct {
+	TypeBase
+	Path ImportPath
+	Name Identifier
+}
+
 func (t *TypeName) String() string {
 	return fmt.Sprintf("%sₙ", t.Name.Value)
 }
@@ -197,7 +206,7 @@ func (t *TypeParam) String() string {
 
 type QualIdentifier struct {
 	TypeBase
-	Package string // can be empty
+	Package string // could be empty
 	Name    Identifier
 }
 
@@ -210,7 +219,7 @@ func (i QualIdentifier) String() string {
 
 type TypeApplication struct {
 	TypeBase
-	ID   QualIdentifier
+	Type Type
 	Args []Type
 }
 
@@ -219,7 +228,7 @@ func (t *TypeApplication) String() string {
 	for _, arg := range t.Args {
 		parts = append(parts, fmt.Sprintf("%v", arg))
 	}
-	return fmt.Sprintf("%v[%s]", t.ID, strings.Join(parts, ", "))
+	return fmt.Sprintf("%v[%s]", t.Type, strings.Join(parts, ", "))
 }
 
 type ArrayType struct {
@@ -243,7 +252,7 @@ func (t *BuiltinFunctionType) String() string {
 
 type FunctionType struct {
 	TypeBase
-	Signature Signature
+	Signature *Signature
 }
 
 func (s *FunctionType) WithTypeParams(names ...string) *FunctionType {
@@ -271,32 +280,32 @@ func (t *TupleType) String() string {
 }
 
 type Signature struct {
-	TypeParams TypeParamList
-	Params     ParameterList
-	Results    ParameterList
+	TypeParams *TypeParamList
+	Params     *ParameterList
+	Results    *ParameterList
 }
 
-func (s Signature) WithTypeParams(names ...string) Signature {
+func (s *Signature) WithTypeParams(names ...string) *Signature {
 	if len(s.TypeParams.Params) > 0 {
 		panic("already has type params")
 	}
-	typeParams := TypeParamList{}
+	typeParams := &TypeParamList{}
 	for _, name := range names {
-		typeParams.Params = append(typeParams.Params, TypeParamDecl{
+		typeParams.Params = append(typeParams.Params, &TypeParamDecl{
 			Name:       NewIdentifier(name),
 			Constraint: EmptyInterface(),
 		})
 	}
-	return Signature{TypeParams: typeParams, Params: s.Params, Results: s.Results}
+	return &Signature{TypeParams: typeParams, Params: s.Params, Results: s.Results}
 }
 
-func (s Signature) GetVariadicParam() (ParameterDecl, int) {
+func (s Signature) GetVariadicParam() (*ParameterDecl, int) {
 	for i, param := range s.Params.Params {
 		if param.Variadic {
 			return param, i
 		}
 	}
-	return ParameterDecl{}, -1
+	return nil, -1
 }
 
 func (s Signature) HasNamedResults() bool {
@@ -318,7 +327,7 @@ func (s Signature) String() string {
 }
 
 type TypeParamList struct {
-	Params []TypeParamDecl
+	Params []*TypeParamDecl
 }
 
 func (l TypeParamList) String() string {
@@ -335,7 +344,7 @@ type TypeParamDecl struct {
 }
 
 type ParameterList struct {
-	Params []ParameterDecl
+	Params []*ParameterDecl
 }
 
 func (p ParameterList) String() string {
@@ -358,7 +367,7 @@ type ParameterDecl struct {
 
 type StructType struct {
 	TypeBase
-	Fields []FieldDecl
+	Fields []*FieldDecl
 	// TODO: embedded fields
 }
 
@@ -386,8 +395,8 @@ func (t *PointerType) String() string {
 
 type InterfaceType struct {
 	TypeBase
-	Methods     []MethodElem
-	Constraints []TypeConstraint
+	Methods     []*MethodElem
+	Constraints []*TypeConstraint
 	// TODO: embedded interfaces
 }
 
@@ -457,7 +466,7 @@ func (t *ChannelType) String() string {
 
 type GenericType struct {
 	TypeBase
-	TypeParams TypeParamList
+	TypeParams *TypeParamList
 	Type       Type
 }
 
@@ -488,7 +497,7 @@ func (t TypeTerm) String() string {
 }
 
 type TypeElem struct {
-	Union []TypeTerm
+	Union []*TypeTerm
 }
 
 func (e TypeElem) String() string {
@@ -500,7 +509,7 @@ func (e TypeElem) String() string {
 }
 
 type TypeConstraint struct {
-	TypeElem TypeElem
+	TypeElem *TypeElem
 }
 
 func (c TypeConstraint) String() string {
