@@ -72,6 +72,15 @@ func (c *Checker) Run() {
 			continue // TODO should not be here
 		}
 
+		// TODO use name information from ResolveNames
+		ResolveNames(pkg)
+	}
+
+	for _, pkg := range packages {
+		if pkg.ImportPath == "unsafe" {
+			continue // TODO should not be here
+		}
+
 		declFile := map[tree.Decl]*source.FileDef{}
 		for _, file := range pkg.Files {
 			for _, decl := range file.Decls {
@@ -79,14 +88,14 @@ func (c *Checker) Run() {
 			}
 		}
 
+		c.PackageSymbols[pkg.ImportPath] = packageScopes[pkg].VarCtx
+
 		fmt.Printf("=== Loading Package (%v) ===\n", pkg.ImportPath)
 		for _, decl := range SortDeclarations(pkg) {
 			fmt.Println(declFile[decl].Path)
 			scope := fileScopes[declFile[decl]]
 			scope.DefineTopLevelDecl(decl)
 		}
-
-		c.PackageSymbols[pkg.ImportPath] = packageScopes[pkg].VarCtx
 	}
 
 	for _, pkg := range packages {
@@ -219,6 +228,18 @@ func (c *Checker) ResolveValue(ty tree.Type) tree.Type {
 		return c.Lookup(ty.Name)
 	case *tree.TypeName:
 		return c.Lookup(ty.Name)
+	case *tree.PackageTypeName:
+		pkg, ok := c.PackageSymbols[ty.Path]
+		if !ok {
+			panic(fmt.Errorf("package not loaded: %v", ty.Path))
+		}
+
+		nameTy, ok := pkg.Lookup(ty.Name)
+		if !ok {
+			panic(fmt.Errorf("package %v has no symbol %v", ty.Path, ty.Name))
+		}
+
+		return nameTy
 	case *tree.QualIdentifier:
 		// TODO hacky
 		if ty.Package == "" {
@@ -247,6 +268,8 @@ func (c *Checker) ResolveType(ty tree.Type) tree.Type {
 	switch ty := ty.(type) {
 	case *tree.TypeName:
 		valueTy = c.ResolveValue(ty)
+	case *tree.PackageTypeName:
+		valueTy = c.ResolveValue(ty)
 	case *tree.QualIdentifier:
 		valueTy = c.ResolveValue(ty)
 	default:
@@ -270,14 +293,32 @@ func (c *Checker) CheckAssignableTo(src, dst tree.Type) {
 type ScopeKind int
 
 const (
-	ScopeKindUnknown ScopeKind = iota
+	ScopeKindBuiltin ScopeKind = iota
 	ScopeKindPackage
 	ScopeKindFile
 	ScopeKindType
 	ScopeKindFunction
 	ScopeKindBlock
-	ScopeKindDecl
 )
+
+func (k ScopeKind) String() string {
+	switch k {
+	case ScopeKindBuiltin:
+		return "ScopeKindBuiltin"
+	case ScopeKindPackage:
+		return "ScopeKindPackage"
+	case ScopeKindFile:
+		return "ScopeKindFile"
+	case ScopeKindType:
+		return "ScopeKindType"
+	case ScopeKindFunction:
+		return "ScopeKindFunction"
+	case ScopeKindBlock:
+		return "ScopeKindBlock"
+	default:
+		panic("unreachable")
+	}
+}
 
 func (c *Checker) BeginScope(kind ScopeKind) *Checker {
 	copy := c.Copy()
@@ -444,10 +485,14 @@ func (c *Checker) DefineMethodDecl(decl *tree.MethodDecl) {
 	case *tree.TypeName:
 		methodHolder = receiverTy.Name
 	case *tree.TypeApplication:
-		if receiverTy.ID.Package != "" {
+		switch receiverTy := receiverTy.Type.(type) {
+		case *tree.TypeName:
+			methodHolder = receiverTy.Name
+		case *tree.QualIdentifier:
 			panic("cannot have package-qualified receiver type")
+		default:
+			panic("unreachable?")
 		}
-		methodHolder = receiverTy.ID.Name
 	default:
 		spew.Dump(receiverTy)
 		panic("TODO")
@@ -516,7 +561,7 @@ func (c *Checker) CheckTypeDeclType(ty tree.Type) {
 	case *tree.TypeParam:
 		// nothing to do
 	case *tree.TypeApplication:
-		c.TypeApplicationFunc(ty, func(tyParam tree.TypeParamDecl, tyArg tree.Type) {
+		c.TypeApplicationFunc(ty, func(tyParam *tree.TypeParamDecl, tyArg tree.Type) {
 			c.CheckTypeDeclType(c.ResolveType(tyArg))
 		})
 	case *tree.StructType:
@@ -551,7 +596,7 @@ func (c *Checker) CheckTypeDeclType(ty tree.Type) {
 	}
 }
 
-func (c *Checker) CheckTypeDeclSignature(sig tree.Signature) {
+func (c *Checker) CheckTypeDeclSignature(sig *tree.Signature) {
 	if len(sig.TypeParams.Params) > 0 {
 		panic("function type with type parameters")
 	}
@@ -574,7 +619,7 @@ func (c *Checker) CheckVarDecl(decl *tree.VarDecl) {
 func (c *Checker) CheckFunctionDecl(decl *tree.FunctionDecl) {
 	fmt.Printf("=== CheckFunctionDecl(%v) ===\n", decl.Name)
 
-	scope := c.BeginFunctionScope(&decl.Signature)
+	scope := c.BeginFunctionScope(decl.Signature)
 
 	scope.DoFunctionDecl(decl.Signature, decl.Body)
 }
@@ -582,7 +627,7 @@ func (c *Checker) CheckFunctionDecl(decl *tree.FunctionDecl) {
 func (c *Checker) CheckMethodDecl(decl *tree.MethodDecl) {
 	fmt.Printf("=== CheckMethodDecl(%v) ===\n", decl.Name)
 
-	scope := c.BeginFunctionScope(&decl.Signature)
+	scope := c.BeginFunctionScope(decl.Signature)
 
 	var receiverTy tree.Type = scope.ResolveType(decl.Receiver.Type)
 
@@ -594,7 +639,7 @@ func (c *Checker) CheckMethodDecl(decl *tree.MethodDecl) {
 	case *tree.NamedType:
 		// nothing to do
 	case *tree.TypeApplication:
-		named, ok := scope.ResolveType(&ty.ID).(*tree.NamedType)
+		named, ok := scope.ResolveType(ty.Type).(*tree.NamedType)
 		if !ok {
 			panic("method on non-named type")
 		}
@@ -618,7 +663,7 @@ func (c *Checker) CheckMethodDecl(decl *tree.MethodDecl) {
 	scope.DoFunctionDecl(decl.Signature, decl.Body)
 }
 
-func (c *Checker) DoFunctionDecl(sig tree.Signature, stmts tree.StatementList) {
+func (c *Checker) DoFunctionDecl(sig *tree.Signature, stmts *tree.StatementList) {
 	for _, tyParam := range sig.TypeParams.Params {
 		c.DefineType(tyParam.Name, &tree.TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
 	}
@@ -641,7 +686,7 @@ func (c *Checker) DoFunctionDecl(sig tree.Signature, stmts tree.StatementList) {
 	c.CheckSubst(sig.TypeParams, subst)
 }
 
-func (c *Checker) CheckStatementList(list tree.StatementList) {
+func (c *Checker) CheckStatementList(list *tree.StatementList) {
 	for _, stmt := range list.Stmts {
 		c.CheckStatement(stmt)
 	}
@@ -863,14 +908,14 @@ func (c *Checker) CheckSwitchStmt(stmt *tree.SwitchStmt) {
 // ========================
 
 type TypeSet struct {
-	Methods  []tree.MethodElem
+	Methods  []*tree.MethodElem
 	Types    []tree.Type
 	Universe bool
 }
 
 func (c *Checker) Combine(lhs, rhs TypeSet) TypeSet {
 	result := TypeSet{
-		Methods:  []tree.MethodElem{},
+		Methods:  []*tree.MethodElem{},
 		Types:    []tree.Type{},
 		Universe: lhs.Universe && rhs.Universe,
 	}
@@ -915,7 +960,7 @@ func (c *Checker) Combine(lhs, rhs TypeSet) TypeSet {
 	return result
 }
 
-func (c *Checker) CheckSubst(tyParams tree.TypeParamList, subst Subst) {
+func (c *Checker) CheckSubst(tyParams *tree.TypeParamList, subst Subst) {
 	for _, tyParam := range tyParams.Params {
 		tySub, ok := subst[tyParam.Name]
 		if !ok {
@@ -947,6 +992,10 @@ func (c *Checker) IsNumeric(ty tree.Type) bool {
 
 func (c *Checker) CheckExpr(expr tree.Expr, ty tree.Type) {
 	switch expr := expr.(type) {
+	case *tree.NameExpr:
+		c.CheckNameExpr(expr, ty)
+	case *tree.PackageNameExpr:
+		c.CheckPackageNameExpr(expr, ty)
 	case *tree.BinaryExpr:
 		c.CheckBinaryExpr(expr, ty)
 	case *tree.UnaryExpr:
@@ -961,16 +1010,24 @@ func (c *Checker) CheckExpr(expr tree.Expr, ty tree.Type) {
 		panic("TODO")
 	case *tree.CallExpr:
 		c.CheckCallExpr(expr, ty)
-	case *tree.NameExpr:
-		c.CheckNameExpr(expr, ty)
 	case *tree.LiteralExpr:
 		c.CheckLiteralExpr(expr, ty)
 	case *tree.CompositeLitExpr:
 		c.CheckCompositeLitExpr(expr, ty)
+	case *tree.FuncLitExpr:
+		c.CheckFuncLitExpr(expr, ty)
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
 	}
+}
+
+func (c *Checker) CheckNameExpr(expr *tree.NameExpr, ty tree.Type) {
+	c.TyCtx.AddEq(c.Lookup(expr.Name), c.ResolveType(ty))
+}
+
+func (c *Checker) CheckPackageNameExpr(expr *tree.PackageNameExpr, ty tree.Type) {
+	c.TyCtx.AddEq(c.Synth(expr), c.ResolveType(ty))
 }
 
 func (c *Checker) CheckBinaryExpr(expr *tree.BinaryExpr, ty tree.Type) {
@@ -980,6 +1037,9 @@ func (c *Checker) CheckBinaryExpr(expr *tree.BinaryExpr, ty tree.Type) {
 func (c *Checker) CheckUnaryExpr(expr *tree.UnaryExpr, ty tree.Type) {
 	exprTy := c.Synth(expr.Expr)
 	switch expr.Op {
+	case tree.UnaryOpNeg:
+		// TODO check is numeric
+		c.CheckExpr(expr.Expr, c.ResolveType(ty))
 	case tree.UnaryOpNot:
 		c.CheckExpr(expr.Expr, c.BuiltinType("bool"))
 	case tree.UnaryOpAddr:
@@ -1021,10 +1081,6 @@ func (c *Checker) CheckCallExpr(expr *tree.CallExpr, ty tree.Type) {
 	c.CheckAssignableTo(callTy, c.ResolveType(ty))
 }
 
-func (c *Checker) CheckNameExpr(expr *tree.NameExpr, ty tree.Type) {
-	c.TyCtx.AddEq(c.Lookup(expr.Name), c.ResolveType(ty))
-}
-
 func (c *Checker) CheckLiteralExpr(expr *tree.LiteralExpr, ty tree.Type) {
 	exprTy := c.Synth(expr)
 	c.CheckAssignableTo(exprTy, c.ResolveType(ty))
@@ -1039,10 +1095,20 @@ func (c *Checker) CheckCompositeLitExpr(expr *tree.CompositeLitExpr, ty tree.Typ
 	}
 }
 
+func (c *Checker) CheckFuncLitExpr(expr *tree.FuncLitExpr, ty tree.Type) {
+	c.CheckAssignableTo(c.Synth(expr), c.ResolveType(ty))
+}
+
 // ========================
 
 func (c *Checker) Synth(expr tree.Expr) tree.Type {
 	switch expr := expr.(type) {
+	case *tree.NameExpr:
+		return c.SynthNameExpr(expr)
+	case *tree.ImportNameExpr:
+		return c.SynthImportNameExpr(expr)
+	case *tree.PackageNameExpr:
+		return c.SynthPackageNameExpr(expr)
 	case *tree.BinaryExpr:
 		return c.SynthBinaryExpr(expr)
 	case *tree.UnaryExpr:
@@ -1057,8 +1123,6 @@ func (c *Checker) Synth(expr tree.Expr) tree.Type {
 		panic("TODO")
 	case *tree.CallExpr:
 		return c.SynthCallExpr(expr)
-	case *tree.NameExpr:
-		return c.SynthNameExpr(expr)
 	case *tree.LiteralExpr:
 		return c.SynthLiteralExpr(expr)
 	case *tree.TypeExpr:
@@ -1073,6 +1137,28 @@ func (c *Checker) Synth(expr tree.Expr) tree.Type {
 		spew.Dump(expr)
 		panic("unreachable")
 	}
+}
+
+func (c *Checker) SynthNameExpr(expr *tree.NameExpr) tree.Type {
+	return c.Lookup(expr.Name)
+}
+
+func (c *Checker) SynthImportNameExpr(expr *tree.ImportNameExpr) tree.Type {
+	return &tree.ImportType{ImportPath: expr.Path}
+}
+
+func (c *Checker) SynthPackageNameExpr(expr *tree.PackageNameExpr) tree.Type {
+	pkg, ok := c.PackageSymbols[expr.Path]
+	if !ok {
+		panic(fmt.Sprintf("package not loaded: %v", expr.Path))
+	}
+
+	ty, ok := pkg.Lookup(expr.Name)
+	if !ok {
+		panic(fmt.Sprintf("package %v has no symbol %v", expr.Path, expr.Name))
+	}
+
+	return ty
 }
 
 func (c *Checker) SynthBinaryExpr(expr *tree.BinaryExpr) tree.Type {
@@ -1198,15 +1284,20 @@ func (c *Checker) DoSelect(exprTy tree.Type, sel Identifier) tree.Type {
 		}
 	}
 
-	spew.Dump(exprTy)
+	spew.Dump(c.Under(checkTy))
 	panic(fmt.Sprintf("type %v has no field or method %v", exprTy, sel))
 }
 
 func (c *Checker) SynthIndexExpr(expr *tree.IndexExpr) tree.Type {
 	exprTy := c.Synth(expr.Expr)
 
+	switch ty := exprTy.(type) {
+	case *tree.PointerType:
+		exprTy = c.ResolveType(ty.BaseType)
+	}
+
 	var indexTy, resultTy tree.Type
-	switch exprTy := exprTy.(type) {
+	switch exprTy := c.Under(exprTy).(type) {
 	case *tree.FunctionType:
 		panic("unexpected function type (should be handled by CallExpr)")
 	case *tree.SliceType:
@@ -1316,7 +1407,7 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 			panic("not a function")
 		}
 	}
-	var variadicParam tree.ParameterDecl
+	var variadicParam *tree.ParameterDecl
 	var variadicIndex int = -1
 	if len(expr.Args) != len(funcTy.Signature.Params.Params) {
 		variadicParam, variadicIndex = funcTy.Signature.GetVariadicParam()
@@ -1345,7 +1436,7 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 		c.TyCtx.AddRelation(RelationSubtype{Sub: ty, Super: tyParam.Constraint})
 	}
 	for i, arg := range expr.Args {
-		var param tree.ParameterDecl
+		var param *tree.ParameterDecl
 		if variadicIndex != -1 && i >= variadicIndex {
 			param = variadicParam
 		} else {
@@ -1537,10 +1628,6 @@ func (c *Checker) SynthBuiltinPrintlnCall(expr *tree.CallExpr) tree.Type {
 	return &tree.VoidType{}
 }
 
-func (c *Checker) SynthNameExpr(expr *tree.NameExpr) tree.Type {
-	return c.Lookup(expr.Name)
-}
-
 func (c *Checker) SynthLiteralExpr(expr *tree.LiteralExpr) tree.Type {
 	// TODO untype literal types
 	switch expr.Literal.(type) {
@@ -1631,11 +1718,32 @@ func (c *Checker) MakeCompositeLitStruct(expr *tree.CompositeLitExpr, structTy *
 				if elem.Key == nil {
 					panic("composite literal with unordered fields")
 				}
-				key, ok := elem.Key.(*tree.NameExpr)
-				if !ok {
-					panic("struct literal must use identifier as key name")
+
+				var targetFieldName Identifier
+				switch keyTy := elem.Key.(type) {
+				case *tree.NameExpr:
+					targetFieldName = keyTy.Name
+				case *tree.TypeExpr:
+					// TODO quirk of the name resolver
+					switch keyTy := keyTy.Type.(type) {
+					case *tree.PackageTypeName:
+						targetFieldName = keyTy.Name
+					default:
+						spew.Dump(keyTy)
+						panic("composite literal must use identifier as key name")
+					}
+				case *tree.ImportNameExpr:
+					// TODO quirk of the name resolver
+					targetFieldName = keyTy.Name
+				case *tree.PackageNameExpr:
+					// TODO quirk of the name resolver
+					targetFieldName = keyTy.Name
+				default:
+					spew.Dump(keyTy)
+					panic("composite literal must use identifier as key name")
 				}
-				if field.Name == key.Name {
+
+				if field.Name == targetFieldName {
 					c.CheckExpr(elem.Value, field.Type)
 					continue elems
 				}
@@ -1686,6 +1794,10 @@ func (c *Checker) MakeCompositeLitArray(expr *tree.CompositeLitExpr, arrayTy *tr
 
 func (c *Checker) EvaluateConstantIntExpr(expr tree.Expr) int {
 	switch expr := expr.(type) {
+	case *tree.NameExpr:
+		return 1 // TODO omg
+	case *tree.PackageNameExpr:
+		return 1 // TODO omg
 	case *tree.ConstIntExpr:
 		return expr.Value
 	case *tree.LiteralExpr:
@@ -1740,8 +1852,6 @@ func (c *Checker) EvaluateConstantIntExpr(expr tree.Expr) int {
 		default:
 			panic("non-integer unary operator")
 		}
-	case *tree.NameExpr:
-		return 1 // TODO omg
 	default:
 		spew.Dump(expr)
 		panic("non-integer expression")
@@ -1749,21 +1859,21 @@ func (c *Checker) EvaluateConstantIntExpr(expr tree.Expr) int {
 }
 
 func (c *Checker) TypeApplication(app *tree.TypeApplication) tree.Type {
-	return c.TypeApplicationFunc(app, func(tree.TypeParamDecl, tree.Type) {})
+	return c.TypeApplicationFunc(app, func(*tree.TypeParamDecl, tree.Type) {})
 }
 
-func (c *Checker) TypeApplicationFunc(app *tree.TypeApplication, argF func(tyParam tree.TypeParamDecl, tyArg tree.Type)) tree.Type {
+func (c *Checker) TypeApplicationFunc(app *tree.TypeApplication, argF func(tyParam *tree.TypeParamDecl, tyArg tree.Type)) tree.Type {
 	named, subst := c.InstantiateTypeFunc(app, argF)
 	gen := c.ResolveType(named.Type).(*tree.GenericType)
 	return c.ApplySubst(gen.Type, subst)
 }
 
 func (c *Checker) InstantiateType(app *tree.TypeApplication) (*tree.NamedType, Subst) {
-	return c.InstantiateTypeFunc(app, func(tree.TypeParamDecl, tree.Type) {})
+	return c.InstantiateTypeFunc(app, func(*tree.TypeParamDecl, tree.Type) {})
 }
 
-func (c *Checker) InstantiateTypeFunc(app *tree.TypeApplication, argF func(tyParam tree.TypeParamDecl, tyArg tree.Type)) (*tree.NamedType, Subst) {
-	named, ok := c.ResolveType(&app.ID).(*tree.NamedType)
+func (c *Checker) InstantiateTypeFunc(app *tree.TypeApplication, argF func(tyParam *tree.TypeParamDecl, tyArg tree.Type)) (*tree.NamedType, Subst) {
+	named, ok := c.ResolveType(app.Type).(*tree.NamedType)
 	if !ok {
 		panic("can only instantiate named types?")
 	}
@@ -1789,7 +1899,7 @@ func (c *Checker) InstantiateTypeFunc(app *tree.TypeApplication, argF func(tyPar
 type Subst map[Identifier]tree.Type
 
 func (s Subst) String() string {
-	parts := []string{}
+	parts := make([]string, 0, len(s))
 	for k, v := range s {
 		parts = append(parts, fmt.Sprintf("%v -> %v", k, v))
 	}
@@ -1798,24 +1908,23 @@ func (s Subst) String() string {
 
 func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 	switch ty := ty.(type) {
-	case *tree.TypeName:
-		if substTy, ok := subst[ty.Name]; ok {
-			return substTy
-		}
-		return ty
-	case *tree.TypeBuiltin:
-		return ty
 	case *tree.TypeParam:
 		if substTy, ok := subst[ty.Name]; ok {
 			return substTy
 		}
+		return ty
+	case *tree.TypeName:
+		return ty
+	case *tree.PackageTypeName:
+		return ty
+	case *tree.TypeBuiltin:
 		return ty
 	case *tree.TypeApplication:
 		args := make([]tree.Type, len(ty.Args))
 		for i, arg := range ty.Args {
 			args[i] = c.ApplySubst(arg, subst)
 		}
-		return &tree.TypeApplication{ID: ty.ID, Args: args}
+		return &tree.TypeApplication{Type: ty.Type, Args: args}
 	case *tree.ArrayType:
 		return &tree.ArrayType{
 			ElemType: c.ApplySubst(ty.ElemType, subst),
@@ -1831,9 +1940,9 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 			Type:       c.ApplySubst(ty.Type, subst),
 		}
 	case *tree.StructType:
-		fields := make([]tree.FieldDecl, len(ty.Fields))
+		fields := make([]*tree.FieldDecl, len(ty.Fields))
 		for i, field := range ty.Fields {
-			fields[i] = tree.FieldDecl{
+			fields[i] = &tree.FieldDecl{
 				Name: field.Name,
 				Type: c.ApplySubst(field.Type, subst),
 			}
@@ -1842,9 +1951,9 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 	case *tree.PointerType:
 		return &tree.PointerType{BaseType: c.ApplySubst(ty.BaseType, subst)}
 	case *tree.InterfaceType:
-		constraints := make([]tree.TypeConstraint, len(ty.Constraints))
+		constraints := make([]*tree.TypeConstraint, len(ty.Constraints))
 		for i, constraint := range ty.Constraints {
-			constraints[i] = tree.TypeConstraint{TypeElem: c.ApplySubstTypeElem(constraint.TypeElem, subst)}
+			constraints[i] = &tree.TypeConstraint{TypeElem: c.ApplySubstTypeElem(constraint.TypeElem, subst)}
 		}
 		return &tree.InterfaceType{
 			Methods:     c.ApplySubstMethodList(ty.Methods, subst),
@@ -1888,10 +1997,10 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 	}
 }
 
-func (c *Checker) ApplySubstMethodList(methods []tree.MethodElem, subst Subst) []tree.MethodElem {
-	out := make([]tree.MethodElem, len(methods))
+func (c *Checker) ApplySubstMethodList(methods []*tree.MethodElem, subst Subst) []*tree.MethodElem {
+	out := make([]*tree.MethodElem, len(methods))
 	for i, method := range methods {
-		out[i] = tree.MethodElem{
+		out[i] = &tree.MethodElem{
 			Name: method.Name,
 			Type: c.ApplySubst(method.Type, subst).(*tree.FunctionType),
 		}
@@ -1899,16 +2008,16 @@ func (c *Checker) ApplySubstMethodList(methods []tree.MethodElem, subst Subst) [
 	return out
 }
 
-func (c *Checker) ApplySubstSignature(sig tree.Signature, subst Subst) tree.Signature {
-	return tree.Signature{
+func (c *Checker) ApplySubstSignature(sig *tree.Signature, subst Subst) *tree.Signature {
+	return &tree.Signature{
 		TypeParams: c.ApplySubstTypeParamList(sig.TypeParams, subst),
 		Params:     c.ApplySubstParameterList(sig.Params, subst),
 		Results:    c.ApplySubstParameterList(sig.Results, subst),
 	}
 }
 
-func (c *Checker) ApplySubstTypeParamList(list tree.TypeParamList, subst Subst) tree.TypeParamList {
-	params := make([]tree.TypeParamDecl, len(list.Params))
+func (c *Checker) ApplySubstTypeParamList(list *tree.TypeParamList, subst Subst) *tree.TypeParamList {
+	params := make([]*tree.TypeParamDecl, len(list.Params))
 	for i, param := range list.Params {
 		var name Identifier
 		if substTy, ok := subst[param.Name]; ok {
@@ -1916,32 +2025,32 @@ func (c *Checker) ApplySubstTypeParamList(list tree.TypeParamList, subst Subst) 
 		} else {
 			name = param.Name
 		}
-		params[i] = tree.TypeParamDecl{
+		params[i] = &tree.TypeParamDecl{
 			Name:       name,
 			Constraint: c.ApplySubst(param.Constraint, subst).(*tree.InterfaceType),
 		}
 	}
-	return tree.TypeParamList{Params: params}
+	return &tree.TypeParamList{Params: params}
 }
 
-func (c *Checker) ApplySubstTypeElem(elem tree.TypeElem, subst Subst) tree.TypeElem {
-	union := make([]tree.TypeTerm, len(elem.Union))
+func (c *Checker) ApplySubstTypeElem(elem *tree.TypeElem, subst Subst) *tree.TypeElem {
+	union := make([]*tree.TypeTerm, len(elem.Union))
 	for i, term := range elem.Union {
-		union[i] = tree.TypeTerm{Type: c.ApplySubst(term.Type, subst), Tilde: term.Tilde}
+		union[i] = &tree.TypeTerm{Type: c.ApplySubst(term.Type, subst), Tilde: term.Tilde}
 	}
-	return tree.TypeElem{Union: union}
+	return &tree.TypeElem{Union: union}
 }
 
-func (c *Checker) ApplySubstParameterList(list tree.ParameterList, subst Subst) tree.ParameterList {
-	params := make([]tree.ParameterDecl, len(list.Params))
+func (c *Checker) ApplySubstParameterList(list *tree.ParameterList, subst Subst) *tree.ParameterList {
+	params := make([]*tree.ParameterDecl, len(list.Params))
 	for i, param := range list.Params {
-		params[i] = tree.ParameterDecl{
+		params[i] = &tree.ParameterDecl{
 			Name:     param.Name,
 			Type:     c.ApplySubst(param.Type, subst),
 			Variadic: param.Variadic,
 		}
 	}
-	return tree.ParameterList{Params: params}
+	return &tree.ParameterList{Params: params}
 }
 
 // ========================
@@ -2132,7 +2241,7 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 		panic("TODO")
 	case *tree.TypeApplication:
 		if right, ok := right.(*tree.TypeApplication); ok {
-			if left.ID != right.ID {
+			if left.Type != right.Type {
 				panic(fmt.Sprintf("cannot unify: %v = %v", left, right))
 			}
 			if len(left.Args) != len(right.Args) {
@@ -2417,7 +2526,7 @@ func (c *Checker) ContainsTypeParam(ty tree.Type, tyParam *tree.TypeParam) bool 
 	}
 }
 
-func (c *Checker) MethodSet(ty tree.Type) ([]tree.MethodElem, bool) {
+func (c *Checker) MethodSet(ty tree.Type) ([]*tree.MethodElem, bool) {
 	ty = c.ResolveType(ty)
 
 	var pointerReceiver bool
@@ -2434,9 +2543,9 @@ func (c *Checker) MethodSet(ty tree.Type) ([]tree.MethodElem, bool) {
 		return c.NamedTypeMethods(ty), pointerReceiver
 	case *tree.TypeApplication:
 		named, subst := c.InstantiateType(ty)
-		methods := []tree.MethodElem{}
+		var methods []*tree.MethodElem
 		for _, m := range c.NamedTypeMethods(named) {
-			methods = append(methods, tree.MethodElem{
+			methods = append(methods, &tree.MethodElem{
 				Name: m.Name,
 				Type: c.ApplySubst(m.Type, subst).(*tree.FunctionType),
 			})
@@ -2448,17 +2557,17 @@ func (c *Checker) MethodSet(ty tree.Type) ([]tree.MethodElem, bool) {
 	}
 }
 
-func (c *Checker) NamedTypeMethods(namedTy *tree.NamedType) []tree.MethodElem {
+func (c *Checker) NamedTypeMethods(namedTy *tree.NamedType) []*tree.MethodElem {
 	if interTy, ok := c.Under(namedTy).(*tree.InterfaceType); ok {
 		return interTy.Methods
 	}
 
-	methods := []tree.MethodElem{}
+	var methods []*tree.MethodElem
 
 	c.VarCtx.Iter(func(name Identifier, ty tree.Type) {
 		if strings.HasPrefix(name.Value, namedTy.Name.Value+".") {
 			methodTy := ty.(*tree.MethodType)
-			methods = append(methods, tree.MethodElem{
+			methods = append(methods, &tree.MethodElem{
 				Name:            Identifier{Value: name.Value[len(namedTy.Name.Value)+1:]},
 				Type:            methodTy.Type,
 				PointerReceiver: methodTy.PointerReceiver,
@@ -2546,7 +2655,7 @@ func (c *Checker) Identical(ty1, ty2 tree.Type) bool {
 		return false
 	case *tree.TypeApplication:
 		if ty2, ok := ty2.(*tree.TypeApplication); ok {
-			if ty1.ID != ty2.ID {
+			if ty1.Type != ty2.Type {
 				return false
 			}
 			if len(ty1.Args) != len(ty2.Args) {

@@ -134,6 +134,10 @@ type EllipsisExpr struct {
 	ExprBase
 }
 
+func (EllipsisExpr) String() string {
+	return "..."
+}
+
 type ConstIntExpr struct {
 	ExprBase
 	Value int
@@ -215,6 +219,18 @@ type NameExpr struct {
 	Name Identifier
 }
 
+type ImportNameExpr struct {
+	ExprBase
+	Path ImportPath
+	Name Identifier
+}
+
+type PackageNameExpr struct {
+	ExprBase
+	Path ImportPath
+	Name Identifier
+}
+
 func IsIgnoreName(e Expr) bool {
 	name, ok := e.(*NameExpr)
 	return ok && name.Name == IgnoreIdent
@@ -227,14 +243,14 @@ type LiteralExpr struct {
 
 type FuncLitExpr struct {
 	ExprBase
-	Signature Signature
-	Body      StatementList
+	Signature *Signature
+	Body      *StatementList
 }
 
 type CompositeLitExpr struct {
 	ExprBase
 	Type  Type
-	Elems []CompositeLitElem
+	Elems []*CompositeLitElem
 }
 
 type CompositeLitElem struct {
@@ -317,7 +333,7 @@ type IfStmt struct {
 	StatementBase
 	Init Statement
 	Cond Expr
-	Body StatementList
+	Body *StatementList
 	Else *IfStmt // Cond==True for plain else
 }
 
@@ -361,12 +377,12 @@ type ReceiveStmt struct {
 
 type SelectStmt struct {
 	StatementBase
-	Cases []SelectCase
+	Cases []*SelectCase
 }
 
 type SelectCase struct {
 	Comm Statement
-	Body StatementList
+	Body *StatementList
 }
 
 type AssignmentStmt struct {
@@ -386,7 +402,7 @@ type RangeStmt struct {
 	Assign     bool
 	Key, Value Expr
 	X          Expr
-	Body       StatementList
+	Body       *StatementList
 }
 
 type ForStmt struct {
@@ -394,36 +410,36 @@ type ForStmt struct {
 	Init Statement
 	Cond Expr
 	Post Statement
-	Body StatementList
+	Body *StatementList
 }
 
 type TypeSwitchStmt struct {
 	StatementBase
 	Init   Statement
 	Assign Statement
-	Body   []TypeSwitchCase
+	Body   []*TypeSwitchCase
 }
 
 type TypeSwitchCase struct {
 	Types []Type
-	Body  StatementList
+	Body  *StatementList
 }
 
 type SwitchStmt struct {
 	StatementBase
 	Init  Statement
 	Tag   Expr
-	Cases []SwitchCase
+	Cases []*SwitchCase
 }
 
 type SwitchCase struct {
 	Exprs []Expr
-	Body  StatementList
+	Body  *StatementList
 }
 
 type BlockStmt struct {
 	StatementBase
-	Body StatementList
+	Body *StatementList
 }
 
 type StatementList struct {
@@ -475,7 +491,7 @@ type VarDecl struct {
 type TypeDecl struct {
 	DeclBase
 	Name       Identifier
-	TypeParams TypeParamList
+	TypeParams *TypeParamList
 	Type       Type
 }
 
@@ -488,16 +504,16 @@ type AliasDecl struct {
 type FunctionDecl struct {
 	DeclBase
 	Name      Identifier
-	Signature Signature
-	Body      StatementList
+	Signature *Signature
+	Body      *StatementList
 }
 
 type MethodDecl struct {
 	DeclBase
 	Name      Identifier
 	Receiver  FieldDecl
-	Signature Signature
-	Body      StatementList
+	Signature *Signature
+	Body      *StatementList
 }
 
 // ========================
@@ -565,6 +581,8 @@ func WalkExpr(v ExprVisitor, expr Expr) {
 			WalkExpr(v, e.Value)
 		}
 	case *TypeExpr:
+	case *ImportNameExpr:
+	case *PackageNameExpr:
 	default:
 		spew.Dump(expr)
 		panic("unreachable")

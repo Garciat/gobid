@@ -1,7 +1,6 @@
 package main
 
 import "unsafe"
-
 import "fmt"
 
 func sayHello() {

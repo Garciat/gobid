@@ -213,7 +213,7 @@ func ReadVarDecl(decl *ast.GenDecl) []tree.Decl {
 				})
 			}
 		} else if len(spec.Names) > 1 && len(spec.Values) == 1 {
-			names := []Identifier{}
+			names := make([]Identifier, 0, len(spec.Names))
 			for _, name := range spec.Names {
 				names = append(names, NewIdentifier(name.Name))
 			}
@@ -288,20 +288,20 @@ func ReadReceiver(field *ast.Field) tree.FieldDecl {
 	}
 }
 
-func ReadTypeParamList(list *ast.FieldList) tree.TypeParamList {
+func ReadTypeParamList(list *ast.FieldList) *tree.TypeParamList {
 	if list == nil {
-		return tree.TypeParamList{}
+		return &tree.TypeParamList{}
 	}
-	var params []tree.TypeParamDecl
+	var params []*tree.TypeParamDecl
 	for _, field := range list.List {
 		for _, name := range field.Names {
-			params = append(params, tree.TypeParamDecl{
+			params = append(params, &tree.TypeParamDecl{
 				Name:       NewIdentifier(name.Name),
 				Constraint: ReadTypeConstraint(field.Type),
 			})
 		}
 	}
-	return tree.TypeParamList{Params: params}
+	return &tree.TypeParamList{Params: params}
 }
 
 func ReadTypeConstraint(expr ast.Expr) *tree.InterfaceType {
@@ -309,10 +309,10 @@ func ReadTypeConstraint(expr ast.Expr) *tree.InterfaceType {
 	case *ast.Ident:
 		return &tree.InterfaceType{
 			Methods: nil,
-			Constraints: []tree.TypeConstraint{
+			Constraints: []*tree.TypeConstraint{
 				{
-					TypeElem: tree.TypeElem{
-						Union: []tree.TypeTerm{
+					TypeElem: &tree.TypeElem{
+						Union: []*tree.TypeTerm{
 							{Type: &tree.TypeName{Name: NewIdentifier(expr.Name)}},
 						},
 					},
@@ -323,7 +323,7 @@ func ReadTypeConstraint(expr ast.Expr) *tree.InterfaceType {
 		if expr.Op != token.OR {
 			panic("Expected OR")
 		}
-		terms := []tree.TypeTerm{}
+		var terms []*tree.TypeTerm
 		cur := expr
 		for {
 			terms = append(terms, ReadUnionTerm(cur.Y))
@@ -337,9 +337,9 @@ func ReadTypeConstraint(expr ast.Expr) *tree.InterfaceType {
 		slices.Reverse(terms)
 		return &tree.InterfaceType{
 			Methods: nil,
-			Constraints: []tree.TypeConstraint{
+			Constraints: []*tree.TypeConstraint{
 				{
-					TypeElem: tree.TypeElem{
+					TypeElem: &tree.TypeElem{
 						Union: terms,
 					},
 				},
@@ -350,10 +350,10 @@ func ReadTypeConstraint(expr ast.Expr) *tree.InterfaceType {
 	default:
 		return &tree.InterfaceType{
 			Methods: nil,
-			Constraints: []tree.TypeConstraint{
+			Constraints: []*tree.TypeConstraint{
 				{
-					TypeElem: tree.TypeElem{
-						Union: []tree.TypeTerm{
+					TypeElem: &tree.TypeElem{
+						Union: []*tree.TypeTerm{
 							ReadUnionTerm(expr),
 						},
 					},
@@ -363,33 +363,33 @@ func ReadTypeConstraint(expr ast.Expr) *tree.InterfaceType {
 	}
 }
 
-func ReadUnionTerm(expr ast.Expr) tree.TypeTerm {
+func ReadUnionTerm(expr ast.Expr) *tree.TypeTerm {
 	switch expr := expr.(type) {
 	case *ast.UnaryExpr:
 		if expr.Op != token.TILDE {
 			panic("Expected TILDE")
 		}
-		return tree.TypeTerm{Type: ReadType(expr.X), Tilde: true}
+		return &tree.TypeTerm{Type: ReadType(expr.X), Tilde: true}
 	default:
-		return tree.TypeTerm{Type: ReadType(expr)}
+		return &tree.TypeTerm{Type: ReadType(expr)}
 	}
 }
 
-func ReadSignature(sig *ast.FuncType) tree.Signature {
-	return tree.Signature{
+func ReadSignature(sig *ast.FuncType) *tree.Signature {
+	return &tree.Signature{
 		TypeParams: ReadTypeParamList(sig.TypeParams),
 		Params:     ReadParameterList(sig.Params),
 		Results:    ReadResultsList(sig.Results),
 	}
 }
 
-func ReadParameterList(list *ast.FieldList) tree.ParameterList {
+func ReadParameterList(list *ast.FieldList) *tree.ParameterList {
 	if list == nil {
-		return tree.ParameterList{}
+		return &tree.ParameterList{}
 	}
 
-	var params []tree.ParameterDecl
-	var foundVariadic bool = false
+	var params []*tree.ParameterDecl
+	var foundVariadic = false
 
 	addParam := func(name Identifier, fieldType ast.Expr) {
 		if foundVariadic {
@@ -405,7 +405,7 @@ func ReadParameterList(list *ast.FieldList) tree.ParameterList {
 			ty = ReadType(fieldType)
 			variadic = false
 		}
-		params = append(params, tree.ParameterDecl{
+		params = append(params, &tree.ParameterDecl{
 			Name:     name,
 			Type:     ty,
 			Variadic: variadic,
@@ -420,44 +420,44 @@ func ReadParameterList(list *ast.FieldList) tree.ParameterList {
 			addParam(NewIdentifier(name.Name), field.Type)
 		}
 	}
-	return tree.ParameterList{Params: params}
+	return &tree.ParameterList{Params: params}
 }
 
-func ReadResultsList(list *ast.FieldList) tree.ParameterList {
+func ReadResultsList(list *ast.FieldList) *tree.ParameterList {
 	if list == nil {
-		return tree.ParameterList{}
+		return &tree.ParameterList{}
 	}
-	var params []tree.ParameterDecl
+	var params []*tree.ParameterDecl
 	for _, field := range list.List {
 		if len(field.Names) == 0 {
-			params = append(params, tree.ParameterDecl{
+			params = append(params, &tree.ParameterDecl{
 				Name: IgnoreIdent,
 				Type: ReadType(field.Type),
 			})
 		}
 		for _, name := range field.Names {
-			params = append(params, tree.ParameterDecl{
+			params = append(params, &tree.ParameterDecl{
 				Name: NewIdentifier(name.Name),
 				Type: ReadType(field.Type),
 			})
 		}
 	}
-	return tree.ParameterList{Params: params}
+	return &tree.ParameterList{Params: params}
 }
 
 func ReadBlockStmt(block *ast.BlockStmt) tree.Statement {
 	return &tree.BlockStmt{Body: ReadStatementList(block)}
 }
 
-func ReadStatementList(block *ast.BlockStmt) tree.StatementList {
+func ReadStatementList(block *ast.BlockStmt) *tree.StatementList {
 	if block == nil {
-		return tree.StatementList{}
+		return &tree.StatementList{}
 	}
 	var stmts []tree.Statement
 	for _, stmt := range block.List {
 		stmts = append(stmts, ReadStmt(stmt))
 	}
-	return tree.StatementList{Stmts: stmts}
+	return &tree.StatementList{Stmts: stmts}
 }
 
 func ReadStmt(stmt ast.Stmt) tree.Statement {
@@ -514,12 +514,12 @@ func ReadStmt(stmt ast.Stmt) tree.Statement {
 	}
 }
 
-func ReadStmtList(stmts []ast.Stmt) tree.StatementList {
+func ReadStmtList(stmts []ast.Stmt) *tree.StatementList {
 	var result []tree.Statement
 	for _, stmt := range stmts {
 		result = append(result, ReadStmt(stmt))
 	}
-	return tree.StatementList{Stmts: result}
+	return &tree.StatementList{Stmts: result}
 }
 
 func ReadDeclStmt(stmt *ast.DeclStmt) tree.Statement {
@@ -572,8 +572,8 @@ func ReadElseStmt(stmt ast.Stmt) *tree.IfStmt {
 
 func ReadAssignStmt(stmt *ast.AssignStmt) tree.Statement {
 	if stmt.Tok == token.DEFINE {
-		names := []Identifier{}
-		exprs := []tree.Expr{}
+		names := make([]Identifier, 0, len(stmt.Lhs))
+		exprs := make([]tree.Expr, 0, len(stmt.Rhs))
 		for _, left := range stmt.Lhs {
 			switch left := left.(type) {
 			case *ast.Ident:
@@ -623,15 +623,15 @@ func ReadIncDecStmt(stmt *ast.IncDecStmt) tree.Statement {
 	}
 }
 
-func ReadCommCases(clauses []ast.Stmt) []tree.SelectCase {
-	var cases []tree.SelectCase
+func ReadCommCases(clauses []ast.Stmt) []*tree.SelectCase {
+	var cases []*tree.SelectCase
 	for _, clause := range clauses {
 		clause := clause.(*ast.CommClause)
 		var comm tree.Statement
 		if clause.Comm != nil {
 			comm = ReadStmt(clause.Comm)
 		}
-		cases = append(cases, tree.SelectCase{
+		cases = append(cases, &tree.SelectCase{
 			Comm: comm,
 			Body: ReadStmtList(clause.Body),
 		})
@@ -690,15 +690,15 @@ func ReadTypeSwitchTypeAssert(expr ast.Expr) tree.Expr {
 	}
 }
 
-func ReadTypeSwitchCases(clauses []ast.Stmt) []tree.TypeSwitchCase {
-	var cases []tree.TypeSwitchCase
+func ReadTypeSwitchCases(clauses []ast.Stmt) []*tree.TypeSwitchCase {
+	var cases []*tree.TypeSwitchCase
 	for _, clause := range clauses {
 		clause := clause.(*ast.CaseClause)
 		var types []tree.Type
 		for _, expr := range clause.List {
 			types = append(types, ReadType(expr))
 		}
-		cases = append(cases, tree.TypeSwitchCase{
+		cases = append(cases, &tree.TypeSwitchCase{
 			Types: types,
 			Body:  ReadStmtList(clause.Body),
 		})
@@ -722,15 +722,15 @@ func ReadSwitchStmt(stmt *ast.SwitchStmt) tree.Statement {
 	}
 }
 
-func ReadSwitchCases(clauses []ast.Stmt) []tree.SwitchCase {
-	var cases []tree.SwitchCase
+func ReadSwitchCases(clauses []ast.Stmt) []*tree.SwitchCase {
+	var cases []*tree.SwitchCase
 	for _, clause := range clauses {
 		clause := clause.(*ast.CaseClause)
 		var exprs []tree.Expr
 		for _, expr := range clause.List {
 			exprs = append(exprs, ReadExpr(expr))
 		}
-		cases = append(cases, tree.SwitchCase{
+		cases = append(cases, &tree.SwitchCase{
 			Exprs: exprs,
 			Body:  ReadStmtList(clause.Body),
 		})
@@ -981,17 +981,17 @@ func ReadCompositeLit(expr *ast.CompositeLit) tree.Expr {
 	}
 }
 
-func ReadCompositeLitElems(exprs []ast.Expr) []tree.CompositeLitElem {
-	var elems []tree.CompositeLitElem
+func ReadCompositeLitElems(exprs []ast.Expr) []*tree.CompositeLitElem {
+	var elems []*tree.CompositeLitElem
 	for _, expr := range exprs {
 		switch expr := expr.(type) {
 		case *ast.KeyValueExpr:
-			elems = append(elems, tree.CompositeLitElem{
+			elems = append(elems, &tree.CompositeLitElem{
 				Key:   ReadExpr(expr.Key),
 				Value: ReadExpr(expr.Value),
 			})
 		default:
-			elems = append(elems, tree.CompositeLitElem{
+			elems = append(elems, &tree.CompositeLitElem{
 				Key:   nil,
 				Value: ReadExpr(expr),
 			})
@@ -1035,10 +1035,10 @@ func ReadType(expr ast.Expr) tree.Type {
 			return &tree.SliceType{ElemType: ReadType(expr.Elt)}
 		}
 	case *ast.StructType:
-		fields := []tree.FieldDecl{}
+		fields := make([]*tree.FieldDecl, 0, len(expr.Fields.List))
 		for _, field := range expr.Fields.List {
 			for _, name := range field.Names {
-				fields = append(fields, tree.FieldDecl{
+				fields = append(fields, &tree.FieldDecl{
 					Name: NewIdentifier(name.Name),
 					Type: ReadType(field.Type),
 				})
@@ -1047,12 +1047,12 @@ func ReadType(expr ast.Expr) tree.Type {
 		return &tree.StructType{Fields: fields}
 	case *ast.IndexExpr:
 		return &tree.TypeApplication{
-			ID:   ReadQualIdentifier(expr.X),
+			Type: ReadQualIdentifier(expr.X),
 			Args: []tree.Type{ReadType(expr.Index)},
 		}
 	case *ast.IndexListExpr:
 		return &tree.TypeApplication{
-			ID:   ReadQualIdentifier(expr.X),
+			Type: ReadQualIdentifier(expr.X),
 			Args: ReadTypeList(expr.Indices),
 		}
 	case *ast.StarExpr:
@@ -1086,15 +1086,12 @@ func ReadType(expr ast.Expr) tree.Type {
 	}
 }
 
-func ReadQualIdentifier(expr ast.Expr) tree.QualIdentifier {
+func ReadQualIdentifier(expr ast.Expr) tree.Type {
 	switch expr := expr.(type) {
 	case *ast.Ident:
-		return tree.QualIdentifier{
-			Package: "",
-			Name:    NewIdentifier(expr.Name),
-		}
+		return &tree.TypeName{Name: NewIdentifier(expr.Name)}
 	case *ast.SelectorExpr:
-		return tree.QualIdentifier{
+		return &tree.QualIdentifier{
 			Package: expr.X.(*ast.Ident).Name,
 			Name:    NewIdentifier(expr.Sel.Name),
 		}
@@ -1105,7 +1102,7 @@ func ReadQualIdentifier(expr ast.Expr) tree.QualIdentifier {
 }
 
 func ReadTypeList(exprs []ast.Expr) []tree.Type {
-	var result []tree.Type
+	result := make([]tree.Type, 0, len(exprs))
 	for _, expr := range exprs {
 		result = append(result, ReadType(expr))
 	}
@@ -1126,15 +1123,15 @@ func ReadChanDir(dir ast.ChanDir) tree.ChannelDir {
 }
 
 func ReadInterfaceType(expr *ast.InterfaceType) *tree.InterfaceType {
-	methods := []tree.MethodElem{}
-	constraints := []tree.TypeConstraint{}
+	var methods []*tree.MethodElem
+	var constraints []*tree.TypeConstraint
 	for _, field := range expr.Methods.List {
 		switch len(field.Names) {
 		case 0:
 			// embedded or constraint
-			constraints = append(constraints, tree.TypeConstraint{
-				TypeElem: tree.TypeElem{
-					Union: []tree.TypeTerm{
+			constraints = append(constraints, &tree.TypeConstraint{
+				TypeElem: &tree.TypeElem{
+					Union: []*tree.TypeTerm{
 						{
 							Type: ReadTypeConstraint(field.Type),
 						},
@@ -1144,7 +1141,7 @@ func ReadInterfaceType(expr *ast.InterfaceType) *tree.InterfaceType {
 		case 1:
 			switch ty := ReadType(field.Type).(type) {
 			case *tree.FunctionType:
-				methods = append(methods, tree.MethodElem{
+				methods = append(methods, &tree.MethodElem{
 					Name: NewIdentifier(field.Names[0].Name),
 					Type: ty,
 				})
