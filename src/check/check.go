@@ -276,6 +276,7 @@ const (
 	ScopeKindType
 	ScopeKindFunction
 	ScopeKindBlock
+	ScopeKindDecl
 )
 
 func (c *Checker) BeginScope(kind ScopeKind) *Checker {

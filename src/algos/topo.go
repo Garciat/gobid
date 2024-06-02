@@ -1,10 +1,11 @@
 package algos
 
 import (
+	"github.com/garciat/gobid/common"
 	"slices"
 )
 
-func TopologicalSort[T any, K comparable](nodes map[K]T, edges func(T) map[K]struct{}) []T {
+func TopologicalSort[T any, K comparable](nodes map[K]T, edges func(T) common.Set[K]) []T {
 	inDegree := map[K]int{}
 	for k := range nodes {
 		inDegree[k] = 0

@@ -1,6 +1,8 @@
 package algos
 
-func FindCycle[T any, K comparable](nodes map[K]T, edges func(T) map[K]struct{}) (cycle []T) {
+import "github.com/garciat/gobid/common"
+
+func FindCycle[T any, K comparable](nodes map[K]T, edges func(T) common.Set[K]) (cycle []T) {
 	visited := map[K]bool{}
 	recStack := map[K]bool{}
 

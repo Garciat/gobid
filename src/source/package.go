@@ -6,14 +6,14 @@ import (
 
 type Package struct {
 	ImportPath   ImportPath
-	Dependencies map[ImportPath]struct{}
+	Dependencies Set[ImportPath]
 	Files        []*FileDef
 }
 
 func NewPackage(ip ImportPath) *Package {
 	return &Package{
 		ImportPath:   ip,
-		Dependencies: make(map[ImportPath]struct{}),
+		Dependencies: make(Set[ImportPath]),
 		Files:        nil,
 	}
 }
@@ -23,5 +23,5 @@ func (p *Package) AddFile(file *FileDef) {
 }
 
 func (p *Package) AddDependency(ip ImportPath) {
-	p.Dependencies[ip] = struct{}{}
+	p.Dependencies.Add(ip)
 }

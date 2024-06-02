@@ -16,7 +16,7 @@ const (
 )
 
 func SortPackages(packages map[ImportPath]*source.Package) []*source.Package {
-	return algos.TopologicalSort(packages, func(pkg *source.Package) map[ImportPath]struct{} {
+	return algos.TopologicalSort(packages, func(pkg *source.Package) Set[ImportPath] {
 		return pkg.Dependencies
 	})
 }
@@ -42,7 +42,7 @@ func SortDeclarations(pkg *source.Package) []tree.Decl {
 		}
 	}
 
-	declDeps := map[Identifier]map[Identifier]struct{}{}
+	declDeps := map[Identifier]Set[Identifier]{}
 
 	for _, file := range pkg.Files {
 		for _, decl := range file.Decls {
@@ -59,24 +59,24 @@ func SortDeclarations(pkg *source.Package) []tree.Decl {
 		}
 	}
 
-	cycle := algos.FindCycle(declDeps, func(deps map[Identifier]struct{}) map[Identifier]struct{} {
+	cycle := algos.FindCycle(declDeps, func(deps Set[Identifier]) Set[Identifier] {
 		return deps
 	})
 	if len(cycle) > 0 {
 		panic(fmt.Errorf("cycle detected: %v", cycle))
 	}
 
-	empty := map[Identifier]struct{}{}
+	empty := Set[Identifier]{}
 
-	sortedDecls := algos.TopologicalSort(sortableDecls, func(decl tree.Decl) map[Identifier]struct{} {
+	sortedDecls := algos.TopologicalSort(sortableDecls, func(decl tree.Decl) Set[Identifier] {
 		switch decl := decl.(type) {
 		case *tree.ConstDecl:
 			return declDeps[decl.Name]
 		case *tree.VarDecl:
-			combo := map[Identifier]struct{}{}
+			combo := Set[Identifier]{}
 			for _, name := range decl.Names {
 				for dep := range declDeps[name] {
-					combo[dep] = struct{}{}
+					combo.Add(dep)
 				}
 			}
 			return combo
@@ -105,8 +105,8 @@ func SortDeclarations(pkg *source.Package) []tree.Decl {
 func VarDeclDependencies(
 	declKinds map[Identifier]DeclKind,
 	decl *tree.VarDecl,
-) map[Identifier]map[Identifier]struct{} {
-	deps := map[Identifier]map[Identifier]struct{}{}
+) map[Identifier]Set[Identifier] {
+	deps := map[Identifier]Set[Identifier]{}
 
 	refs := VarReferences(declKinds, decl.Expr, DeclKindVar, DeclKindConst)
 	for _, name := range decl.Names {
@@ -122,8 +122,8 @@ func VarDeclDependencies(
 func ConstDeclDependencies(
 	declKinds map[Identifier]DeclKind,
 	decl *tree.ConstDecl,
-) map[Identifier]map[Identifier]struct{} {
-	deps := map[Identifier]map[Identifier]struct{}{
+) map[Identifier]Set[Identifier] {
+	deps := map[Identifier]Set[Identifier]{
 		decl.Name: VarReferences(declKinds, decl.Value, DeclKindConst),
 	}
 	return deps
@@ -133,8 +133,8 @@ func VarReferences(
 	declKinds map[Identifier]DeclKind,
 	expr tree.Expr,
 	wanted ...DeclKind,
-) map[Identifier]struct{} {
-	references := map[Identifier]struct{}{}
+) Set[Identifier] {
+	references := Set[Identifier]{}
 
 	tree.WalkExpr(tree.ExprVisitorFunc(func(expr tree.Expr) {
 		switch expr := expr.(type) {
@@ -142,7 +142,7 @@ func VarReferences(
 			if kind, ok := declKinds[expr.Name]; ok {
 				for _, want := range wanted {
 					if kind == want {
-						references[expr.Name] = struct{}{}
+						references.Add(expr.Name)
 					}
 				}
 			}
