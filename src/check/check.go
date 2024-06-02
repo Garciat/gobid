@@ -695,8 +695,10 @@ func (c *Checker) CheckStatementList(list *tree.StatementList) {
 func (c *Checker) CheckStatement(stmt tree.Statement) {
 	switch stmt := stmt.(type) {
 	case *tree.DeclStmt:
-		c.DefineDecl(stmt.Decl)
-		c.CheckDecl(stmt.Decl)
+		for _, decl := range stmt.Decls {
+			c.DefineDecl(decl)
+			c.CheckDecl(decl)
+		}
 	case *tree.ExpressionStmt:
 		c.Synth(stmt.Expr) // ???
 	case *tree.EmptyStmt:
@@ -1786,9 +1788,9 @@ func (c *Checker) MakeCompositeLitArray(expr *tree.CompositeLitExpr, arrayTy *tr
 		c.CheckExpr(elem.Value, arrayTy.ElemType)
 	}
 	if arrayLen == -1 {
-		return &tree.ArrayType{ElemType: arrayTy.ElemType, Len: tree.ConstIntExpr{Value: len(expr.Elems)}}
+		return &tree.ArrayType{ElemType: arrayTy.ElemType, Len: &tree.ConstIntExpr{Value: len(expr.Elems)}}
 	} else {
-		return &tree.ArrayType{ElemType: arrayTy.ElemType, Len: tree.ConstIntExpr{Value: arrayLen}}
+		return &tree.ArrayType{ElemType: arrayTy.ElemType, Len: &tree.ConstIntExpr{Value: arrayLen}}
 	}
 }
 
@@ -2225,6 +2227,17 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 		}
 	case *tree.SliceType:
 		if right, ok := right.(*tree.SliceType); ok {
+			c.UnifyEq(left.ElemType, right.ElemType, subst)
+			return
+		}
+		panic(fmt.Sprintf("cannot unify: %v = %v", left, right))
+	case *tree.ArrayType:
+		if right, ok := right.(*tree.ArrayType); ok {
+			leftLen := c.EvaluateConstantIntExpr(left.Len)
+			rightLen := c.EvaluateConstantIntExpr(right.Len)
+			if leftLen != rightLen {
+				panic(fmt.Sprintf("cannot unify: %v = %v (different array length)", left, right))
+			}
 			c.UnifyEq(left.ElemType, right.ElemType, subst)
 			return
 		}
