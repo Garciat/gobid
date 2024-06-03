@@ -28,18 +28,23 @@ type BottomType struct {
 	TypeBase
 }
 
-type LazyType struct {
+type TypeName struct {
 	TypeBase
 	Name Identifier
-	Sem  <-chan struct{}
 }
 
-func NewLazyType(name Identifier, sem <-chan struct{}) *LazyType {
-	return &LazyType{Name: name, Sem: sem}
+func (t *TypeName) String() string {
+	return fmt.Sprintf("%sₙ", t.Name.Value)
 }
 
-func (t *LazyType) String() string {
-	return fmt.Sprintf("lazy(%v)", t.Name)
+type PackageTypeName struct {
+	TypeBase
+	Path ImportPath
+	Name Identifier
+}
+
+func (t *PackageTypeName) String() string {
+	return fmt.Sprintf(`"%s".%s`, t.Path, t.Name)
 }
 
 type TypeOfType struct {
@@ -96,6 +101,10 @@ type UntypedConstantType struct {
 
 func UntypedInt() *UntypedConstantType {
 	return &UntypedConstantType{Kind: UntypedConstantInt}
+}
+
+func UntypedString() *UntypedConstantType {
+	return &UntypedConstantType{Kind: UntypedConstantString}
 }
 
 func (t *UntypedConstantType) IsNumeric() bool {
@@ -168,21 +177,6 @@ func NewBuiltinNumericType(name string) *TypeBuiltin {
 
 func (t *TypeBuiltin) String() string {
 	return fmt.Sprintf("%sᵢ", t.Name.Value)
-}
-
-type TypeName struct {
-	TypeBase
-	Name Identifier
-}
-
-type PackageTypeName struct {
-	TypeBase
-	Path ImportPath
-	Name Identifier
-}
-
-func (t *TypeName) String() string {
-	return fmt.Sprintf("%sₙ", t.Name.Value)
 }
 
 type NamedType struct {

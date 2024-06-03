@@ -223,9 +223,6 @@ func (c *Checker) BuiltinType(name string) tree.Type {
 
 func (c *Checker) ResolveValue(ty tree.Type) tree.Type {
 	switch ty := ty.(type) {
-	case *tree.LazyType:
-		<-ty.Sem
-		return c.Lookup(ty.Name)
 	case *tree.TypeName:
 		return c.Lookup(ty.Name)
 	case *tree.PackageTypeName:
@@ -1510,6 +1507,8 @@ func (c *Checker) SynthBuiltinFunctionCall(f *tree.BuiltinFunctionType, expr *tr
 		return c.SynthBuiltinPrintCall(expr)
 	case "println":
 		return c.SynthBuiltinPrintlnCall(expr)
+	case "copy":
+		return c.SynthBuiltinCopyCall(expr)
 	default:
 		spew.Dump(f)
 		panic("unreachable")
@@ -1629,6 +1628,44 @@ func (c *Checker) SynthBuiltinPrintlnCall(expr *tree.CallExpr) tree.Type {
 	}
 	return &tree.VoidType{}
 }
+
+func (c *Checker) SynthBuiltinCopyCall(expr *tree.CallExpr) tree.Type {
+	if len(expr.Args) != 2 {
+		panic("builtin copy() takes exactly two arguments")
+	}
+
+	ty1 := c.Synth(expr.Args[0])
+	ty2 := c.Synth(expr.Args[1])
+
+	if sliceTy, ok := c.Under(ty1).(*tree.SliceType); ok {
+		spew.Dump(ty1, ty2)
+		if c.Identical(sliceTy, c.BuiltinType("byte")) && (c.Identical(c.Under(ty2), c.BuiltinType("string")) || c.Identical(c.Under(ty2), tree.UntypedString())) {
+			return c.BuiltinType("int")
+		}
+	}
+
+	var elemTy1, elemTy2 tree.Type
+
+	switch ty1 := c.Under(ty1).(type) {
+	case *tree.SliceType:
+		elemTy1 = ty1.ElemType
+	default:
+		panic(fmt.Sprintf("copy() with non-slice type %v", ty1))
+	}
+
+	switch ty2 := c.Under(ty2).(type) {
+	case *tree.SliceType:
+		elemTy2 = ty2.ElemType
+	default:
+		panic(fmt.Sprintf("copy() with non-slice type %v", ty2))
+	}
+
+	c.TyCtx.AddEq(elemTy1, elemTy2)
+
+	return c.BuiltinType("int")
+}
+
+// ========================
 
 func (c *Checker) SynthLiteralExpr(expr *tree.LiteralExpr) tree.Type {
 	// TODO untype literal types
@@ -1916,6 +1953,10 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 		}
 		return ty
 	case *tree.TypeName:
+		// TODO kinda sus
+		if substTy, ok := subst[ty.Name]; ok {
+			return substTy
+		}
 		return ty
 	case *tree.PackageTypeName:
 		return ty
@@ -2602,6 +2643,8 @@ func (c *Checker) IsTypeParam(ty tree.Type) bool {
 
 func (c *Checker) IsConcreteType(ty tree.Type) bool {
 	switch ty := ty.(type) {
+	case *tree.NamedType:
+		return c.IsConcreteType(c.ResolveType(ty.Type))
 	case *tree.TypeOfType:
 		return c.IsConcreteType(ty.Type)
 	case *tree.TypeBuiltin:
@@ -2620,8 +2663,6 @@ func (c *Checker) IsConcreteType(ty tree.Type) bool {
 		return true
 	case *tree.TypeApplication:
 		return c.IsConcreteType(c.TypeApplication(ty))
-	case *tree.NamedType:
-		return c.IsConcreteType(c.ResolveType(ty.Type))
 	case *tree.UntypedConstantType:
 		return true
 	default:
