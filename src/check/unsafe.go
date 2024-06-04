@@ -13,7 +13,7 @@ func MakeUnsafePackage() *VarContext {
 	scope.Def(NewIdentifier("Offsetof"), parse.ParseType("func(interface{}) uintptr"))
 	scope.Def(NewIdentifier("Alignof"), parse.ParseType("func(interface{}) uintptr"))
 	scope.Def(NewIdentifier("Add"), parse.ParseType("func(Pointer, int) Pointer"))
-	scope.Def(NewIdentifier("Slice"), parse.ParseFuncType("func(T, int) []T").WithTypeParams("T"))
+	scope.Def(NewIdentifier("Slice"), parse.ParseFuncType("func(*T, int) []T").WithTypeParams("T"))
 	scope.Def(NewIdentifier("SliceData"), parse.ParseFuncType("func([]T) *T").WithTypeParams("T"))
 	scope.Def(NewIdentifier("String"), parse.ParseType("func(*byte, int) string"))
 	scope.Def(NewIdentifier("StringData"), parse.ParseType("func(string) *byte"))

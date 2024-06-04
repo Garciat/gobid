@@ -1570,41 +1570,71 @@ func (c *Checker) SynthBuiltinLenCall(expr *tree.CallExpr) tree.Type {
 
 	argTy := c.Synth(expr.Args[0])
 
-	if !c.IsSliceLike(argTy) {
+	if !c.HasLen(argTy) {
 		panic(fmt.Sprintf("len() on incompatible type %v", argTy))
 	}
 
 	return c.BuiltinType("int")
 }
 
-func (c *Checker) IsSliceLike(ty tree.Type) bool {
+func (c *Checker) IsLike(ty tree.Type, pred func(ty tree.Type) bool) bool {
 	switch argTy := c.Under(ty).(type) {
-	case *tree.SliceType:
-	case *tree.ArrayType:
-	case *tree.MapType:
-	case *tree.ChannelType:
-	case *tree.TypeBuiltin:
-		if argTy.Name.Value != "string" {
-			return false
-		}
-	case *tree.UntypedConstantType:
-		if !argTy.IsCompatible("string") {
-			return false
-		}
 	case *tree.TypeParam:
 		tyset := c.InterfaceTypeSet(argTy.Bound)
 		if tyset.Universe {
 			return false
 		}
 		for _, t := range tyset.Types {
-			if !c.IsSliceLike(t) {
+			if !pred(t) {
 				return false
 			}
 		}
+		return true
 	default:
-		return false
+		return pred(argTy)
 	}
-	return true
+}
+
+func (c *Checker) IsByteArray(ty tree.Type) bool {
+	return c.IsLike(ty, func(ty tree.Type) bool {
+		switch ty := ty.(type) {
+		case *tree.SliceType:
+			return c.Identical(c.ResolveType(ty.ElemType), c.BuiltinType("byte"))
+		default:
+			return false
+		}
+	})
+}
+
+func (c *Checker) IsStringLike(ty tree.Type) bool {
+	return c.IsLike(ty, func(ty tree.Type) bool {
+		switch ty := ty.(type) {
+		case *tree.TypeBuiltin:
+			return ty.Name.Value == "string"
+		case *tree.UntypedConstantType:
+			return ty.IsCompatible("string")
+		default:
+			return false
+		}
+	})
+}
+
+func (c *Checker) HasLen(ty tree.Type) bool {
+	return c.IsLike(ty, func(ty tree.Type) bool {
+		switch ty := ty.(type) {
+		case *tree.SliceType:
+		case *tree.ArrayType:
+		case *tree.MapType:
+		case *tree.ChannelType:
+		case *tree.TypeBuiltin:
+			return ty.Name.Value == "string"
+		case *tree.UntypedConstantType:
+			return ty.IsCompatible("string")
+		default:
+			return false
+		}
+		return true
+	})
 }
 
 func (c *Checker) SynthBuiltinPanicCall(expr *tree.CallExpr) tree.Type {
@@ -1637,11 +1667,8 @@ func (c *Checker) SynthBuiltinCopyCall(expr *tree.CallExpr) tree.Type {
 	ty1 := c.Synth(expr.Args[0])
 	ty2 := c.Synth(expr.Args[1])
 
-	if sliceTy, ok := c.Under(ty1).(*tree.SliceType); ok {
-		spew.Dump(ty1, ty2)
-		if c.Identical(sliceTy, c.BuiltinType("byte")) && (c.Identical(c.Under(ty2), c.BuiltinType("string")) || c.Identical(c.Under(ty2), tree.UntypedString())) {
-			return c.BuiltinType("int")
-		}
+	if c.IsByteArray(ty1) && c.IsStringLike(ty2) {
+		return c.BuiltinType("int")
 	}
 
 	var elemTy1, elemTy2 tree.Type
@@ -2312,7 +2339,7 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 			c.UnifyEq(left.BaseType, right.BaseType, subst)
 			return
 		}
-		c.UnifyEq(right, left, subst) // TODO weird?
+		panic(fmt.Sprintf("cannot unify: %v = %v", left, right))
 	case *tree.NamedType:
 		c.UnifyEq(c.Under(left), c.Under(right), subst)
 	case *tree.UntypedConstantType:
