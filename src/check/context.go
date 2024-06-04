@@ -48,18 +48,39 @@ type VarContext struct {
 	ScopeKind ScopeKind
 	Parent    *VarContext
 	Types     map[Identifier]tree.Type
+	Constants map[Identifier]tree.Expr
 }
 
-func EmptyVarContext() *VarContext {
-	return &VarContext{Types: map[Identifier]tree.Type{}}
+func NewVarContext() *VarContext {
+	return &VarContext{
+		Types:     map[Identifier]tree.Type{},
+		Constants: map[Identifier]tree.Expr{},
+	}
 }
 
-func (c VarContext) Format() string {
-	parts := []string{}
-	c.Iter(func(name Identifier, ty tree.Type) {
-		parts = append(parts, fmt.Sprintf("%v: %v", name, ty))
-	})
-	return strings.Join(parts, "\n")
+func (c *VarContext) Fork(kind ScopeKind) *VarContext {
+	return &VarContext{
+		ScopeKind: kind,
+		Parent:    c,
+		Types:     map[Identifier]tree.Type{},
+		Constants: map[Identifier]tree.Expr{},
+	}
+}
+
+func (c *VarContext) Lookup(name Identifier) (tree.Type, bool) {
+	ty, ok := c.Types[name]
+	if !ok && c.Parent != nil {
+		return c.Parent.Lookup(name)
+	}
+	return ty, ok
+}
+
+func (c *VarContext) LookupConst(name Identifier) (tree.Expr, bool) {
+	expr, ok := c.Constants[name]
+	if !ok && c.Parent != nil {
+		return c.Parent.LookupConst(name)
+	}
+	return expr, ok
 }
 
 func (c *VarContext) Def(name Identifier, ty tree.Type) tree.Type {
@@ -68,6 +89,17 @@ func (c *VarContext) Def(name Identifier, ty tree.Type) tree.Type {
 			panic(fmt.Errorf("redefined: %v", name))
 		}
 		c.Types[name] = ty
+	}
+	return ty
+}
+
+func (c *VarContext) DefConst(name Identifier, ty tree.Type, expr tree.Expr) tree.Type {
+	if name != IgnoreIdent {
+		if _, ok := c.Types[name]; ok {
+			panic(fmt.Errorf("redefined: %v", name))
+		}
+		c.Types[name] = ty
+		c.Constants[name] = expr
 	}
 	return ty
 }
@@ -93,22 +125,6 @@ func (c *VarContext) DefBuiltinType(name string) tree.Type {
 
 func (c *VarContext) DefBuiltinNumericType(name string) tree.Type {
 	return c.DefType(NewIdentifier(name), tree.NewBuiltinNumericType(name))
-}
-
-func (c *VarContext) Lookup(name Identifier) (tree.Type, bool) {
-	ty, ok := c.Types[name]
-	if !ok && c.Parent != nil {
-		return c.Parent.Lookup(name)
-	}
-	return ty, ok
-}
-
-func (c *VarContext) Fork(kind ScopeKind) *VarContext {
-	return &VarContext{
-		ScopeKind: kind,
-		Parent:    c,
-		Types:     map[Identifier]tree.Type{},
-	}
 }
 
 func (c *VarContext) Iter(f func(Identifier, tree.Type)) {

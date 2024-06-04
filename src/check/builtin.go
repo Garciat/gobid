@@ -7,7 +7,7 @@ import (
 )
 
 func MakeBuiltins() *VarContext {
-	scope := EmptyVarContext()
+	scope := NewVarContext()
 
 	scope.DefBuiltinType("bool")
 	scope.Def(NewIdentifier("true"), &tree.UntypedConstantType{Kind: tree.UntypedConstantBool})

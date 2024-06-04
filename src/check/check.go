@@ -36,7 +36,7 @@ func NewChecker(packages map[ImportPath]*source.Package) *Checker {
 			"unsafe": MakeUnsafePackage(),
 		},
 		TyCtx:    &TypeContext{},
-		VarCtx:   EmptyVarContext(),
+		VarCtx:   NewVarContext(),
 		Builtins: MakeBuiltins(),
 	}
 }
@@ -57,14 +57,37 @@ func (c *Checker) Copy() *Checker {
 func (c *Checker) Run() {
 	packages := SortPackages(c.Packages)
 
-	packageScopes := map[*source.Package]*Checker{}
-	fileScopes := map[*source.FileDef]*Checker{}
+	packageScopes := make(map[*source.Package]*Checker, len(packages))
+	fileScopes := make(map[*source.FileDef]*Checker, len(packages)) // minimum size :shrug:
 
 	for _, pkg := range packages {
+		if pkg.ImportPath == "unsafe" {
+			continue // TODO should not be here
+		}
+
 		packageScopes[pkg] = c.BeginScope(ScopeKindPackage)
 		for _, file := range pkg.Files {
 			fileScopes[file] = packageScopes[pkg].BeginScope(ScopeKindFile)
+
+			for _, decl := range file.Decls {
+				switch decl := decl.(type) {
+				case *tree.ImportDecl:
+					fileScopes[file].DefineImport(decl)
+				}
+			}
 		}
+
+		c.PackageSymbols[pkg.ImportPath] = packageScopes[pkg].VarCtx // TODO seems unprincipled
+	}
+
+	packageSortedDecls := make(map[*source.Package][]tree.Decl, len(packages))
+
+	for _, pkg := range packages {
+		if pkg.ImportPath == "unsafe" {
+			continue // TODO should not be here
+		}
+
+		packageSortedDecls[pkg] = ResolvePackageNames(pkg)
 	}
 
 	for _, pkg := range packages {
@@ -72,15 +95,7 @@ func (c *Checker) Run() {
 			continue // TODO should not be here
 		}
 
-		// TODO use name information from ResolveNames
-		ResolveNames(pkg)
-	}
-
-	for _, pkg := range packages {
-		if pkg.ImportPath == "unsafe" {
-			continue // TODO should not be here
-		}
-
+		// Keep track which file owns which declaration
 		declFile := map[tree.Decl]*source.FileDef{}
 		for _, file := range pkg.Files {
 			for _, decl := range file.Decls {
@@ -88,13 +103,16 @@ func (c *Checker) Run() {
 			}
 		}
 
-		c.PackageSymbols[pkg.ImportPath] = packageScopes[pkg].VarCtx
-
 		fmt.Printf("=== Loading Package (%v) ===\n", pkg.ImportPath)
-		for _, decl := range SortDeclarations(pkg) {
-			fmt.Println(declFile[decl].Path)
-			scope := fileScopes[declFile[decl]]
-			scope.DefineTopLevelDecl(decl)
+		for _, decl := range packageSortedDecls[pkg] {
+			switch decl := decl.(type) {
+			case *tree.ImportDecl:
+				// done earlier
+			default:
+				fmt.Println(declFile[decl].Path)
+				scope := fileScopes[declFile[decl]]
+				scope.DefineTopLevelDecl(decl)
+			}
 		}
 	}
 
@@ -151,8 +169,40 @@ func (c *Checker) Lookup(name Identifier) tree.Type {
 	panic(fmt.Errorf("undefined: %v", name))
 }
 
+func (c *Checker) LookupConst(name Identifier) tree.Expr {
+	expr, ok := c.VarCtx.LookupConst(name)
+	if ok {
+		return expr
+	}
+	panic(fmt.Errorf("undefined constant: %v", name))
+}
+
+func (c *Checker) PackageLookup(ip ImportPath, name Identifier) tree.Type {
+	pkg, ok := c.PackageSymbols[ip]
+	if !ok {
+		panic(fmt.Errorf("package not loaded: %v", ip))
+	}
+	ty, ok := pkg.Lookup(name)
+	if !ok {
+		panic(fmt.Errorf(`undefined: "%v".%v`, ip, name))
+	}
+	return ty
+}
+
+func (c *Checker) PackageLookupConst(ip ImportPath, name Identifier) tree.Expr {
+	pkg, ok := c.PackageSymbols[ip]
+	if !ok {
+		panic(fmt.Errorf("package not loaded: %v", ip))
+	}
+	expr, ok := pkg.LookupConst(name)
+	if !ok {
+		panic(fmt.Errorf(`undefined: "%v".%v`, ip, name))
+	}
+	return expr
+}
+
 func (c *Checker) DefineImport(decl *tree.ImportDecl) {
-	fmt.Printf("DEFINING import %v\n", decl.ImportPath)
+	//fmt.Printf("DEFINING import %v\n", decl.ImportPath)
 	c.VarCtx.Def(NewIdentifier(decl.EffectiveName().Value), &tree.ImportType{ImportPath: decl.ImportPath})
 }
 
@@ -166,14 +216,32 @@ func (c *Checker) DefineValue(name Identifier, ty tree.Type) {
 	}
 }
 
-func (c *Checker) DefineType(name Identifier, ty tree.Type) {
-	fmt.Printf("DEFINING TYPE %v = %v\n", name, ty)
+func (c *Checker) DefineConstant(name Identifier, ty tree.Type, expr tree.Expr) {
+	fmt.Printf("DEFINING %v = %v\n", name, ty)
+
+	var target *VarContext
 	if c.VarCtx.ScopeKind == ScopeKindFile {
 		Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
-		c.VarCtx.Parent.DefType(name, ty)
+		target = c.VarCtx.Parent
 	} else {
-		c.VarCtx.DefType(name, ty)
+		target = c.VarCtx
 	}
+
+	target.DefConst(name, ty, expr)
+}
+
+func (c *Checker) DefineType(name Identifier, ty tree.Type) {
+	fmt.Printf("DEFINING TYPE %v = %v\n", name, ty)
+
+	var target *VarContext
+	if c.VarCtx.ScopeKind == ScopeKindFile {
+		Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
+		target = c.VarCtx.Parent
+	} else {
+		target = c.VarCtx
+	}
+
+	target.DefType(name, ty)
 }
 
 func (c *Checker) DefineFunction(name Identifier, ty *tree.FunctionType) {
@@ -226,17 +294,7 @@ func (c *Checker) ResolveValue(ty tree.Type) tree.Type {
 	case *tree.TypeName:
 		return c.Lookup(ty.Name)
 	case *tree.PackageTypeName:
-		pkg, ok := c.PackageSymbols[ty.Path]
-		if !ok {
-			panic(fmt.Errorf("package not loaded: %v", ty.Path))
-		}
-
-		nameTy, ok := pkg.Lookup(ty.Name)
-		if !ok {
-			panic(fmt.Errorf("package %v has no symbol %v", ty.Path, ty.Name))
-		}
-
-		return nameTy
+		return c.PackageLookup(ty.Path, ty.Name)
 	case *tree.QualIdentifier:
 		// TODO hacky
 		if ty.Package == "" {
@@ -246,15 +304,7 @@ func (c *Checker) ResolveValue(ty tree.Type) tree.Type {
 		if !ok {
 			panic(fmt.Errorf("not an import: %v", ty.Package))
 		}
-		pkg, ok := c.PackageSymbols[imp.ImportPath]
-		if !ok {
-			panic(fmt.Errorf("package not loaded: %v", imp.ImportPath))
-		}
-		nameTy, ok := pkg.Lookup(ty.Name)
-		if !ok {
-			panic(fmt.Errorf("package %v has no symbol %v", imp.ImportPath, ty.Name))
-		}
-		return nameTy
+		return c.PackageLookup(imp.ImportPath, ty.Name)
 	default:
 		return ty
 	}
@@ -290,8 +340,7 @@ func (c *Checker) CheckAssignableTo(src, dst tree.Type) {
 type ScopeKind int
 
 const (
-	ScopeKindBuiltin ScopeKind = iota
-	ScopeKindPackage
+	ScopeKindPackage ScopeKind = iota
 	ScopeKindFile
 	ScopeKindType
 	ScopeKindFunction
@@ -300,8 +349,6 @@ const (
 
 func (k ScopeKind) String() string {
 	switch k {
-	case ScopeKindBuiltin:
-		return "ScopeKindBuiltin"
 	case ScopeKindPackage:
 		return "ScopeKindPackage"
 	case ScopeKindFile:
@@ -388,6 +435,7 @@ func (c *Checker) DefineImportDecl(decl *tree.ImportDecl) {
 }
 
 func (c *Checker) DefineConstDecl(decl *tree.ConstDecl) {
+	spew.Dump(decl)
 	var exprTy tree.Type = c.Synth(decl.Value)
 	var declTy tree.Type
 	if decl.Type != nil {
@@ -396,7 +444,7 @@ func (c *Checker) DefineConstDecl(decl *tree.ConstDecl) {
 	} else {
 		declTy = exprTy
 	}
-	c.DefineValue(decl.Name, declTy)
+	c.DefineConstant(decl.Name, declTy, decl.Value)
 }
 
 func (c *Checker) DefineTypeDecl(decl *tree.TypeDecl) {
@@ -1227,15 +1275,7 @@ func (c *Checker) SynthSelectorExpr(expr *tree.SelectorExpr) tree.Type {
 func (c *Checker) DoSelect(exprTy tree.Type, sel Identifier) tree.Type {
 	switch imp := c.ResolveValue(exprTy).(type) {
 	case *tree.ImportType:
-		pkg, ok := c.PackageSymbols[imp.ImportPath]
-		if !ok {
-			panic(fmt.Errorf("package not loaded: %v", imp.ImportPath))
-		}
-		nameTy, ok := pkg.Lookup(sel)
-		if !ok {
-			panic(fmt.Errorf("package %v has no symbol %v", imp.ImportPath, sel))
-		}
-		return nameTy
+		return c.PackageLookup(imp.ImportPath, sel)
 	}
 
 	checkTy := c.ResolveType(exprTy)
@@ -1844,8 +1884,7 @@ func (c *Checker) MakeCompositeLitArray(expr *tree.CompositeLitExpr, arrayTy *tr
 	default:
 		arrayLen = c.EvaluateConstantIntExpr(arrayTy.Len)
 		if len(expr.Elems) > arrayLen {
-			//panic("composite literal with wrong number of elements")
-			// TODO unblocking for now
+			panic("composite literal with wrong number of elements")
 		}
 	}
 	for _, elem := range expr.Elems {
@@ -1861,9 +1900,9 @@ func (c *Checker) MakeCompositeLitArray(expr *tree.CompositeLitExpr, arrayTy *tr
 func (c *Checker) EvaluateConstantIntExpr(expr tree.Expr) int {
 	switch expr := expr.(type) {
 	case *tree.NameExpr:
-		return 1 // TODO omg
+		return c.EvaluateConstantIntExpr(c.LookupConst(expr.Name))
 	case *tree.PackageNameExpr:
-		return 1 // TODO omg
+		return c.EvaluateConstantIntExpr(c.PackageLookupConst(expr.Path, expr.Name))
 	case *tree.ConstIntExpr:
 		return expr.Value
 	case *tree.LiteralExpr:
@@ -2691,6 +2730,8 @@ func (c *Checker) IsConcreteType(ty tree.Type) bool {
 	case *tree.TypeApplication:
 		return c.IsConcreteType(c.TypeApplication(ty))
 	case *tree.UntypedConstantType:
+		return true
+	case *tree.FunctionType:
 		return true
 	default:
 		spew.Dump(ty)

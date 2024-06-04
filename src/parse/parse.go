@@ -1,7 +1,6 @@
 package parse
 
 import (
-	"fmt"
 	"github.com/garciat/gobid/source"
 	"go/ast"
 	goparser "go/parser"
@@ -65,7 +64,7 @@ func (p *parser) ParsePackage(path string) []*source.FileDef {
 }
 
 func (p *parser) readAST(path string, fast *ast.File) *source.FileDef {
-	fmt.Printf("=== Parser.readAST(%v) ===\n", path)
+	//fmt.Printf("=== Parser.readAST(%v) ===\n", path)
 	return ReadFile(path, fast)
 }
 

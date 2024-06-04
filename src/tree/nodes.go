@@ -469,6 +469,7 @@ func (d *ImportDecl) EffectiveName() Identifier {
 	if d.Alias != nil {
 		name = d.Alias.Value
 	} else {
+		// TODO (P0) that's not actually how it works
 		name = d.ImportPath.PackageName()
 	}
 	return NewIdentifier(name)
@@ -576,6 +577,11 @@ func WalkExpr(v ExprVisitor, expr Expr) {
 	case *LiteralExpr:
 	case *FuncLitExpr:
 	case *CompositeLitExpr:
+		// TODO hacky special case...
+		switch t := n.Type.(type) {
+		case *ArrayType:
+			WalkExpr(v, t.Len)
+		}
 		for _, e := range n.Elems {
 			WalkExpr(v, e.Key)
 			WalkExpr(v, e.Value)

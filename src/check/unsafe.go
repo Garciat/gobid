@@ -7,7 +7,7 @@ import (
 )
 
 func MakeUnsafePackage() *VarContext {
-	scope := EmptyVarContext()
+	scope := NewVarContext()
 	scope.DefType(NewIdentifier("Pointer"), tree.NewBuiltinType("Pointer"))
 	scope.Def(NewIdentifier("Sizeof"), parse.ParseType("func(interface{}) uintptr"))
 	scope.Def(NewIdentifier("Offsetof"), parse.ParseType("func(interface{}) uintptr"))

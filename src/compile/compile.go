@@ -51,17 +51,17 @@ func (u *CompilationUnit) LoadFile(target ImportPath, file *source.FileDef) {
 	}
 
 	if strings.HasSuffix(file.Path, "_test.go") {
-		fmt.Printf("skipping test file %v\n", file.Path)
+		//fmt.Printf("skipping test file %v\n", file.Path)
 		return
 	}
 
 	if !u.EvalArchSuffix(file.Path) {
-		fmt.Printf("skipping file %v with arch suffix\n", file.Path)
+		//fmt.Printf("skipping file %v with arch suffix\n", file.Path)
 		return
 	}
 
 	if !u.EvalBuildConstraint(file.BuildConstraint) {
-		fmt.Printf("skipping file %v with build constraint '%v'\n", file.Path, file.BuildConstraint)
+		//fmt.Printf("skipping file %v with build constraint '%v'\n", file.Path, file.BuildConstraint)
 		return
 	}
 
@@ -112,7 +112,6 @@ func (u *CompilationUnit) ReadPackageFiles(ip ImportPath) []*source.FileDef {
 	}
 
 	if ip == "unsafe" {
-		fmt.Printf("skipping unsafe import\n")
 		return nil
 	}
 

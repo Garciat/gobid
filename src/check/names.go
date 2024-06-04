@@ -7,92 +7,89 @@ import (
 	"github.com/garciat/gobid/common"
 	"github.com/garciat/gobid/source"
 	"github.com/garciat/gobid/tree"
+	"slices"
+	"strings"
 )
 
-type Ref struct {
-	Expr *tree.Expr
-	Type *tree.Type
+type NameDependencies = common.Map[common.Identifier, common.Set[common.Identifier]]
+
+type WalkResult struct {
+	Dependencies common.Set[common.Identifier]
+	NameTypeRefs common.Map[common.Identifier, common.Set[*tree.Type]]
+	NameExprRefs common.Map[common.Identifier, common.Set[*tree.Expr]]
 }
 
-type Deps = common.Set[Ref]
-
-var NoDeps = Deps{}
-
-func NewVarRef(ref *tree.Expr) Deps {
-	result := Deps{}
-	result.Add(Ref{Expr: ref})
-	return result
+func (wr WalkResult) WithDeps(dep ...common.Identifier) WalkResult {
+	return WalkResult{
+		Dependencies: common.NewSet(dep...),
+		NameTypeRefs: wr.NameTypeRefs,
+		NameExprRefs: wr.NameExprRefs,
+	}
 }
 
-func NewTypeRef(ref *tree.Type) Deps {
-	result := Deps{}
-	result.Add(Ref{Type: ref})
-	return result
+func EmptyResult() WalkResult {
+	return WalkResult{
+		Dependencies: common.NewSet[common.Identifier](),
+		NameTypeRefs: make(common.Map[common.Identifier, common.Set[*tree.Type]]),
+		NameExprRefs: make(common.Map[common.Identifier, common.Set[*tree.Expr]]),
+	}
+}
+
+func NewTypeRef(name common.Identifier, ty *tree.Type) WalkResult {
+	return WalkResult{
+		Dependencies: common.NewSet(name),
+		NameTypeRefs: common.Map[common.Identifier, common.Set[*tree.Type]]{
+			name: common.NewSet(ty),
+		},
+		NameExprRefs: make(common.Map[common.Identifier, common.Set[*tree.Expr]]),
+	}
+}
+
+func NewExprRef(name common.Identifier, expr *tree.Expr) WalkResult {
+	return WalkResult{
+		Dependencies: common.NewSet(name),
+		NameTypeRefs: make(common.Map[common.Identifier, common.Set[*tree.Type]]),
+		NameExprRefs: common.Map[common.Identifier, common.Set[*tree.Expr]]{
+			name: common.NewSet(expr),
+		},
+	}
+}
+
+func CombineWalkResults(results ...WalkResult) WalkResult {
+	deps := make(common.Set[common.Identifier])
+	typeRefs := make(common.Map[common.Identifier, common.Set[*tree.Type]])
+	exprRefs := make(common.Map[common.Identifier, common.Set[*tree.Expr]])
+
+	for _, result := range results {
+		deps.Merge(result.Dependencies)
+		typeRefs.MergeFunc(result.NameTypeRefs, common.MergeSets2[*tree.Type])
+		exprRefs.MergeFunc(result.NameExprRefs, common.MergeSets2[*tree.Expr])
+	}
+
+	return WalkResult{
+		Dependencies: deps,
+		NameTypeRefs: typeRefs,
+		NameExprRefs: exprRefs,
+	}
 }
 
 type NameInfo struct {
-	Scope        ScopeKind
-	Kind         common.DeclKind
-	Name         common.Identifier
-	Dependencies Deps
+	Kind     common.DeclKind
+	Name     common.Identifier
+	Decl     tree.Decl
+	Deps     common.Set[common.Identifier]
+	ExprRefs common.Set[*tree.Expr]
+	TypeRefs common.Set[*tree.Type]
 }
 
 type NameContext struct {
-	Parent    *NameContext
-	Children  []*NameContext
-	ScopeKind ScopeKind
-	Scope     any
-	Names     map[common.Identifier]*NameInfo
-}
-
-func (ctx *NameContext) Define(kind common.DeclKind, name common.Identifier, deps Deps) *NameInfo {
-	var target *NameContext
-
-	switch kind {
-	case common.DeclKindImport:
-		common.Assert(ctx.ScopeKind == ScopeKindFile, "import decl in non-file scope")
-		common.Assert(ctx.Parent.ScopeKind == ScopeKindPackage, "BUG")
-		target = ctx.Parent
-	case common.DeclKindConst, common.DeclKindVar, common.DeclKindFunc, common.DeclKindAlias, common.DeclKindType:
-		if ctx.ScopeKind == ScopeKindFile {
-			common.Assert(ctx.Parent.ScopeKind == ScopeKindPackage, "BUG")
-			target = ctx.Parent
-		} else {
-			target = ctx
-		}
-	case common.DeclKindMethod:
-		common.Assert(ctx.ScopeKind == ScopeKindFile, "method decl in non-file scope")
-		target = ctx.Parent
-	case common.DeclKindTypeParam, common.DeclKindParam:
-		// always locals
-		target = ctx
-	default:
-		spew.Dump(kind)
-		panic("unreachable")
-	}
-
-	info := &NameInfo{
-		Scope:        target.ScopeKind,
-		Kind:         kind,
-		Name:         name,
-		Dependencies: deps,
-	}
-
-	target.Names[name] = info
-
-	return info
+	Names common.Map[common.Identifier, *NameInfo]
 }
 
 // ====================
 
-func MakeBuiltinContext() *NameContext {
-	ctx := &NameContext{
-		Parent:    nil,
-		Children:  nil,
-		ScopeKind: ScopeKindBuiltin,
-		Scope:     nil,
-		Names:     make(map[common.Identifier]*NameInfo),
-	}
+func MakeBuiltinNames() common.Map[common.Identifier, *NameInfo] {
+	names := make(common.Map[common.Identifier, *NameInfo])
 
 	builtins := MakeBuiltins()
 
@@ -101,6 +98,8 @@ func MakeBuiltinContext() *NameContext {
 		switch ty := ty.(type) {
 		case *tree.TypeOfType:
 			switch ty.Type.(type) {
+			case *tree.NamedType:
+				kind = common.DeclKindType
 			case *tree.TypeBuiltin:
 				kind = common.DeclKindType
 			default:
@@ -111,456 +110,583 @@ func MakeBuiltinContext() *NameContext {
 		default:
 			kind = common.DeclKindConst
 		}
-		ctx.Names[name] = &NameInfo{
-			Scope:        ScopeKindBuiltin,
-			Kind:         kind,
-			Name:         name,
-			Dependencies: NoDeps,
+		names[name] = &NameInfo{
+			Kind: kind,
+			Name: name,
+			Deps: common.Set[common.Identifier]{},
 		}
 	}
 
-	return ctx
+	return names
 }
 
 // ====================
 
-type NameResolver struct {
-	PackagePath common.ImportPath
-	Imports     map[common.Identifier]common.ImportPath
-	Context     *NameContext
-}
+func ResolvePackageNames(pkg *source.Package) []tree.Decl {
+	fmt.Printf("=== ResolvePackageNames(%v) ===\n", pkg.ImportPath)
 
-func ResolveNames(pkg *source.Package) {
-	fmt.Printf("=== ResolveNames(%v) ===\n", pkg.ImportPath)
-	nr := &NameResolver{
-		PackagePath: pkg.ImportPath,
-		Imports:     make(map[common.Identifier]common.ImportPath),
-		Context: &NameContext{
-			Parent:    MakeBuiltinContext(),
-			Children:  nil,
-			ScopeKind: ScopeKindPackage,
-			Scope:     pkg,
-			Names:     make(map[common.Identifier]*NameInfo),
-		},
-	}
-	nr.BuildGraph(pkg)
+	packageNames := make(common.Map[common.Identifier, *NameInfo])
+	compositeLitKeys := make(common.Set[common.Identifier])
 
-	nr.CheckCycles()
+	packageTypeRefs := make(common.Map[common.Identifier, common.Set[*tree.Type]])
+	packageExprRefs := make(common.Map[common.Identifier, common.Set[*tree.Expr]])
 
-	reps := make(map[common.Identifier]tree.Node)
-	for _, name := range nr.Context.Parent.Names {
-		reps[name.Name] = nr.MakeReplacement(name)
-	}
-
-	nr.BindContext(nr.Context, reps)
-}
-
-func (nr *NameResolver) Fork(kind ScopeKind, scope any) *NameResolver {
-	parent := nr.Context
-	child := &NameContext{
-		Parent:    parent,
-		Children:  nil,
-		ScopeKind: kind,
-		Scope:     scope,
-		Names:     make(map[common.Identifier]*NameInfo),
-	}
-	parent.Children = append(parent.Children, child)
-	return &NameResolver{
-		PackagePath: nr.PackagePath,
-		Imports:     nr.Imports,
-		Context:     child,
-	}
-}
-
-// ====================
-
-func (nr *NameResolver) BuildGraph(pkg *source.Package) {
 	for _, file := range pkg.Files {
-		scopeFile := nr.Fork(ScopeKindFile, file)
+		walker := NewGraphWalker()
+
+		fileTypeRefs := make(common.Map[common.Identifier, common.Set[*tree.Type]])
+		fileExprRefs := make(common.Map[common.Identifier, common.Set[*tree.Expr]])
+
 		for _, decl := range file.Decls {
-			scopeFile.GraphWalkDecl(decl)
+			res := walker.GraphWalkDecl(decl)
+			fileTypeRefs.MergeFunc(res.NameTypeRefs, common.MergeSets2[*tree.Type])
+			fileExprRefs.MergeFunc(res.NameExprRefs, common.MergeSets2[*tree.Expr])
 		}
+
+		importReplacements := make(common.Map[common.Identifier, tree.Node])
+		for id, path := range walker.Imports {
+			importReplacements[id] = &tree.ImportNameExpr{Path: path, Name: id}
+
+			for _, name := range walker.Context.Names {
+				name.Deps.Remove(id)
+			}
+		}
+		ApplyReplacements(importReplacements, fileTypeRefs, fileExprRefs)
+
+		err := packageNames.MergeStrict(walker.Context.Names)
+		if err != nil {
+			panic(fmt.Errorf("duplicate name in file: %v", err))
+		}
+
+		packageTypeRefs.MergeFunc(fileTypeRefs, common.MergeSets2[*tree.Type])
+		packageExprRefs.MergeFunc(fileExprRefs, common.MergeSets2[*tree.Expr])
+
+		compositeLitKeys.Merge(walker.CompositeLitKeys)
+	}
+
+	missingKeysReplacements := make(common.Map[common.Identifier, tree.Node])
+	for key := range compositeLitKeys {
+		if !packageNames.Contains(key) {
+			// drop this for now; wait for later failure, but keep this graph clean
+			missingKeysReplacements.Add(key, &tree.NameExpr{Name: key})
+		}
+	}
+	ApplyReplacements(missingKeysReplacements, packageTypeRefs, packageExprRefs)
+
+	packageNameReplacements := make(common.Map[common.Identifier, tree.Node])
+	for id, name := range packageNames {
+		packageNameReplacements[id] = MakeReplacement(pkg, name)
+	}
+	ApplyReplacements(packageNameReplacements, packageTypeRefs, packageExprRefs)
+
+	builtinNames := MakeBuiltinNames()
+	for id := range builtinNames {
+		delete(packageTypeRefs, id)
+		delete(packageExprRefs, id)
+	}
+
+	if len(packageExprRefs) != 0 || len(packageTypeRefs) != 0 {
+		panic(fmt.Sprintf("unresolved references:\nexpr=%v\ntype=%v", packageExprRefs, packageTypeRefs))
+	}
+
+	dependencies := make(NameDependencies)
+	for _, name := range packageNames {
+		dependencies[name.Name] = name.Deps.
+			RemoveAll(missingKeysReplacements.Keys()).
+			RemoveAll(builtinNames.Keys())
+	}
+	VerifyNameCycles(packageNames, dependencies)
+
+	sortedNames := TopologicalSort2(packageNames, func(name *NameInfo) common.Set[common.Identifier] {
+		return dependencies[name.Name]
+	})
+
+	sortedDecls := make([]tree.Decl, 0, len(packageNames))
+	for i, name := range sortedNames {
+		if packageNames[name.Name] == nil {
+			panic("what")
+		}
+		if name.Kind == common.DeclKindImport {
+			// handled outside
+			continue
+		}
+		sortedDecls = append(sortedDecls, name.Decl)
+		_ = i
+	}
+
+	return sortedDecls
+}
+
+// ====================
+
+type GraphWalker struct {
+	Context          *NameContext
+	Imports          common.Map[common.Identifier, common.ImportPath]
+	CompositeLitKeys common.Set[common.Identifier]
+}
+
+func NewGraphWalker() *GraphWalker {
+	return &GraphWalker{
+		Context:          &NameContext{Names: make(common.Map[common.Identifier, *NameInfo])},
+		Imports:          make(common.Map[common.Identifier, common.ImportPath]),
+		CompositeLitKeys: make(common.Set[common.Identifier]),
 	}
 }
 
-func (nr *NameResolver) GraphWalkDecl(decl tree.Decl) Deps {
+func (gw *GraphWalker) Define(
+	kind common.DeclKind,
+	name common.Identifier,
+	decl tree.Decl,
+	deps common.Set[common.Identifier],
+) {
+	if name == common.IgnoreIdent {
+		return
+	}
+	if kind == common.DeclKindFunc && name.Value == "init" {
+		return
+	}
+	gw.Context.Names[name] = &NameInfo{
+		Kind: kind,
+		Name: name,
+		Deps: deps,
+		Decl: decl,
+	}
+}
+
+func (gw *GraphWalker) GraphWalkDecl(decl tree.Decl) WalkResult {
 	switch decl := decl.(type) {
 	case *tree.ImportDecl:
-		return nr.GraphWalkImportDecl(decl)
+		return gw.GraphWalkImportDecl(decl)
+	}
+
+	switch decl := decl.(type) {
 	case *tree.ConstDecl:
-		return nr.GraphWalkConstDecl(decl)
+		return gw.GraphWalkConstDecl(decl)
 	case *tree.VarDecl:
-		return nr.GraphWalkVarDecl(decl)
+		return gw.GraphWalkVarDecl(decl)
 	case *tree.TypeDecl:
-		return nr.GraphWalkTypeDecl(decl)
+		return gw.GraphWalkTypeDecl(decl)
 	case *tree.AliasDecl:
-		return nr.GraphWalkAliasDecl(decl)
+		return gw.GraphWalkAliasDecl(decl)
 	case *tree.FunctionDecl:
-		return nr.GraphWalkFunctionDecl(decl)
+		return gw.GraphWalkFunctionDecl(decl)
 	case *tree.MethodDecl:
-		return nr.GraphWalkMethodDecl(decl)
+		return gw.GraphWalkMethodDecl(decl)
 	default:
 		panic(fmt.Sprintf("unknown decl type: %T", decl))
 	}
 }
 
-func (nr *NameResolver) GraphWalkImportDecl(decl *tree.ImportDecl) Deps {
-	nr.Context.Define(common.DeclKindImport, decl.EffectiveName(), NoDeps)
-	nr.Imports[decl.EffectiveName()] = decl.ImportPath
-	return NoDeps
+func (gw *GraphWalker) GraphWalkImportDecl(decl *tree.ImportDecl) WalkResult {
+	switch {
+	case decl.Alias != nil && *decl.Alias == common.IgnoreIdent:
+		return EmptyResult()
+	case decl.Alias != nil && *decl.Alias == common.NewIdentifier("."):
+		return EmptyResult()
+	default:
+		gw.Imports[decl.EffectiveName()] = decl.ImportPath
+		//gw.Define(common.DeclKindImport, decl.EffectiveName(), decl, common.NewSet[common.Identifier]())
+		return EmptyResult()
+	}
 }
 
-func (nr *NameResolver) GraphWalkConstDecl(decl *tree.ConstDecl) Deps {
-	deps := common.MergeSets(
-		nr.GraphWalkType(&decl.Type),
-		nr.GraphWalkExpr(&decl.Value),
+func (gw *GraphWalker) GraphWalkConstDecl(decl *tree.ConstDecl) WalkResult {
+	res := CombineWalkResults(
+		gw.GraphWalkType(&decl.Type),
+		gw.GraphWalkExpr(&decl.Value),
 	)
 
-	nr.Context.Define(common.DeclKindConst, decl.Name, deps)
+	gw.Define(common.DeclKindConst, decl.Name, decl, res.Dependencies)
 
-	return deps
+	return res.WithDeps(decl.Name)
 }
 
-func (nr *NameResolver) GraphWalkVarDecl(decl *tree.VarDecl) Deps {
-	deps := common.MergeSets(
-		nr.GraphWalkType(&decl.Type),
-		nr.GraphWalkExpr(&decl.Expr),
+func (gw *GraphWalker) GraphWalkVarDecl(decl *tree.VarDecl) WalkResult {
+	res := CombineWalkResults(
+		gw.GraphWalkType(&decl.Type),
+		gw.GraphWalkExpr(&decl.Expr),
 	)
+
+	names := make([]common.Identifier, 0, len(decl.Names))
 
 	for _, name := range decl.Names {
-		nr.Context.Define(common.DeclKindVar, name, deps)
+		gw.Define(common.DeclKindVar, name, decl, res.Dependencies)
+		names = append(names, name)
 	}
 
-	return deps
+	return res.WithDeps(names...)
 }
 
-func (nr *NameResolver) GraphWalkTypeDecl(decl *tree.TypeDecl) Deps {
-	scope := nr.Fork(ScopeKindType, decl)
-
-	deps := common.MergeSets(
-		scope.GraphWalkTypeParamList(decl.TypeParams),
-		scope.GraphWalkType(&decl.Type),
+func (gw *GraphWalker) GraphWalkTypeDecl(decl *tree.TypeDecl) WalkResult {
+	res := CombineWalkResults(
+		gw.GraphWalkTypeParamList(decl.TypeParams),
+		gw.GraphWalkType(&decl.Type),
 	)
 
-	nr.Context.Define(common.DeclKindType, decl.Name, deps)
+	res.Dependencies.Remove(decl.Name)
+	for _, tyParam := range decl.TypeParams.Params {
+		res.Dependencies.Remove(tyParam.Name)
+		res.NameTypeRefs.Remove(tyParam.Name)
+		res.NameExprRefs.Remove(tyParam.Name) // shouldn't have any
+	}
 
-	return deps
+	gw.Define(common.DeclKindType, decl.Name, decl, res.Dependencies)
+
+	return res.WithDeps(decl.Name)
 }
 
-func (nr *NameResolver) GraphWalkAliasDecl(decl *tree.AliasDecl) Deps {
-	deps := nr.GraphWalkType(&decl.Type)
-	nr.Context.Define(common.DeclKindAlias, decl.Name, deps)
-	return deps
+func (gw *GraphWalker) GraphWalkAliasDecl(decl *tree.AliasDecl) WalkResult {
+	res := gw.GraphWalkType(&decl.Type)
+
+	gw.Define(common.DeclKindAlias, decl.Name, decl, res.Dependencies)
+
+	return res.WithDeps(decl.Name)
 }
 
-func (nr *NameResolver) GraphWalkFunctionDecl(decl *tree.FunctionDecl) Deps {
-	scope := nr.Fork(ScopeKindFunction, decl)
+func (gw *GraphWalker) GraphWalkFunctionDecl(decl *tree.FunctionDecl) WalkResult {
+	res := gw.GraphWalkSignature(decl.Signature)
 
-	deps := scope.GraphWalkSignature(decl.Signature)
+	gw.Define(common.DeclKindFunc, decl.Name, decl, res.Dependencies)
 
-	nr.Context.Define(common.DeclKindFunc, decl.Name, deps)
-
-	return deps
+	return res.WithDeps(decl.Name)
 }
 
-func (nr *NameResolver) GraphWalkMethodDecl(decl *tree.MethodDecl) Deps {
-	return NoDeps
+func (gw *GraphWalker) GraphWalkMethodDecl(decl *tree.MethodDecl) WalkResult {
+	//res := gw.GraphWalkSignature(decl.Signature)
+
+	// TODO could save methods here?
+
+	return EmptyResult()
 }
 
-func (nr *NameResolver) GraphWalkSignature(sig *tree.Signature) Deps {
-	return common.MergeSets(
-		nr.GraphWalkTypeParamList(sig.TypeParams),
-		nr.GraphWalkParamList(sig.Params),
-		nr.GraphWalkParamList(sig.Results),
+func (gw *GraphWalker) GraphWalkSignature(sig *tree.Signature) WalkResult {
+	res := CombineWalkResults(
+		gw.GraphWalkTypeParamList(sig.TypeParams),
+		gw.GraphWalkParamList(sig.Params),
+		gw.GraphWalkParamList(sig.Results),
 	)
-}
 
-func (nr *NameResolver) GraphWalkTypeParamList(list *tree.TypeParamList) Deps {
-	allDeps := make([]Deps, len(list.Params))
-	for i, param := range list.Params {
-		deps := nr.GraphWalkInterfaceType(param.Constraint)
-		nr.Context.Define(common.DeclKindTypeParam, param.Name, NoDeps)
-		allDeps[i] = deps
+	for _, tyParam := range sig.TypeParams.Params {
+		res.Dependencies.Remove(tyParam.Name)
+		res.NameTypeRefs.Remove(tyParam.Name)
+		res.NameExprRefs.Remove(tyParam.Name) // shouldn't have any
 	}
-	return common.MergeSets(allDeps...)
+
+	return res
 }
 
-func (nr *NameResolver) GraphWalkParamList(list *tree.ParameterList) Deps {
-	allDeps := make([]Deps, len(list.Params))
+func (gw *GraphWalker) GraphWalkTypeParamList(list *tree.TypeParamList) WalkResult {
+	allDeps := make([]WalkResult, len(list.Params))
 	for i, param := range list.Params {
-		deps := nr.GraphWalkType(&param.Type)
-		nr.Context.Define(common.DeclKindParam, param.Name, NoDeps)
-		allDeps[i] = deps
+		allDeps[i] = gw.GraphWalkInterfaceType(param.Constraint)
 	}
-	return common.MergeSets(allDeps...)
+	return CombineWalkResults(allDeps...)
 }
 
-func (nr *NameResolver) GraphWalkType(arg *tree.Type) Deps {
+func (gw *GraphWalker) GraphWalkParamList(list *tree.ParameterList) WalkResult {
+	allDeps := make([]WalkResult, len(list.Params))
+	for i, param := range list.Params {
+		allDeps[i] = gw.GraphWalkType(&param.Type)
+	}
+	return CombineWalkResults(allDeps...)
+}
+
+func (gw *GraphWalker) GraphWalkType(arg *tree.Type) WalkResult {
 	if *arg == nil {
-		return NoDeps
+		return EmptyResult()
 	}
 	switch ty := (*arg).(type) {
 	case *tree.NamedType:
 		panic("doesn't exist yet")
 	case *tree.QualIdentifier:
-		return NoDeps
+		return EmptyResult()
 	case *tree.TypeName:
-		return NewTypeRef(arg)
+		return NewTypeRef(ty.Name, arg)
 	case *tree.TypeApplication:
-		return nr.GraphWalkTypeApplication(ty)
+		return gw.GraphWalkTypeApplication(ty)
 	case *tree.InterfaceType:
-		return nr.GraphWalkInterfaceType(ty)
+		return gw.GraphWalkInterfaceType(ty)
 	case *tree.StructType:
-		return nr.GraphWalkStructType(ty)
+		return gw.GraphWalkStructType(ty)
 	case *tree.ArrayType:
-		return nr.GraphWalkArrayType(ty)
+		return gw.GraphWalkArrayType(ty)
 	case *tree.FunctionType:
-		return nr.GraphWalkSignature(ty.Signature)
+		return gw.GraphWalkSignature(ty.Signature)
 	case *tree.SliceType:
-		return nr.GraphWalkType(&ty.ElemType)
+		return gw.GraphWalkType(&ty.ElemType)
 	case *tree.MapType:
-		return nr.GraphWalkMapType(ty)
+		return gw.GraphWalkMapType(ty)
 	case *tree.PointerType:
-		return nr.GraphWalkType(&ty.BaseType)
+		return gw.GraphWalkType(&ty.BaseType)
 	case *tree.ChannelType:
-		return nr.GraphWalkType(&ty.ElemType)
+		return gw.GraphWalkType(&ty.ElemType)
 	default:
 		spew.Dump(ty)
 		panic("unreachable")
 	}
 }
 
-func (nr *NameResolver) GraphWalkTypeApplication(ty *tree.TypeApplication) Deps {
-	allDeps := make([]Deps, len(ty.Args)+1)
-	for i, arg := range ty.Args {
-		deps := nr.GraphWalkType(&arg)
-		allDeps[i] = deps
+func (gw *GraphWalker) GraphWalkTypeApplication(ty *tree.TypeApplication) WalkResult {
+	allDeps := make([]WalkResult, len(ty.Args)+1)
+	for _, arg := range ty.Args {
+		allDeps = append(allDeps, gw.GraphWalkType(&arg))
 	}
-	allDeps[len(ty.Args)] = nr.GraphWalkType(&ty.Type)
-	return common.MergeSets(allDeps...)
+	allDeps = append(allDeps, gw.GraphWalkType(&ty.Type))
+	return CombineWalkResults(allDeps...)
 }
 
-func (nr *NameResolver) GraphWalkInterfaceType(ty *tree.InterfaceType) Deps {
-	allDeps := make([]Deps, len(ty.Methods))
-	for i, method := range ty.Methods {
-		deps := nr.GraphWalkSignature(method.Type.Signature)
-		allDeps[i] = deps
+func (gw *GraphWalker) GraphWalkInterfaceType(ty *tree.InterfaceType) WalkResult {
+	allDeps := make([]WalkResult, 0, len(ty.Methods))
+	for _, method := range ty.Methods {
+		allDeps = append(allDeps, gw.GraphWalkSignature(method.Type.Signature))
 	}
 	for _, constraint := range ty.Constraints {
 		for _, param := range constraint.TypeElem.Union {
-			deps := nr.GraphWalkType(&param.Type)
+			deps := gw.GraphWalkType(&param.Type)
 			allDeps = append(allDeps, deps)
 		}
 	}
-	return common.MergeSets(allDeps...)
+	return CombineWalkResults(allDeps...)
 }
 
-func (nr *NameResolver) GraphWalkStructType(ty *tree.StructType) Deps {
-	allDeps := make([]Deps, len(ty.Fields))
-	for i, field := range ty.Fields {
-		deps := nr.GraphWalkType(&field.Type)
-		allDeps[i] = deps
+func (gw *GraphWalker) GraphWalkStructType(ty *tree.StructType) WalkResult {
+	allDeps := make([]WalkResult, 0, len(ty.Fields))
+	for _, field := range ty.Fields {
+		allDeps = append(allDeps, gw.GraphWalkType(&field.Type))
 	}
-	return common.MergeSets(allDeps...)
+	return CombineWalkResults(allDeps...)
 }
 
-func (nr *NameResolver) GraphWalkArrayType(ty *tree.ArrayType) Deps {
-	return common.MergeSets(
-		nr.GraphWalkExpr(&ty.Len),
-		nr.GraphWalkType(&ty.ElemType),
+func (gw *GraphWalker) GraphWalkArrayType(ty *tree.ArrayType) WalkResult {
+	return CombineWalkResults(
+		gw.GraphWalkExpr(&ty.Len),
+		gw.GraphWalkType(&ty.ElemType),
 	)
 }
 
-func (nr *NameResolver) GraphWalkMapType(ty *tree.MapType) Deps {
-	return common.MergeSets(
-		nr.GraphWalkType(&ty.KeyType),
-		nr.GraphWalkType(&ty.ElemType),
+func (gw *GraphWalker) GraphWalkMapType(ty *tree.MapType) WalkResult {
+	return CombineWalkResults(
+		gw.GraphWalkType(&ty.KeyType),
+		gw.GraphWalkType(&ty.ElemType),
 	)
 }
 
-func (nr *NameResolver) GraphWalkExpr(arg *tree.Expr) Deps {
+func (gw *GraphWalker) GraphWalkExpr(arg *tree.Expr) WalkResult {
 	if *arg == nil {
-		return NoDeps
+		return EmptyResult()
 	}
 	switch expr := (*arg).(type) {
+	case *tree.NameExpr:
+		return NewExprRef(expr.Name, arg)
 	case *tree.TypeExpr:
-		return nr.GraphWalkType(&expr.Type)
+		return gw.GraphWalkType(&expr.Type)
 	case *tree.BinaryExpr:
-		return common.MergeSets(
-			nr.GraphWalkExpr(&expr.Left),
-			nr.GraphWalkExpr(&expr.Right),
+		return CombineWalkResults(
+			gw.GraphWalkExpr(&expr.Left),
+			gw.GraphWalkExpr(&expr.Right),
 		)
 	case *tree.UnaryExpr:
-		return nr.GraphWalkExpr(&expr.Expr)
+		return gw.GraphWalkExpr(&expr.Expr)
 	case *tree.StarExpr:
-		return nr.GraphWalkExpr(&expr.Expr)
+		return gw.GraphWalkExpr(&expr.Expr)
 	case *tree.AddressExpr:
-		return nr.GraphWalkExpr(&expr.Expr)
+		return gw.GraphWalkExpr(&expr.Expr)
 	case *tree.ConversionExpr:
-		return nr.GraphWalkExpr(&expr.Expr)
+		return CombineWalkResults(
+			gw.GraphWalkExpr(&expr.Expr),
+			gw.GraphWalkType(&expr.Type),
+		)
 	case *tree.SelectorExpr:
-		return nr.GraphWalkExpr(&expr.Expr)
+		return gw.GraphWalkExpr(&expr.Expr)
 	case *tree.IndexExpr:
-		return common.MergeSets(
-			nr.GraphWalkExpr(&expr.Expr),
-			nr.GraphWalkExprs(expr.Indices),
+		return CombineWalkResults(
+			gw.GraphWalkExpr(&expr.Expr),
+			gw.GraphWalkExprs(expr.Indices),
 		)
 	case *tree.SliceExpr:
-		return common.MergeSets(
-			nr.GraphWalkExpr(&expr.Expr),
-			nr.GraphWalkExpr(&expr.Low),
-			nr.GraphWalkExpr(&expr.High),
-			nr.GraphWalkExpr(&expr.Max),
+		return CombineWalkResults(
+			gw.GraphWalkExpr(&expr.Expr),
+			gw.GraphWalkExpr(&expr.Low),
+			gw.GraphWalkExpr(&expr.High),
+			gw.GraphWalkExpr(&expr.Max),
 		)
 	case *tree.TypeSwitchAssertionExpr:
-		return common.MergeSets(
-			nr.GraphWalkExpr(&expr.Expr),
+		return CombineWalkResults(
+			gw.GraphWalkExpr(&expr.Expr),
 		)
 	case *tree.TypeAssertionExpr:
-		return common.MergeSets(
-			nr.GraphWalkExpr(&expr.Expr),
-			nr.GraphWalkType(&expr.Type),
+		return CombineWalkResults(
+			gw.GraphWalkExpr(&expr.Expr),
+			gw.GraphWalkType(&expr.Type),
 		)
 	case *tree.CallExpr:
-		allDeps := make([]Deps, len(expr.Args))
-		for i, arg := range expr.Args {
-			deps := nr.GraphWalkExpr(&arg)
-			allDeps[i] = deps
+		allDeps := make([]WalkResult, 0, 1+len(expr.Args))
+		allDeps = append(allDeps, gw.GraphWalkExpr(&expr.Func))
+		for _, arg := range expr.Args {
+			deps := gw.GraphWalkExpr(&arg)
+			allDeps = append(allDeps, deps)
 		}
-		return common.MergeSets(allDeps...)
-	case *tree.NameExpr:
-		return NewVarRef(arg)
+		return CombineWalkResults(allDeps...)
 	case *tree.LiteralExpr:
-		return NoDeps
+		return EmptyResult()
 	case *tree.FuncLitExpr:
-		return nr.GraphWalkSignature(expr.Signature)
+		return gw.GraphWalkSignature(expr.Signature)
 	case *tree.CompositeLitExpr:
-		allDeps := make([]Deps, len(expr.Elems))
-		for i, elem := range expr.Elems {
-			deps := common.MergeSets(
-				nr.GraphWalkExpr(&elem.Key),
-				nr.GraphWalkExpr(&elem.Value),
-			)
-			allDeps[i] = deps
+		allDeps := make([]WalkResult, 0, 1+len(expr.Elems))
+		allDeps = append(allDeps, gw.GraphWalkType(&expr.Type))
+		for _, elem := range expr.Elems {
+			allDeps = append(allDeps, CombineWalkResults(
+				gw.GraphWalkCompositeLitKey(&elem.Key),
+				gw.GraphWalkExpr(&elem.Value),
+			))
 		}
-		return common.MergeSets(allDeps...)
+		return CombineWalkResults(allDeps...)
+	case *tree.EllipsisExpr:
+		return EmptyResult()
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
 	}
 }
 
-func (nr *NameResolver) GraphWalkExprs(exprs []tree.Expr) Deps {
-	allDeps := make([]Deps, len(exprs))
-	for i := range exprs {
-		deps := nr.GraphWalkExpr(&exprs[i])
-		allDeps[i] = deps
+func (gw *GraphWalker) GraphWalkCompositeLitKey(expr *tree.Expr) WalkResult {
+	switch ty := (*expr).(type) {
+	case *tree.NameExpr:
+		// could be a struct field name
+		gw.CompositeLitKeys.Add(ty.Name)
+		return gw.GraphWalkExpr(expr)
+	default:
+		return gw.GraphWalkExpr(expr)
 	}
-	return common.MergeSets(allDeps...)
+}
+
+func (gw *GraphWalker) GraphWalkExprs(exprs []tree.Expr) WalkResult {
+	allDeps := make([]WalkResult, 0, len(exprs))
+	for i := range exprs {
+		allDeps = append(allDeps, gw.GraphWalkExpr(&exprs[i]))
+	}
+	return CombineWalkResults(allDeps...)
 }
 
 // ====================
 
-func (nr *NameResolver) CheckCycles() {
+func VerifyNameCycles(names common.Map[common.Identifier, *NameInfo], dependencies NameDependencies) {
 	// only top-level VarDecls & ConstDecls can have cycles
 	// all other declarations are part of an implicit LET REC
 	var checking = make(map[common.Identifier]*NameInfo)
-	for id, name := range nr.Context.Names {
-		if name.Scope == ScopeKindPackage && (name.Kind == common.DeclKindVar || name.Kind == common.DeclKindConst) {
+	for id, name := range names {
+		if name.Kind == common.DeclKindVar || name.Kind == common.DeclKindConst {
 			checking[id] = name
 		}
 	}
 
 	cycle := algos.FindCycle(checking, func(name *NameInfo) common.Set[common.Identifier] {
 		if name == nil {
-			return common.Set[common.Identifier]{}
+			return common.NewSet[common.Identifier]()
 		}
-		deps := common.Set[common.Identifier]{}
-		for ref := range name.Dependencies {
-			if ref.Expr != nil {
-				deps.Add((*ref.Expr).(*tree.NameExpr).Name)
-			}
-			if ref.Type != nil {
-				deps.Add((*ref.Type).(*tree.TypeName).Name)
-			}
-		}
-		return deps
+		return name.Deps
 	})
 
 	if len(cycle) > 0 {
-		panic(fmt.Sprintf("cycle in dependencies: %v", cycle))
+		ns := make([]string, 0, len(cycle))
+		for _, name := range cycle {
+			ns = append(ns, name.Name.Value)
+		}
+		panic(fmt.Sprintf("cycle in dependencies: %v", strings.Join(ns, " -> ")))
 	}
 }
 
 // ====================
 
-func (nr *NameResolver) BindContext(ctx *NameContext, reps map[common.Identifier]tree.Node) {
-	for _, name := range ctx.Names {
-		reps[name.Name] = nr.MakeReplacement(name)
+func ApplyReplacements(
+	reps map[common.Identifier]tree.Node,
+	nameTypeRefs common.Map[common.Identifier, common.Set[*tree.Type]],
+	nameExprRefs common.Map[common.Identifier, common.Set[*tree.Expr]],
+) {
+	if len(reps) == 0 {
+		return
 	}
-	for _, name := range ctx.Names {
-		for ref := range name.Dependencies {
-			if ref.Expr != nil {
-				target, ok := (*ref.Expr).(*tree.NameExpr)
-				if !ok {
-					continue
-				}
-				rep := reps[target.Name]
-				if rep == nil {
-					continue
-				}
-				switch rep := rep.(type) {
-				case tree.Expr:
-					*ref.Expr = rep
-				case tree.Type:
-					*ref.Expr = &tree.TypeExpr{Type: rep}
-				default:
-					panic("unreachable")
-				}
-			}
-			if ref.Type != nil {
-				target, ok := (*ref.Type).(*tree.TypeName)
-				if !ok {
-					continue
-				}
-				rep := reps[target.Name]
-				if rep == nil {
-					continue
-				}
-				*ref.Type = rep.(tree.Type)
+	for name, rep := range reps {
+		for ref := range nameTypeRefs[name] {
+			*ref = rep.(tree.Type)
+		}
+		for ref := range nameExprRefs[name] {
+			switch rep := rep.(type) {
+			case tree.Type:
+				*ref = &tree.TypeExpr{Type: rep}
+			case tree.Expr:
+				*ref = rep
+			default:
+				panic("unreachable")
 			}
 		}
-	}
-	for _, child := range ctx.Children {
-		nr.BindContext(child, reps)
+		delete(nameTypeRefs, name)
+		delete(nameExprRefs, name)
 	}
 }
 
-func (nr *NameResolver) MakeReplacement(name *NameInfo) tree.Node {
+func MakeReplacement(pkg *source.Package, name *NameInfo) tree.Node {
 	switch name.Kind {
 	case common.DeclKindImport:
-		// only present in expressions
-		return &tree.ImportNameExpr{Path: nr.Imports[name.Name], Name: name.Name}
+		return &tree.ImportNameExpr{Path: pkg.ImportPath, Name: name.Name}
 	case common.DeclKindConst, common.DeclKindVar, common.DeclKindFunc:
-		if name.Scope == ScopeKindPackage {
-			return &tree.PackageNameExpr{Path: nr.PackagePath, Name: name.Name}
-		} else {
-			return &tree.NameExpr{Name: name.Name}
-		}
+		return &tree.PackageNameExpr{Path: pkg.ImportPath, Name: name.Name}
 	case common.DeclKindType, common.DeclKindAlias:
-		if name.Scope == ScopeKindPackage {
-			return &tree.PackageTypeName{Path: nr.PackagePath, Name: name.Name}
-		} else {
-			return &tree.TypeName{Name: name.Name}
-		}
-	case common.DeclKindTypeParam:
-		return &tree.TypeName{Name: name.Name}
-	case common.DeclKindParam:
-		return &tree.NameExpr{Name: name.Name}
+		return &tree.PackageTypeName{Path: pkg.ImportPath, Name: name.Name}
 	default:
 		spew.Dump(name.Kind)
 		panic("unreachable")
 	}
+}
+
+// ====================
+
+func TopologicalSort2(nodes common.Map[common.Identifier, *NameInfo], edges func(*NameInfo) common.Set[common.Identifier]) []*NameInfo {
+	inDegree := common.Map[common.Identifier, common.Set[*NameInfo]]{}
+	for k := range nodes {
+		inDegree[k] = common.NewSet[*NameInfo]()
+	}
+	for _, node := range nodes {
+		for dep := range edges(node) {
+			if inDegree[dep] == nil {
+				panic(fmt.Sprintf("missing dependency: %v", dep))
+			}
+			inDegree[dep].Add(node)
+		}
+	}
+
+	var queue []common.Identifier
+	for k, degree := range inDegree {
+		if len(degree) == 0 {
+			queue = append(queue, k)
+			inDegree.Remove(k)
+		}
+	}
+
+	var sorted []*NameInfo
+	for len(queue) > 0 {
+		k := queue[0]
+		if k.Value == "waitReasonZero" {
+			fmt.Printf("waitReasonZero: %v\n", nodes[k].Deps)
+		}
+		queue = queue[1:]
+		sorted = append(sorted, nodes[k])
+		for dep := range edges(nodes[k]) {
+			inDegree[dep].Remove(nodes[k])
+			if len(inDegree[dep]) == 0 {
+				queue = append(queue, dep)
+				inDegree.Remove(dep)
+			}
+		}
+	}
+
+	//if len(sorted) != len(nodes) {
+	//	panic("cycle in dependencies")
+	//}
+
+	slices.Reverse(sorted)
+
+	return sorted
 }
 
 // ====================
