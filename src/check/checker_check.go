@@ -57,26 +57,33 @@ func (c *Checker) CheckTypeDecl(decl *tree.TypeDecl) {
 		scope.DefineType(tyParam.Name, &tree.TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint})
 	}
 
-	scope.CheckTypeDeclType(c.ResolveType(decl.Type))
+	scope.CheckTypeDeclType(decl.Type)
 
 	subst := scope.Verify()
 
 	scope.CheckSubst(decl.TypeParams, subst)
 }
 
+// CheckTypeDeclType xplores the type declaration, checking if any type applications are valid
 func (c *Checker) CheckTypeDeclType(ty tree.Type) {
 	switch ty := ty.(type) {
+	case *tree.TypeName:
+		// nothing to do
 	case *tree.TypeBuiltin:
 		// nothing to do
 	case *tree.TypeParam:
 		// nothing to do
+	case *tree.PackageTypeName:
+		// nothing to do
+	case *tree.QualIdentifier:
+		// nothing to do
 	case *tree.TypeApplication:
 		c.TypeApplicationFunc(ty, func(tyParam *tree.TypeParamDecl, tyArg tree.Type) {
-			c.CheckTypeDeclType(c.ResolveType(tyArg))
+			c.CheckTypeDeclType(tyArg)
 		})
 	case *tree.StructType:
 		for _, field := range ty.Fields {
-			c.CheckTypeDeclType(c.ResolveType(field.Type))
+			c.CheckTypeDeclType(field.Type)
 		}
 	case *tree.InterfaceType:
 		for _, m := range ty.Methods {
@@ -84,22 +91,22 @@ func (c *Checker) CheckTypeDeclType(ty tree.Type) {
 		}
 		for _, ctr := range ty.Constraints {
 			for _, term := range ctr.TypeElem.Union {
-				c.CheckTypeDeclType(c.ResolveType(term.Type))
+				c.CheckTypeDeclType(term.Type)
 			}
 		}
 	case *tree.FunctionType:
 		c.CheckTypeDeclSignature(ty.Signature)
 	case *tree.SliceType:
-		c.CheckTypeDeclType(c.ResolveType(ty.ElemType))
+		c.CheckTypeDeclType(ty.ElemType)
 	case *tree.NamedType:
-		c.CheckTypeDeclType(c.ResolveType(ty.Type))
+		c.CheckTypeDeclType(ty.Type)
 	case *tree.PointerType:
-		c.CheckTypeDeclType(c.ResolveType(ty.BaseType))
+		c.CheckTypeDeclType(ty.BaseType)
 	case *tree.ArrayType:
-		c.CheckTypeDeclType(c.ResolveType(ty.ElemType))
+		c.CheckTypeDeclType(ty.ElemType)
 	case *tree.MapType:
-		c.CheckTypeDeclType(c.ResolveType(ty.KeyType))
-		c.CheckTypeDeclType(c.ResolveType(ty.ElemType))
+		c.CheckTypeDeclType(ty.KeyType)
+		c.CheckTypeDeclType(ty.ElemType)
 	default:
 		spew.Dump(ty)
 		panic("unreachable")
@@ -111,10 +118,10 @@ func (c *Checker) CheckTypeDeclSignature(sig *tree.Signature) {
 		panic("function type with type parameters")
 	}
 	for _, param := range sig.Params.Params {
-		c.CheckTypeDeclType(c.ResolveType(param.Type))
+		c.CheckTypeDeclType(param.Type)
 	}
 	for _, result := range sig.Results.Params {
-		c.CheckTypeDeclType(c.ResolveType(result.Type))
+		c.CheckTypeDeclType(result.Type)
 	}
 }
 
@@ -318,16 +325,17 @@ func (c *Checker) CheckReturnStmt(stmt *tree.ReturnStmt) {
 }
 
 func (c *Checker) CheckIfStmt(stmt *tree.IfStmt) {
+	ifScope := c.BeginScope(ScopeKindBlock)
 	if stmt.Init != nil {
-		c.CheckStatement(stmt.Init)
+		ifScope.CheckStatement(stmt.Init)
 	}
 	if stmt.Cond != nil {
 		// TODO only allowed for else
-		c.CheckExpr(stmt.Cond, c.BuiltinType("bool"))
+		ifScope.CheckExpr(stmt.Cond, c.BuiltinType("bool"))
 	}
-	c.CheckStatementList(stmt.Body)
+	ifScope.CheckStatementList(stmt.Body)
 	if stmt.Else != nil {
-		c.CheckStatement(stmt.Else)
+		ifScope.CheckStatement(stmt.Else)
 	}
 }
 
