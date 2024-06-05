@@ -958,23 +958,24 @@ func (c *Checker) CheckForStmt(stmt *tree.ForStmt) {
 }
 
 func (c *Checker) CheckSwitchStmt(stmt *tree.SwitchStmt) {
-	scope := c.BeginScope(ScopeKindBlock)
+	switchScope := c.BeginScope(ScopeKindBlock)
 	var tagTy tree.Type
 	if stmt.Init != nil {
-		scope.CheckStatement(stmt.Init)
+		switchScope.CheckStatement(stmt.Init)
 	}
 	if stmt.Tag != nil {
-		tagTy = scope.Synth(stmt.Tag)
+		tagTy = switchScope.Synth(stmt.Tag)
 	}
 	for _, caseStmt := range stmt.Cases {
+		caseScope := switchScope.BeginScope(ScopeKindBlock)
 		for _, expr := range caseStmt.Exprs {
 			if tagTy != nil {
-				scope.CheckExpr(expr, tagTy)
+				caseScope.CheckExpr(expr, tagTy)
 			} else {
-				scope.CheckExpr(expr, scope.BuiltinType("bool"))
+				caseScope.CheckExpr(expr, switchScope.BuiltinType("bool"))
 			}
 		}
-		scope.CheckStatementList(caseStmt.Body)
+		caseScope.CheckStatementList(caseStmt.Body)
 	}
 }
 
@@ -2902,6 +2903,29 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 			}
 		}
 		c.UnifyEq(c.UntypedDefaultType(left), right, subst)
+	case *tree.FunctionType:
+		if right, ok := right.(*tree.FunctionType); ok {
+			if len(left.Signature.TypeParams.Params) != 0 {
+				panic("cannot unify generic functions")
+			}
+			if len(right.Signature.TypeParams.Params) != 0 {
+				panic("cannot unify generic functions")
+			}
+			if len(left.Signature.Params.Params) != len(right.Signature.Params.Params) {
+				panic("cannot unify functions with different number of parameters")
+			}
+			if len(left.Signature.Results.Params) != len(right.Signature.Results.Params) {
+				panic("cannot unify functions with different number of results")
+			}
+			for i := range left.Signature.Params.Params {
+				c.UnifyEq(left.Signature.Params.Params[i].Type, right.Signature.Params.Params[i].Type, subst)
+			}
+			for i := range left.Signature.Results.Params {
+				c.UnifyEq(left.Signature.Results.Params[i].Type, right.Signature.Results.Params[i].Type, subst)
+			}
+			return // OK
+		}
+		panic(fmt.Sprintf("cannot unify: %v = %v", left, right))
 	default:
 		spew.Dump(left, right)
 		panic("unreachable")
