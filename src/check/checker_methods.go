@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/garciat/gobid/common"
 	"github.com/garciat/gobid/tree"
-	"strings"
 )
 
 type MemberSet = common.Map[common.Identifier, []TypeMember]
@@ -70,7 +69,7 @@ func (c *Checker) Members(ty tree.Type) MemberSet {
 
 	switch ty := ty.(type) {
 	case *tree.NamedType:
-		for _, method := range c.NamedTypeMethods(ty) {
+		for _, method := range ty.Methods {
 			if members.Contains(method.Name) {
 				panic(fmt.Sprintf("type %v has both field and method called %q", ty, method.Name))
 			}
@@ -78,7 +77,7 @@ func (c *Checker) Members(ty tree.Type) MemberSet {
 		}
 	case *tree.TypeApplication:
 		named, subst := c.InstantiateType(ty)
-		for _, method := range c.NamedTypeMethods(named) {
+		for _, method := range named.Methods {
 			members[method.Name] = []TypeMember{
 				MethodMember{
 					Method: &tree.MethodElem{
@@ -123,21 +122,4 @@ func (c *Checker) CheckMethodsSatisfy(ty tree.Type, target []*tree.MethodElem) e
 	}
 
 	return nil
-}
-
-func (c *Checker) NamedTypeMethods(namedTy *tree.NamedType) []*tree.MethodElem {
-	var methods []*tree.MethodElem
-
-	c.VarCtx.Iter(func(name common.Identifier, ty tree.Type) {
-		if strings.HasPrefix(name.Value, namedTy.Name.Value+".") {
-			methodTy := ty.(*tree.MethodType)
-			methods = append(methods, &tree.MethodElem{
-				Name:            common.NewIdentifier(name.Value[len(namedTy.Name.Value)+1:]),
-				Type:            methodTy.Type,
-				PointerReceiver: methodTy.PointerReceiver,
-			})
-		}
-	})
-
-	return methods
 }

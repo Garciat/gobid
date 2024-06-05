@@ -180,8 +180,9 @@ func (t *TypeBuiltin) String() string {
 
 type NamedType struct {
 	TypeBase
-	Name Identifier
-	Type Type
+	Name    Identifier
+	Type    Type
+	Methods Map[Identifier, *MethodElem]
 }
 
 func (t *NamedType) String() string {

@@ -3,7 +3,6 @@ package check
 import (
 	"fmt"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/garciat/gobid/common"
 	"github.com/garciat/gobid/tree"
 	"sync"
 )
@@ -23,7 +22,7 @@ func (c *Checker) DefineTopLevelDecl(decl tree.Decl) {
 	case *tree.FunctionDecl:
 		c.DefineFunctionDecl(decl)
 	case *tree.MethodDecl:
-		c.DefineMethodDecl(decl)
+		panic("unexpected")
 	default:
 		spew.Dump(decl)
 		panic("unreachable")
@@ -129,45 +128,4 @@ func (c *Checker) DefineVarDecl(decl *tree.VarDecl) {
 
 func (c *Checker) DefineFunctionDecl(decl *tree.FunctionDecl) {
 	c.DefineFunction(decl.Name, &tree.FunctionType{Signature: decl.Signature})
-}
-
-func (c *Checker) DefineMethodDecl(decl *tree.MethodDecl) {
-	pointerReceiver := false
-
-	receiverTy := c.ResolveType(decl.Receiver.Type)
-	if pointerTy, ok := receiverTy.(*tree.PointerType); ok {
-		receiverTy = c.ResolveType(pointerTy.BaseType)
-		pointerReceiver = true
-	}
-
-	switch c.Under(receiverTy).(type) {
-	case *tree.InterfaceType:
-		panic("cannot define methods on interface types")
-	}
-
-	var methodHolder common.Identifier
-
-	switch receiverTy := receiverTy.(type) {
-	case *tree.NamedType:
-		methodHolder = receiverTy.Name
-	case *tree.TypeApplication:
-		switch receiverTy := c.ResolveType(receiverTy.Type).(type) {
-		case *tree.NamedType:
-			methodHolder = receiverTy.Name
-		case *tree.QualIdentifier:
-			panic("cannot have package-qualified receiver type")
-		default:
-			panic("unreachable?")
-		}
-	default:
-		spew.Dump(receiverTy)
-		panic("TODO")
-	}
-
-	methodTy := &tree.MethodType{
-		PointerReceiver: pointerReceiver,
-		Type:            &tree.FunctionType{Signature: decl.Signature},
-	}
-
-	c.DefineMethod(methodHolder, decl.Name, methodTy)
 }

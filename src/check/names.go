@@ -122,7 +122,7 @@ func MakeBuiltinNames() common.Map[common.Identifier, *NameInfo] {
 
 // ====================
 
-type MethodsByName = common.Map[common.Identifier, *tree.MethodDecl]
+type MethodsByName = common.Map[common.Identifier, *tree.MethodElem]
 type MethodsByNameByReceiver = common.Map[common.Identifier, MethodsByName]
 
 type NameResolutionResult struct {
@@ -377,9 +377,11 @@ func (gw *GraphWalker) GraphWalkFunctionDecl(decl *tree.FunctionDecl) WalkResult
 }
 
 func (gw *GraphWalker) GraphWalkMethodDecl(decl *tree.MethodDecl) WalkResult {
+	pointerReceiver := false
 	receiverTy := decl.Receiver.Type
 	if pointerTy, ok := receiverTy.(*tree.PointerType); ok {
 		receiverTy = pointerTy.BaseType
+		pointerReceiver = true
 	}
 
 	var methodHolder common.Identifier
@@ -420,7 +422,11 @@ func (gw *GraphWalker) GraphWalkMethodDecl(decl *tree.MethodDecl) WalkResult {
 		panic(fmt.Sprintf("duplicate method: %v", decl.Name))
 	}
 
-	receiverMethods[decl.Name] = decl
+	receiverMethods[decl.Name] = &tree.MethodElem{
+		Name:            decl.Name,
+		PointerReceiver: pointerReceiver,
+		Type:            &tree.FunctionType{Signature: decl.Signature},
+	}
 
 	res := gw.GraphWalkSignature(decl.Signature)
 

@@ -116,18 +116,12 @@ func (c *Checker) Run() {
 		}
 
 		for receiverName, methodsByName := range packageNameResults[pkg].Methods {
-			for methodName, decl := range methodsByName {
-				if seen.Contains(decl) {
-					fmt.Printf("DUPLICATE DECL %v\n", decl) // TODO (P0) should not happen!!!
-					continue
-				}
-				//fmt.Println(declFile[decl].Path)
-				scope := fileScopes[declFile[decl]]
-				scope.DefineTopLevelDecl(decl)
-				seen.Add(decl)
-				_ = receiverName
-				_ = methodName
+			packageScope := packageScopes[pkg]
+			receiverTy, ok := packageScope.ResolveType(&tree.TypeName{Name: receiverName}).(*tree.NamedType)
+			if !ok {
+				panic(fmt.Errorf("not a named type: %v", receiverName))
 			}
+			receiverTy.Methods = methodsByName
 		}
 	}
 

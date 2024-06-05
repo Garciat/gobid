@@ -362,6 +362,11 @@ func (c *Checker) CheckRangeStmt(stmt *tree.RangeStmt) {
 	var keyTy, valueTy tree.Type
 
 	switch targetTy := scope.Under(targetTy).(type) {
+	case *tree.TypeBuiltin:
+		if targetTy.Name.Value == "string" {
+			keyTy = scope.BuiltinType("int")
+			valueTy = scope.BuiltinType("rune")
+		}
 	case *tree.SliceType:
 		keyTy = scope.BuiltinType("int")
 		valueTy = scope.ResolveType(targetTy.ElemType)
