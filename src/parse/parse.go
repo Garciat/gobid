@@ -1037,16 +1037,7 @@ func ReadType(expr ast.Expr) tree.Type {
 			return &tree.SliceType{ElemType: ReadType(expr.Elt)}
 		}
 	case *ast.StructType:
-		fields := make([]*tree.FieldDecl, 0, len(expr.Fields.List))
-		for _, field := range expr.Fields.List {
-			for _, name := range field.Names {
-				fields = append(fields, &tree.FieldDecl{
-					Name: NewIdentifier(name.Name),
-					Type: ReadType(field.Type),
-				})
-			}
-		}
-		return &tree.StructType{Fields: fields}
+		return ReadStructType(expr)
 	case *ast.IndexExpr:
 		return &tree.TypeApplication{
 			Type: ReadQualIdentifier(expr.X),
@@ -1085,6 +1076,26 @@ func ReadType(expr ast.Expr) tree.Type {
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
+	}
+}
+
+func ReadStructType(ty *ast.StructType) tree.Type {
+	var embeds []tree.Type
+	fields := make([]*tree.FieldDecl, 0, len(ty.Fields.List))
+	for _, field := range ty.Fields.List {
+		if len(field.Names) == 0 {
+			embeds = append(embeds, ReadType(field.Type))
+		}
+		for _, name := range field.Names {
+			fields = append(fields, &tree.FieldDecl{
+				Name: NewIdentifier(name.Name),
+				Type: ReadType(field.Type),
+			})
+		}
+	}
+	return &tree.StructType{
+		Fields: fields,
+		Embeds: embeds,
 	}
 }
 

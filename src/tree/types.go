@@ -363,7 +363,7 @@ type ParameterDecl struct {
 type StructType struct {
 	TypeBase
 	Fields []*FieldDecl
-	// TODO: embedded fields
+	Embeds []Type
 }
 
 func (t *StructType) String() string {
