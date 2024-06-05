@@ -1,6 +1,7 @@
 package tree
 
 import (
+	"fmt"
 	"github.com/davecgh/go-spew/spew"
 	. "github.com/garciat/gobid/common"
 )
@@ -140,7 +141,65 @@ func (EllipsisExpr) String() string {
 
 type ConstIntExpr struct {
 	ExprBase
-	Value int
+	Value int64
+}
+
+func (e *ConstIntExpr) String() string {
+	return fmt.Sprintf("const int(%d)", e.Value)
+}
+
+type ConstUintExpr struct {
+	ExprBase
+	Value uint64
+}
+
+func (e *ConstUintExpr) String() string {
+	return fmt.Sprintf("const uint(%d)", e.Value)
+}
+
+type ConstBoolExpr struct {
+	ExprBase
+	Value bool
+}
+
+func (e *ConstBoolExpr) String() string {
+	return fmt.Sprintf("const bool(%v)", e.Value)
+}
+
+type ConstStringExpr struct {
+	ExprBase
+	Value string
+}
+
+func (e *ConstStringExpr) String() string {
+	return fmt.Sprintf(`const string(%q)`, e.Value)
+}
+
+type ConstFloatExpr struct {
+	ExprBase
+	Value float64
+}
+
+func (e *ConstFloatExpr) String() string {
+	return fmt.Sprintf("const float(%f)", e.Value)
+}
+
+type ConstRuneExpr struct {
+	ExprBase
+	Value rune
+}
+
+func (e *ConstRuneExpr) String() string {
+	return fmt.Sprintf("const rune(%q)", e.Value)
+}
+
+type ConstImagExpr struct {
+	ExprBase
+	Value complex128
+}
+
+func (e *ConstImagExpr) String() string {
+	return fmt.Sprintf("const imag(%f)", e.Value)
 }
 
 type BinaryExpr struct {
@@ -480,6 +539,7 @@ type ConstDecl struct {
 	Name  Identifier
 	Type  Type
 	Value Expr
+	Iota  int
 }
 
 type VarDecl struct {

@@ -169,6 +169,10 @@ func ResolvePackageNames(pkg *source.Package) []tree.Decl {
 		if !packageNames.Contains(key) {
 			// drop this for now; wait for later failure, but keep this graph clean
 			missingKeysReplacements.Add(key, &tree.NameExpr{Name: key})
+
+			for _, name := range packageNames {
+				name.Deps.Remove(key)
+			}
 		}
 	}
 	ApplyReplacements(missingKeysReplacements, packageTypeRefs, packageExprRefs)
@@ -183,6 +187,10 @@ func ResolvePackageNames(pkg *source.Package) []tree.Decl {
 	for id := range builtinNames {
 		delete(packageTypeRefs, id)
 		delete(packageExprRefs, id)
+
+		for _, name := range packageNames {
+			name.Deps.Remove(id)
+		}
 	}
 
 	if len(packageExprRefs) != 0 || len(packageTypeRefs) != 0 {
@@ -191,9 +199,14 @@ func ResolvePackageNames(pkg *source.Package) []tree.Decl {
 
 	dependencies := make(NameDependencies)
 	for _, name := range packageNames {
-		dependencies[name.Name] = name.Deps.
-			RemoveAll(missingKeysReplacements.Keys()).
-			RemoveAll(builtinNames.Keys())
+		dependencies[name.Name] = name.Deps
+
+		if name.Name.Value == "waitReasonZero" {
+			fmt.Println("waitReasonZero deps:", dependencies[name.Name])
+		}
+		if name.Name.Value == "waitReason" {
+			fmt.Println("waitReason deps:", dependencies[name.Name])
+		}
 	}
 	VerifyNameCycles(packageNames, dependencies)
 
@@ -203,9 +216,6 @@ func ResolvePackageNames(pkg *source.Package) []tree.Decl {
 
 	sortedDecls := make([]tree.Decl, 0, len(packageNames))
 	for i, name := range sortedNames {
-		if packageNames[name.Name] == nil {
-			panic("what")
-		}
 		if name.Kind == common.DeclKindImport {
 			// handled outside
 			continue
@@ -666,9 +676,6 @@ func TopologicalSort2(nodes common.Map[common.Identifier, *NameInfo], edges func
 	var sorted []*NameInfo
 	for len(queue) > 0 {
 		k := queue[0]
-		if k.Value == "waitReasonZero" {
-			fmt.Printf("waitReasonZero: %v\n", nodes[k].Deps)
-		}
 		queue = queue[1:]
 		sorted = append(sorted, nodes[k])
 		for dep := range edges(nodes[k]) {
@@ -678,6 +685,18 @@ func TopologicalSort2(nodes common.Map[common.Identifier, *NameInfo], edges func
 				inDegree.Remove(dep)
 			}
 		}
+	}
+
+	for k, deps := range inDegree {
+		if len(deps) == 0 {
+			continue
+		}
+		var ns []string
+		for dep := range deps {
+			ns = append(ns, dep.Name.Value)
+		}
+		//panic(fmt.Sprintf("callers: %v -> %v", k, ns))
+		sorted = append(sorted, nodes[k]) // TODO :shrug:
 	}
 
 	//if len(sorted) != len(nodes) {

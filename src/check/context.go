@@ -69,18 +69,24 @@ func (c *VarContext) Fork(kind ScopeKind) *VarContext {
 
 func (c *VarContext) Lookup(name Identifier) (tree.Type, bool) {
 	ty, ok := c.Types[name]
-	if !ok && c.Parent != nil {
+	if ok {
+		return ty, true
+	}
+	if c.Parent != nil {
 		return c.Parent.Lookup(name)
 	}
-	return ty, ok
+	return nil, false
 }
 
 func (c *VarContext) LookupConst(name Identifier) (tree.Expr, bool) {
 	expr, ok := c.Constants[name]
-	if !ok && c.Parent != nil {
+	if ok {
+		return expr, true
+	}
+	if c.Parent != nil {
 		return c.Parent.LookupConst(name)
 	}
-	return expr, ok
+	return nil, false
 }
 
 func (c *VarContext) Def(name Identifier, ty tree.Type) tree.Type {
@@ -93,13 +99,13 @@ func (c *VarContext) Def(name Identifier, ty tree.Type) tree.Type {
 	return ty
 }
 
-func (c *VarContext) DefConst(name Identifier, ty tree.Type, expr tree.Expr) tree.Type {
+func (c *VarContext) DefConst(name Identifier, ty tree.Type, value tree.Expr) tree.Type {
 	if name != IgnoreIdent {
 		if _, ok := c.Types[name]; ok {
 			panic(fmt.Errorf("redefined: %v", name))
 		}
 		c.Types[name] = ty
-		c.Constants[name] = expr
+		c.Constants[name] = value
 	}
 	return ty
 }

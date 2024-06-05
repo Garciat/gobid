@@ -137,9 +137,10 @@ func ReadImportDecl(decl *ast.GenDecl) []tree.Decl {
 func ReadConstDecl(decl *ast.GenDecl) []tree.Decl {
 	var decls []tree.Decl
 
-	var carry tree.Expr
+	var carryIndex int = -1
+	var carryValue tree.Expr
 
-	for _, spec := range decl.Specs {
+	for i, spec := range decl.Specs {
 		spec := spec.(*ast.ValueSpec)
 
 		if len(spec.Names) > 1 && len(spec.Values) > 1 {
@@ -170,13 +171,14 @@ func ReadConstDecl(decl *ast.GenDecl) []tree.Decl {
 		name := spec.Names[0].Name
 
 		if len(spec.Values) == 0 {
-			if carry == nil {
+			if carryIndex == -1 {
 				panic("missing init expr for constant")
 			}
-			declVal = carry // TODO if iota, should +1; but doesn't matter for type-checking
+			declVal = carryValue // TODO if iota, should +1; but doesn't matter for type-checking
 		} else {
 			declVal = ReadExpr(spec.Values[0])
-			carry = declVal
+			carryIndex = i
+			carryValue = declVal
 		}
 
 		if spec.Type != nil {
@@ -187,6 +189,7 @@ func ReadConstDecl(decl *ast.GenDecl) []tree.Decl {
 			Name:  NewIdentifier(name),
 			Type:  declTy,
 			Value: declVal,
+			Iota:  i - carryIndex,
 		})
 	}
 
