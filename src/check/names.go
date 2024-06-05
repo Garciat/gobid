@@ -122,7 +122,15 @@ func MakeBuiltinNames() common.Map[common.Identifier, *NameInfo] {
 
 // ====================
 
-func ResolvePackageNames(pkg *source.Package) []tree.Decl {
+type MethodsByName = common.Map[common.Identifier, *tree.MethodDecl]
+type MethodsByNameByReceiver = common.Map[common.Identifier, MethodsByName]
+
+type NameResolutionResult struct {
+	SortedDecls []tree.Decl
+	Methods     MethodsByNameByReceiver
+}
+
+func ResolvePackageNames(pkg *source.Package) NameResolutionResult {
 	fmt.Printf("=== ResolvePackageNames(%v) ===\n", pkg.ImportPath)
 
 	packageNames := make(common.Map[common.Identifier, *NameInfo])
@@ -131,8 +139,10 @@ func ResolvePackageNames(pkg *source.Package) []tree.Decl {
 	packageTypeRefs := make(common.Map[common.Identifier, common.Set[*tree.Type]])
 	packageExprRefs := make(common.Map[common.Identifier, common.Set[*tree.Expr]])
 
+	packageMethods := make(MethodsByNameByReceiver)
+
 	for _, file := range pkg.Files {
-		walker := NewGraphWalker()
+		walker := NewGraphWalker(packageMethods)
 
 		fileTypeRefs := make(common.Map[common.Identifier, common.Set[*tree.Type]])
 		fileExprRefs := make(common.Map[common.Identifier, common.Set[*tree.Expr]])
@@ -224,7 +234,10 @@ func ResolvePackageNames(pkg *source.Package) []tree.Decl {
 		_ = i
 	}
 
-	return sortedDecls
+	return NameResolutionResult{
+		SortedDecls: sortedDecls,
+		Methods:     packageMethods,
+	}
 }
 
 // ====================
@@ -233,13 +246,15 @@ type GraphWalker struct {
 	Context          *NameContext
 	Imports          common.Map[common.Identifier, common.ImportPath]
 	CompositeLitKeys common.Set[common.Identifier]
+	Methods          MethodsByNameByReceiver
 }
 
-func NewGraphWalker() *GraphWalker {
+func NewGraphWalker(methods MethodsByNameByReceiver) *GraphWalker {
 	return &GraphWalker{
 		Context:          &NameContext{Names: make(common.Map[common.Identifier, *NameInfo])},
 		Imports:          make(common.Map[common.Identifier, common.ImportPath]),
 		CompositeLitKeys: make(common.Set[common.Identifier]),
+		Methods:          methods,
 	}
 }
 
@@ -362,11 +377,60 @@ func (gw *GraphWalker) GraphWalkFunctionDecl(decl *tree.FunctionDecl) WalkResult
 }
 
 func (gw *GraphWalker) GraphWalkMethodDecl(decl *tree.MethodDecl) WalkResult {
-	//res := gw.GraphWalkSignature(decl.Signature)
+	receiverTy := decl.Receiver.Type
+	if pointerTy, ok := receiverTy.(*tree.PointerType); ok {
+		receiverTy = pointerTy.BaseType
+	}
 
-	// TODO could save methods here?
+	var methodHolder common.Identifier
+	var typeParams = common.NewSet[common.Identifier]()
 
-	return EmptyResult()
+	switch receiverTy := receiverTy.(type) {
+	case *tree.TypeName:
+		methodHolder = receiverTy.Name
+	case *tree.TypeApplication:
+		for _, arg := range receiverTy.Args {
+			switch arg := arg.(type) {
+			case *tree.TypeName:
+				typeParams.Add(arg.Name)
+			default:
+				panic("unexpected")
+			}
+		}
+		switch receiverTy := receiverTy.Type.(type) {
+		case *tree.TypeName:
+			methodHolder = receiverTy.Name
+		case *tree.QualIdentifier:
+			panic("cannot have package-qualified receiver type")
+		default:
+			panic("unreachable?")
+		}
+	default:
+		spew.Dump(receiverTy)
+		panic("TODO")
+	}
+
+	if !gw.Methods.Contains(methodHolder) {
+		gw.Methods[methodHolder] = make(MethodsByName)
+	}
+
+	receiverMethods := gw.Methods[methodHolder]
+
+	if receiverMethods.Contains(decl.Name) {
+		panic(fmt.Sprintf("duplicate method: %v", decl.Name))
+	}
+
+	receiverMethods[decl.Name] = decl
+
+	res := gw.GraphWalkSignature(decl.Signature)
+
+	for tyParam := range typeParams {
+		res.Dependencies.Remove(tyParam)
+		res.NameTypeRefs.Remove(tyParam)
+		res.NameExprRefs.Remove(tyParam) // shouldn't have any
+	}
+
+	return res.WithDeps(common.NewIdentifier(fmt.Sprintf("%v.%v", methodHolder, decl.Name)))
 }
 
 func (gw *GraphWalker) GraphWalkSignature(sig *tree.Signature) WalkResult {

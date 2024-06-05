@@ -81,14 +81,14 @@ func (c *Checker) Run() {
 		c.PackageSymbols[pkg.ImportPath] = packageScopes[pkg].VarCtx // TODO seems unprincipled
 	}
 
-	packageSortedDecls := make(map[*source.Package][]tree.Decl, len(packages))
+	packageNameResults := make(map[*source.Package]NameResolutionResult, len(packages))
 
 	for _, pkg := range packages {
 		if pkg.ImportPath == "unsafe" {
 			continue // TODO should not be here
 		}
 
-		packageSortedDecls[pkg] = ResolvePackageNames(pkg)
+		packageNameResults[pkg] = ResolvePackageNames(pkg)
 	}
 
 	for _, pkg := range packages {
@@ -107,19 +107,34 @@ func (c *Checker) Run() {
 		seen := Set[tree.Decl]{}
 
 		fmt.Printf("=== Loading Package (%v) ===\n", pkg.ImportPath)
-		for _, decl := range packageSortedDecls[pkg] {
+		for _, decl := range packageNameResults[pkg].SortedDecls {
 			switch decl := decl.(type) {
 			case *tree.ImportDecl:
 				// done earlier
 			default:
 				if seen.Contains(decl) {
-					fmt.Printf("skipping %v\n", decl) // TODO (P0) should not happen!!!
+					fmt.Printf("DUPLICATE DECL %v\n", decl) // TODO (P0) should not happen!!!
 					continue
 				}
 				fmt.Println(declFile[decl].Path)
 				scope := fileScopes[declFile[decl]]
 				scope.DefineTopLevelDecl(decl)
 				seen.Add(decl)
+			}
+		}
+
+		for receiverName, methodsByName := range packageNameResults[pkg].Methods {
+			for methodName, decl := range methodsByName {
+				if seen.Contains(decl) {
+					fmt.Printf("DUPLICATE DECL %v\n", decl) // TODO (P0) should not happen!!!
+					continue
+				}
+				fmt.Println(declFile[decl].Path)
+				scope := fileScopes[declFile[decl]]
+				scope.DefineTopLevelDecl(decl)
+				seen.Add(decl)
+				_ = receiverName
+				_ = methodName
 			}
 		}
 	}
@@ -272,7 +287,7 @@ func (c *Checker) DefineMethod(holder, name Identifier, ty *tree.MethodType) {
 	if ty.PointerReceiver {
 		prefix = "*"
 	}
-	fmt.Printf("DEFINING func (%s%v) %v%v\n", prefix, holder, name, ty.Type.Signature)
+	fmt.Printf("DEFINING METHOD func (%s%v) %v%v\n", prefix, holder, name, ty.Type.Signature)
 	methodName := NewIdentifier(fmt.Sprintf("%s.%s", holder.Value, name.Value))
 	Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
 	c.VarCtx.Parent.Def(methodName, ty)
@@ -1325,7 +1340,6 @@ func (c *Checker) DoSelect(exprTy tree.Type, sel Identifier) tree.Type {
 				return field.Type
 			}
 		}
-
 	case *tree.InterfaceType:
 		for _, m := range ty.Methods {
 			if m.Name == sel {
