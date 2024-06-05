@@ -41,6 +41,8 @@ func (c *Checker) IsConcreteType(ty tree.Type) bool {
 		return true
 	case *tree.ArrayType:
 		return true
+	case *tree.MapType:
+		return true
 	case *tree.StructType:
 		return true
 	case *tree.TypeApplication:

@@ -381,11 +381,11 @@ type FieldDecl struct {
 
 type PointerType struct {
 	TypeBase
-	BaseType Type // TODO rename to ElemType
+	ElemType Type
 }
 
 func (t *PointerType) String() string {
-	return fmt.Sprintf("*%v", t.BaseType)
+	return fmt.Sprintf("*%v", t.ElemType)
 }
 
 type InterfaceType struct {
@@ -431,12 +431,12 @@ func (t *SliceType) String() string {
 
 type MapType struct {
 	TypeBase
-	KeyType  Type
-	ElemType Type
+	KeyType   Type
+	ValueType Type
 }
 
 func (t *MapType) String() string {
-	return fmt.Sprintf("map[%v]%v", t.KeyType, t.ElemType)
+	return fmt.Sprintf("map[%v]%v", t.KeyType, t.ValueType)
 }
 
 type ChannelType struct {

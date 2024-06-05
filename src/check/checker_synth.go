@@ -109,13 +109,13 @@ func (c *Checker) SynthUnaryExpr(expr *tree.UnaryExpr) tree.Type {
 		c.CheckExpr(expr.Expr, c.BuiltinType("bool"))
 		return c.BuiltinType("bool")
 	case tree.UnaryOpAddr:
-		return &tree.PointerType{BaseType: ty}
+		return &tree.PointerType{ElemType: ty}
 	case tree.UnaryOpDeref:
 		switch ty := ty.(type) {
 		case *tree.PointerType:
-			return ty.BaseType
+			return ty.ElemType
 		case *tree.TypeOfType:
-			return &tree.TypeOfType{Type: &tree.PointerType{BaseType: ty.Type}}
+			return &tree.TypeOfType{Type: &tree.PointerType{ElemType: ty.Type}}
 		default:
 			spew.Dump(expr)
 			panic(fmt.Sprintf("cannot dereference %v of type %v", expr, ty))
@@ -143,7 +143,7 @@ func (c *Checker) DoSelect(exprTy tree.Type, sel common.Identifier) tree.Type {
 
 	switch ty := checkTy.(type) {
 	case *tree.PointerType:
-		checkTy = c.ResolveType(ty.BaseType)
+		checkTy = c.ResolveType(ty.ElemType)
 	}
 
 	switch ty := checkTy.(type) {
@@ -176,7 +176,7 @@ func (c *Checker) SynthIndexExpr(expr *tree.IndexExpr) tree.Type {
 
 	switch ty := exprTy.(type) {
 	case *tree.PointerType:
-		exprTy = c.ResolveType(ty.BaseType)
+		exprTy = c.ResolveType(ty.ElemType)
 	}
 
 	var indexTy, resultTy tree.Type
@@ -188,7 +188,7 @@ func (c *Checker) SynthIndexExpr(expr *tree.IndexExpr) tree.Type {
 		resultTy = c.ResolveType(exprTy.ElemType)
 	case *tree.MapType:
 		indexTy = c.ResolveType(exprTy.KeyType)
-		resultTy = c.ResolveType(exprTy.ElemType)
+		resultTy = c.ResolveType(exprTy.ValueType)
 	case *tree.ArrayType:
 		indexTy = tree.UntypedInt()
 		resultTy = c.ResolveType(exprTy.ElemType)
@@ -217,7 +217,7 @@ func (c *Checker) SynthSliceExpr(expr *tree.SliceExpr) tree.Type {
 
 	switch ty := c.Under(exprTy).(type) {
 	case *tree.PointerType:
-		exprTy = c.ResolveType(ty.BaseType)
+		exprTy = c.ResolveType(ty.ElemType)
 	}
 
 	var resultTy tree.Type
@@ -412,7 +412,7 @@ func (c *Checker) SynthBuiltinNewCall(expr *tree.CallExpr) tree.Type {
 	if !ok {
 		panic("new() with non-type argument")
 	}
-	return &tree.PointerType{BaseType: argTy.Type}
+	return &tree.PointerType{ElemType: argTy.Type}
 }
 
 func (c *Checker) SynthBuiltinMakeCall(expr *tree.CallExpr) tree.Type {
@@ -547,11 +547,11 @@ func (c *Checker) MakeCompositeLit(expr *tree.CompositeLitExpr, targetTy tree.Ty
 	underTy := c.Under(targetTy)
 	switch underTy := underTy.(type) {
 	case *tree.PointerType:
-		elemTy := c.ResolveType(underTy.BaseType)
+		elemTy := c.ResolveType(underTy.ElemType)
 		if _, ok := c.Under(elemTy).(*tree.PointerType); ok {
 			panic("composite literal of double pointer type?")
 		}
-		return &tree.PointerType{BaseType: c.MakeCompositeLit(expr, elemTy)}
+		return &tree.PointerType{ElemType: c.MakeCompositeLit(expr, elemTy)}
 	}
 
 	switch exprTy := c.Under(targetTy).(type) {
@@ -641,7 +641,7 @@ func (c *Checker) MakeCompositeLitSlice(expr *tree.CompositeLitExpr, sliceTy *tr
 func (c *Checker) MakeCompositeLitMap(expr *tree.CompositeLitExpr, mapTy *tree.MapType) tree.Type {
 	for _, elem := range expr.Elems {
 		c.CheckExpr(elem.Key, c.ResolveType(mapTy.KeyType))
-		c.CheckExpr(elem.Value, c.ResolveType(mapTy.ElemType))
+		c.CheckExpr(elem.Value, c.ResolveType(mapTy.ValueType))
 	}
 	return expr.Type
 }

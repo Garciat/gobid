@@ -38,7 +38,7 @@ func (c *Checker) Identical(ty1, ty2 tree.Type) bool {
 		return false
 	case *tree.PointerType:
 		if ty2, ok := ty2.(*tree.PointerType); ok {
-			return c.Identical(c.ResolveType(ty1.BaseType), c.ResolveType(ty2.BaseType))
+			return c.Identical(c.ResolveType(ty1.ElemType), c.ResolveType(ty2.ElemType))
 		}
 		return false
 	case *tree.TypeApplication:
@@ -84,6 +84,17 @@ func (c *Checker) Identical(ty1, ty2 tree.Type) bool {
 	case *tree.SliceType:
 		if ty2, ok := ty2.(*tree.SliceType); ok {
 			return c.Identical(c.ResolveType(ty1.ElemType), c.ResolveType(ty2.ElemType))
+		}
+		return false
+	case *tree.MapType:
+		if ty2, ok := ty2.(*tree.MapType); ok {
+			if !c.Identical(c.ResolveType(ty1.KeyType), c.ResolveType(ty2.KeyType)) {
+				return false
+			}
+			if !c.Identical(c.ResolveType(ty1.ValueType), c.ResolveType(ty2.ValueType)) {
+				return false
+			}
+			return true
 		}
 		return false
 	case *tree.FunctionType:

@@ -380,7 +380,7 @@ func (gw *GraphWalker) GraphWalkMethodDecl(decl *tree.MethodDecl) WalkResult {
 	pointerReceiver := false
 	receiverTy := decl.Receiver.Type
 	if pointerTy, ok := receiverTy.(*tree.PointerType); ok {
-		receiverTy = pointerTy.BaseType
+		receiverTy = pointerTy.ElemType
 		pointerReceiver = true
 	}
 
@@ -497,7 +497,7 @@ func (gw *GraphWalker) GraphWalkType(arg *tree.Type) WalkResult {
 	case *tree.MapType:
 		return gw.GraphWalkMapType(ty)
 	case *tree.PointerType:
-		return gw.GraphWalkType(&ty.BaseType)
+		return gw.GraphWalkType(&ty.ElemType)
 	case *tree.ChannelType:
 		return gw.GraphWalkType(&ty.ElemType)
 	default:
@@ -547,7 +547,7 @@ func (gw *GraphWalker) GraphWalkArrayType(ty *tree.ArrayType) WalkResult {
 func (gw *GraphWalker) GraphWalkMapType(ty *tree.MapType) WalkResult {
 	return CombineWalkResults(
 		gw.GraphWalkType(&ty.KeyType),
-		gw.GraphWalkType(&ty.ElemType),
+		gw.GraphWalkType(&ty.ValueType),
 	)
 }
 

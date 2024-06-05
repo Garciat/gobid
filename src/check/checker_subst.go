@@ -90,7 +90,7 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 		}
 		return &tree.StructType{Fields: fields}
 	case *tree.PointerType:
-		return &tree.PointerType{BaseType: c.ApplySubst(ty.BaseType, subst)}
+		return &tree.PointerType{ElemType: c.ApplySubst(ty.ElemType, subst)}
 	case *tree.InterfaceType:
 		constraints := make([]*tree.TypeConstraint, len(ty.Constraints))
 		for i, constraint := range ty.Constraints {
@@ -104,8 +104,8 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 		return &tree.SliceType{ElemType: c.ApplySubst(ty.ElemType, subst)}
 	case *tree.MapType:
 		return &tree.MapType{
-			KeyType:  c.ApplySubst(ty.KeyType, subst),
-			ElemType: c.ApplySubst(ty.ElemType, subst),
+			KeyType:   c.ApplySubst(ty.KeyType, subst),
+			ValueType: c.ApplySubst(ty.ValueType, subst),
 		}
 	case *tree.ChannelType:
 		return &tree.ChannelType{

@@ -1056,7 +1056,7 @@ func ReadType(expr ast.Expr) tree.Type {
 			Args: ReadTypeList(expr.Indices),
 		}
 	case *ast.StarExpr:
-		return &tree.PointerType{BaseType: ReadType(expr.X)}
+		return &tree.PointerType{ElemType: ReadType(expr.X)}
 	case *ast.InterfaceType:
 		return ReadInterfaceType(expr)
 	case *ast.FuncType:
@@ -1065,8 +1065,8 @@ func ReadType(expr ast.Expr) tree.Type {
 		}
 	case *ast.MapType:
 		return &tree.MapType{
-			KeyType:  ReadType(expr.Key),
-			ElemType: ReadType(expr.Value),
+			KeyType:   ReadType(expr.Key),
+			ValueType: ReadType(expr.Value),
 		}
 	case *ast.ChanType:
 		return &tree.ChannelType{

@@ -215,7 +215,7 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 		panic(fmt.Sprintf("cannot unify: %v = %v", left, right))
 	case *tree.PointerType:
 		if right, ok := right.(*tree.PointerType); ok {
-			c.UnifyEq(left.BaseType, right.BaseType, subst)
+			c.UnifyEq(left.ElemType, right.ElemType, subst)
 			return
 		}
 		panic(fmt.Sprintf("cannot unify: %v = %v", left, right))

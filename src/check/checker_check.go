@@ -101,12 +101,12 @@ func (c *Checker) CheckTypeDeclType(ty tree.Type) {
 	case *tree.NamedType:
 		c.CheckTypeDeclType(ty.Type)
 	case *tree.PointerType:
-		c.CheckTypeDeclType(ty.BaseType)
+		c.CheckTypeDeclType(ty.ElemType)
 	case *tree.ArrayType:
 		c.CheckTypeDeclType(ty.ElemType)
 	case *tree.MapType:
 		c.CheckTypeDeclType(ty.KeyType)
-		c.CheckTypeDeclType(ty.ElemType)
+		c.CheckTypeDeclType(ty.ValueType)
 	default:
 		spew.Dump(ty)
 		panic("unreachable")
@@ -149,7 +149,7 @@ func (c *Checker) CheckMethodDecl(decl *tree.MethodDecl) {
 	var receiverTy tree.Type = scope.ResolveType(decl.Receiver.Type)
 
 	if pointerTy, ok := receiverTy.(*tree.PointerType); ok {
-		receiverTy = scope.ResolveType(pointerTy.BaseType)
+		receiverTy = scope.ResolveType(pointerTy.ElemType)
 	}
 
 	switch ty := receiverTy.(type) {
@@ -356,7 +356,7 @@ func (c *Checker) CheckRangeStmt(stmt *tree.RangeStmt) {
 
 	switch ty := scope.Under(targetTy).(type) {
 	case *tree.PointerType:
-		targetTy = c.ResolveType(ty.BaseType)
+		targetTy = c.ResolveType(ty.ElemType)
 	}
 
 	var keyTy, valueTy tree.Type
@@ -372,7 +372,7 @@ func (c *Checker) CheckRangeStmt(stmt *tree.RangeStmt) {
 		valueTy = scope.ResolveType(targetTy.ElemType)
 	case *tree.MapType:
 		keyTy = scope.ResolveType(targetTy.KeyType)
-		valueTy = scope.ResolveType(targetTy.ElemType)
+		valueTy = scope.ResolveType(targetTy.ValueType)
 	case *tree.ArrayType:
 		keyTy = scope.BuiltinType("int")
 		valueTy = scope.ResolveType(targetTy.ElemType)
@@ -489,11 +489,11 @@ func (c *Checker) CheckUnaryExpr(expr *tree.UnaryExpr, ty tree.Type) {
 	case tree.UnaryOpNot:
 		c.CheckExpr(expr.Expr, c.BuiltinType("bool"))
 	case tree.UnaryOpAddr:
-		c.CheckAssignableTo(&tree.PointerType{BaseType: exprTy}, c.ResolveType(ty))
+		c.CheckAssignableTo(&tree.PointerType{ElemType: exprTy}, c.ResolveType(ty))
 	case tree.UnaryOpDeref:
 		switch exprTy := c.Under(exprTy).(type) {
 		case *tree.PointerType:
-			c.CheckAssignableTo(c.ResolveType(exprTy.BaseType), c.ResolveType(ty))
+			c.CheckAssignableTo(c.ResolveType(exprTy.ElemType), c.ResolveType(ty))
 		default:
 			spew.Dump(expr)
 			panic("cannot dereference non-pointer")

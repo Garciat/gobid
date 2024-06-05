@@ -50,7 +50,7 @@ func (c *Checker) ContainsTypeParam(ty tree.Type, tyParam *tree.TypeParam) bool 
 		}
 		return false
 	case *tree.PointerType:
-		return c.ContainsTypeParam(ty.BaseType, tyParam)
+		return c.ContainsTypeParam(ty.ElemType, tyParam)
 	case *tree.StructType:
 		for _, field := range ty.Fields {
 			if c.ContainsTypeParam(field.Type, tyParam) {

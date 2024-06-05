@@ -42,7 +42,7 @@ func (c *Checker) Members(ty tree.Type) MemberSet {
 	ty = c.ResolveType(ty)
 
 	if pointerTy, ok := ty.(*tree.PointerType); ok {
-		ty = c.ResolveType(pointerTy.BaseType)
+		ty = c.ResolveType(pointerTy.ElemType)
 	}
 
 	embedded := MemberSet{}
@@ -106,7 +106,7 @@ func (c *Checker) Members(ty tree.Type) MemberSet {
 func (c *Checker) GetStructEmbedFieldName(ty tree.Type) common.Identifier {
 	// TODO disallow type parameters
 	if pointerTy, ok := ty.(*tree.PointerType); ok {
-		ty = pointerTy.BaseType
+		ty = pointerTy.ElemType
 	}
 
 	if tyAppTy, ok := ty.(*tree.TypeApplication); ok {
