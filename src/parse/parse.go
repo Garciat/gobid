@@ -246,11 +246,18 @@ func ReadTypeDecl(decl *ast.GenDecl) []tree.Decl {
 	var decls []tree.Decl
 	for _, spec := range decl.Specs {
 		spec := spec.(*ast.TypeSpec)
-		decls = append(decls, &tree.TypeDecl{
-			Name:       NewIdentifier(spec.Name.Name),
-			TypeParams: ReadTypeParamList(spec.TypeParams),
-			Type:       ReadType(spec.Type),
-		})
+		if spec.Assign == token.NoPos {
+			decls = append(decls, &tree.TypeDecl{
+				Name:       NewIdentifier(spec.Name.Name),
+				TypeParams: ReadTypeParamList(spec.TypeParams),
+				Type:       ReadType(spec.Type),
+			})
+		} else {
+			decls = append(decls, &tree.AliasDecl{
+				Name: NewIdentifier(spec.Name.Name),
+				Type: ReadType(spec.Type),
+			})
+		}
 	}
 	return decls
 }

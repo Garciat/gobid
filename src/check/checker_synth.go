@@ -27,6 +27,7 @@ func (c *Checker) Synth(expr tree.Expr) tree.Type {
 	case *tree.IndexExpr:
 		return c.SynthIndexExpr(expr)
 	case *tree.TypeAssertionExpr:
+		spew.Dump(expr)
 		panic("TODO")
 	case *tree.CallExpr:
 		return c.SynthCallExpr(expr)

@@ -2,6 +2,7 @@ package check
 
 import (
 	"fmt"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/garciat/gobid/common"
 	"github.com/garciat/gobid/tree"
 )
@@ -53,6 +54,12 @@ func (c *Checker) Members(ty tree.Type) MemberSet {
 			for name, member := range c.Members(embedTy) {
 				embedded[name] = append(embedded[name], member...)
 			}
+
+			fieldName := c.GetStructEmbedFieldName(embedTy)
+			members[fieldName] = []TypeMember{&FieldMember{Field: &tree.FieldDecl{
+				Name: fieldName,
+				Type: embedTy,
+			}}}
 		}
 		for _, field := range underTy.Fields {
 			members[field.Name] = []TypeMember{&FieldMember{Field: field}}
@@ -94,6 +101,29 @@ func (c *Checker) Members(ty tree.Type) MemberSet {
 	final.Merge(members) // overwrite embedded members with local members
 
 	return final
+}
+
+func (c *Checker) GetStructEmbedFieldName(ty tree.Type) common.Identifier {
+	// TODO disallow type parameters
+	if pointerTy, ok := ty.(*tree.PointerType); ok {
+		ty = pointerTy.BaseType
+	}
+
+	if tyAppTy, ok := ty.(*tree.TypeApplication); ok {
+		ty = tyAppTy.Type
+	}
+
+	switch ty := ty.(type) {
+	case *tree.TypeName:
+		return ty.Name
+	case *tree.PackageTypeName:
+		return ty.Name
+	case *tree.QualIdentifier:
+		return ty.Name
+	default:
+		spew.Dump(ty)
+		panic("unreachable")
+	}
 }
 
 func (c *Checker) CheckMethodsSatisfy(ty tree.Type, target []*tree.MethodElem) error {
