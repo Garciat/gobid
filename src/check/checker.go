@@ -108,7 +108,7 @@ func (c *Checker) Run() {
 					fmt.Printf("DUPLICATE DECL %v\n", decl) // TODO (P0) should not happen!!!
 					continue
 				}
-				fmt.Println(declFile[decl].Path)
+				//fmt.Println(declFile[decl].Path)
 				scope := fileScopes[declFile[decl]]
 				scope.DefineTopLevelDecl(decl)
 				seen.Add(decl)
@@ -121,7 +121,7 @@ func (c *Checker) Run() {
 					fmt.Printf("DUPLICATE DECL %v\n", decl) // TODO (P0) should not happen!!!
 					continue
 				}
-				fmt.Println(declFile[decl].Path)
+				//fmt.Println(declFile[decl].Path)
 				scope := fileScopes[declFile[decl]]
 				scope.DefineTopLevelDecl(decl)
 				seen.Add(decl)

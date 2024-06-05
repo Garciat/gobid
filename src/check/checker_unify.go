@@ -6,6 +6,14 @@ import (
 	"github.com/garciat/gobid/tree"
 )
 
+const DebugUnify = false
+
+func UnifyPrintf(format string, args ...interface{}) {
+	if DebugUnify {
+		fmt.Printf(format, args...)
+	}
+}
+
 func (c *Checker) CheckSubst(tyParams *tree.TypeParamList, subst Subst) {
 	for _, tyParam := range tyParams.Params {
 		tySub, ok := subst[tyParam.Name]
@@ -24,18 +32,18 @@ func (c *Checker) CheckSubst(tyParams *tree.TypeParamList, subst Subst) {
 func (c *Checker) Verify() Subst {
 	subst := Subst{}
 
-	fmt.Println("=== Verify ===")
+	UnifyPrintf("=== Verify ===")
 
 	for i := 0; i < 10; i++ {
-		fmt.Printf("=== iteration %d ===\n", i)
-		fmt.Println(c.TyCtx)
+		UnifyPrintf("=== iteration %d ===\n", i)
+		UnifyPrintf("%v\n", c.TyCtx)
 
 		learned := Subst{}
 
 		c.Unify(c.TyCtx.Relations, learned)
 		learned = c.Simplify(learned)
 
-		fmt.Printf("learned: %v\n", learned)
+		UnifyPrintf("learned: %v\n", learned)
 
 		next := []Relation{}
 
@@ -71,8 +79,8 @@ func (c *Checker) Verify() Subst {
 
 	subst = c.Simplify(subst)
 
-	fmt.Println("=== subst ===")
-	fmt.Println(subst)
+	UnifyPrintf("=== subst ===")
+	UnifyPrintf("%v\n", subst)
 
 	return subst
 }
@@ -105,7 +113,7 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 	left = c.ResolveType(left)
 	right = c.ResolveType(right)
 
-	fmt.Printf("? %v = %v %v\n", left, right, subst)
+	UnifyPrintf("? %v = %v %v\n", left, right, subst)
 
 	if c.Identical(left, right) {
 		return
@@ -253,7 +261,7 @@ func (c *Checker) UnifySubtype(sub, super tree.Type, subst Subst) {
 	sub = c.ResolveType(sub)
 	super = c.ResolveType(super)
 
-	fmt.Printf("? %v <: %v %v\n", sub, super, subst)
+	UnifyPrintf("? %v <: %v %v\n", sub, super, subst)
 
 	if sub, ok := c.ResolveType(sub).(*tree.TypeParam); ok {
 		if !c.Identical(sub, super) && c.ContainsTypeParam(super, sub) {

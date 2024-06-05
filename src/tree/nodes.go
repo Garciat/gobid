@@ -300,6 +300,10 @@ type LiteralExpr struct {
 	Literal Literal
 }
 
+func (e *LiteralExpr) String() string {
+	return fmt.Sprintf("literal(%v)", e.Literal)
+}
+
 type FuncLitExpr struct {
 	ExprBase
 	Signature *Signature
@@ -330,9 +334,17 @@ type LiteralInt struct {
 	Value string
 }
 
+func (l *LiteralInt) String() string {
+	return fmt.Sprintf("int(%s)", l.Value)
+}
+
 type LiteralBool struct {
 	LiteralBase
 	Value string
+}
+
+func (l *LiteralBool) String() string {
+	return fmt.Sprintf("bool(%s)", l.Value)
 }
 
 type LiteralString struct {
@@ -340,9 +352,17 @@ type LiteralString struct {
 	Value string
 }
 
+func (l *LiteralString) String() string {
+	return fmt.Sprintf("string(%q)", l.Value)
+}
+
 type LiteralFloat struct {
 	LiteralBase
 	Value string
+}
+
+func (l *LiteralFloat) String() string {
+	return fmt.Sprintf("float(%s)", l.Value)
 }
 
 type LiteralImag struct {
@@ -350,12 +370,19 @@ type LiteralImag struct {
 	Value string
 }
 
+func (l *LiteralImag) String() string {
+	return fmt.Sprintf("imag(%s)", l.Value)
+}
+
 type LiteralRune struct {
 	LiteralBase
 	Value string
 }
 
-// for things like make() and new()
+func (l *LiteralRune) String() string {
+	return fmt.Sprintf("rune(%q)", l.Value)
+}
+
 type TypeExpr struct {
 	ExprBase
 	Type Type

@@ -163,7 +163,7 @@ func (c *Checker) DoSelect(exprTy tree.Type, sel common.Identifier) tree.Type {
 
 	ty, err := c.GetMemberType(checkTy, sel)
 	if err != nil {
-		spew.Dump(c.Under(checkTy))
+		spew.Dump(exprTy)
 		panic(err)
 	}
 
