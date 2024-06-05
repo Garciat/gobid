@@ -5,6 +5,15 @@ import (
 	"github.com/garciat/gobid/tree"
 )
 
+func (c *Checker) IsPointerType(ty tree.Type) bool {
+	switch ty.(type) {
+	case *tree.PointerType:
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *Checker) IsTypeParam(ty tree.Type) bool {
 	switch ty.(type) {
 	case *tree.TypeParam:

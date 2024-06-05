@@ -369,21 +369,8 @@ func (c *Checker) BasicSatisfy(sub tree.Type, inter *tree.InterfaceType, subst S
 		return // leave for next iteration?
 	}
 	if len(supertypeset.Methods) > 0 {
-		subMethods, pointerReceiver := c.MethodSet(sub)
-	super:
-		for _, superMethod := range supertypeset.Methods {
-			for _, subMethod := range subMethods {
-				if subMethod.Name == superMethod.Name {
-					if subMethod.PointerReceiver && !pointerReceiver {
-						panic(fmt.Sprintf("cannot use pointer-receiver method %v with non pointer", subMethod))
-					}
-					if c.Identical(subMethod.Type, superMethod.Type) {
-						continue super
-					}
-					panic("incompatible method signature")
-				}
-			}
-			panic(fmt.Sprintf("type %v doesn't have method %v", sub, superMethod))
+		if err := c.CheckMethodsSatisfy(sub, supertypeset.Methods); err != nil {
+			panic(fmt.Errorf("type %v does not satisfy %v: %v", sub, inter, err))
 		}
 	}
 	if tyPar, ok := c.ResolveType(sub).(*tree.TypeParam); ok {

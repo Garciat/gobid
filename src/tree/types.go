@@ -392,7 +392,6 @@ type InterfaceType struct {
 	TypeBase
 	Methods     []*MethodElem
 	Constraints []*TypeConstraint
-	// TODO: embedded interfaces
 }
 
 func (t *InterfaceType) String() string {

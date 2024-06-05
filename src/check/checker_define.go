@@ -134,20 +134,25 @@ func (c *Checker) DefineFunctionDecl(decl *tree.FunctionDecl) {
 func (c *Checker) DefineMethodDecl(decl *tree.MethodDecl) {
 	pointerReceiver := false
 
-	receiverTy := decl.Receiver.Type
+	receiverTy := c.ResolveType(decl.Receiver.Type)
 	if pointerTy, ok := receiverTy.(*tree.PointerType); ok {
-		receiverTy = pointerTy.BaseType
+		receiverTy = c.ResolveType(pointerTy.BaseType)
 		pointerReceiver = true
+	}
+
+	switch c.Under(receiverTy).(type) {
+	case *tree.InterfaceType:
+		panic("cannot define methods on interface types")
 	}
 
 	var methodHolder common.Identifier
 
 	switch receiverTy := receiverTy.(type) {
-	case *tree.TypeName:
+	case *tree.NamedType:
 		methodHolder = receiverTy.Name
 	case *tree.TypeApplication:
-		switch receiverTy := receiverTy.Type.(type) {
-		case *tree.TypeName:
+		switch receiverTy := c.ResolveType(receiverTy.Type).(type) {
+		case *tree.NamedType:
 			methodHolder = receiverTy.Name
 		case *tree.QualIdentifier:
 			panic("cannot have package-qualified receiver type")

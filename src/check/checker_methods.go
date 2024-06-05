@@ -2,47 +2,130 @@ package check
 
 import (
 	"fmt"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/garciat/gobid/common"
 	"github.com/garciat/gobid/tree"
 	"strings"
 )
 
-func (c *Checker) MethodSet(ty tree.Type) ([]*tree.MethodElem, bool) {
-	ty = c.ResolveType(ty)
+type MemberSet = common.Map[common.Identifier, []TypeMember]
 
-	var pointerReceiver bool
-	if pointerTy, ok := ty.(*tree.PointerType); ok {
-		ty = pointerTy.BaseType
-		pointerReceiver = true
+type TypeMember interface{}
+
+type FieldMember struct {
+	Field *tree.FieldDecl
+}
+
+type MethodMember struct {
+	Method *tree.MethodElem
+}
+
+func (c *Checker) GetMemberType(ty tree.Type, name common.Identifier) (tree.Type, error) {
+	members := c.Members(ty)
+	options := members[name]
+	if len(options) == 0 {
+		return nil, fmt.Errorf("type %v does not have member %q", ty, name)
 	}
-
-	switch ty := c.ResolveType(ty).(type) {
-	case *tree.InterfaceType:
-		return ty.Methods, false
-	case *tree.NamedType:
-		return c.NamedTypeMethods(ty), pointerReceiver
-	case *tree.TypeApplication:
-		named, subst := c.InstantiateType(ty)
-		var methods []*tree.MethodElem
-		for _, m := range c.NamedTypeMethods(named) {
-			methods = append(methods, &tree.MethodElem{
-				Name: m.Name,
-				Type: c.ApplySubst(m.Type, subst).(*tree.FunctionType),
-			})
-		}
-		return methods, pointerReceiver
+	if len(options) > 1 {
+		return nil, fmt.Errorf("type %v has ambiguous members %q", ty, name)
+	}
+	switch member := options[0].(type) {
+	case *FieldMember:
+		return member.Field.Type, nil
+	case *MethodMember:
+		return member.Method.Type, nil
 	default:
-		spew.Dump(ty)
-		panic(fmt.Sprintf("type %v cannot have methods", ty))
+		panic("unreachable")
 	}
 }
 
-func (c *Checker) NamedTypeMethods(namedTy *tree.NamedType) []*tree.MethodElem {
-	if interTy, ok := c.Under(namedTy).(*tree.InterfaceType); ok {
-		return interTy.Methods
+func (c *Checker) Members(ty tree.Type) MemberSet {
+	ty = c.ResolveType(ty)
+
+	if pointerTy, ok := ty.(*tree.PointerType); ok {
+		ty = c.ResolveType(pointerTy.BaseType)
 	}
 
+	embedded := MemberSet{}
+	members := MemberSet{}
+
+	switch underTy := c.Under(ty).(type) {
+	case *tree.StructType:
+		for _, embedTy := range underTy.Embeds {
+			for name, member := range c.Members(embedTy) {
+				embedded[name] = append(embedded[name], member...)
+			}
+		}
+		for _, field := range underTy.Fields {
+			members[field.Name] = []TypeMember{&FieldMember{Field: field}}
+		}
+	case *tree.InterfaceType:
+		typeset := c.InterfaceTypeSet(underTy) // TODO should not allow general interfaces?
+		if !typeset.Universe {
+			panic("interface type set is not universe?")
+		}
+		for _, method := range typeset.Methods {
+			members[method.Name] = []TypeMember{&MethodMember{Method: method}}
+		}
+	}
+
+	switch ty := ty.(type) {
+	case *tree.NamedType:
+		for _, method := range c.NamedTypeMethods(ty) {
+			if members.Contains(method.Name) {
+				panic(fmt.Sprintf("type %v has both field and method called %q", ty, method.Name))
+			}
+			members[method.Name] = []TypeMember{&MethodMember{Method: method}}
+		}
+	case *tree.TypeApplication:
+		named, subst := c.InstantiateType(ty)
+		for _, method := range c.NamedTypeMethods(named) {
+			members[method.Name] = []TypeMember{
+				MethodMember{
+					Method: &tree.MethodElem{
+						Name: method.Name,
+						Type: c.ApplySubst(method.Type, subst).(*tree.FunctionType),
+					},
+				},
+			}
+		}
+	}
+
+	final := MemberSet{}
+	final.Merge(embedded)
+	final.Merge(members) // overwrite embedded members with local members
+
+	return final
+}
+
+func (c *Checker) CheckMethodsSatisfy(ty tree.Type, target []*tree.MethodElem) error {
+	pointerReceiver := c.IsPointerType(ty) // TODO should check IsAddressable instead
+	members := c.Members(ty)
+
+	for _, method := range target {
+		options := members[method.Name]
+		if len(options) == 0 {
+			return fmt.Errorf("type %v does not have method %v", ty, method.Name)
+		}
+		if len(options) > 1 {
+			return fmt.Errorf("type %v has ambiguous methods %v (embedded)", ty, method.Name)
+		}
+		option, ok := options[0].(*MethodMember)
+		if !ok {
+			return fmt.Errorf("type %v member %v is a field", ty, method.Name)
+		}
+		if pointerReceiver != option.Method.PointerReceiver {
+			return fmt.Errorf("type %v method %v has pointer receiver mismatch", ty, method.Name)
+		}
+		if !c.Identical(method.Type, option.Method.Type) {
+			return fmt.Errorf("type %v method %v has type mismatch", ty, method.Name)
+		}
+		// OK
+	}
+
+	return nil
+}
+
+func (c *Checker) NamedTypeMethods(namedTy *tree.NamedType) []*tree.MethodElem {
 	var methods []*tree.MethodElem
 
 	c.VarCtx.Iter(func(name common.Identifier, ty tree.Type) {

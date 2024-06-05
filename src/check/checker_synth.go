@@ -146,14 +146,8 @@ func (c *Checker) DoSelect(exprTy tree.Type, sel common.Identifier) tree.Type {
 	}
 
 	switch ty := checkTy.(type) {
-	case *tree.NamedType:
-		for _, m := range c.NamedTypeMethods(ty) {
-			if m.Name == sel {
-				return m.Type
-			}
-		}
-		checkTy = ty.Type
 	case *tree.TypeParam:
+		// TODO move this to GetMemberType
 		if ty.Bound != nil {
 			set := c.InterfaceTypeSet(ty.Bound)
 			for _, m := range set.Methods {
@@ -167,23 +161,13 @@ func (c *Checker) DoSelect(exprTy tree.Type, sel common.Identifier) tree.Type {
 		}
 	}
 
-	switch ty := c.Under(checkTy).(type) {
-	case *tree.StructType:
-		for _, field := range ty.Fields {
-			if field.Name == sel {
-				return field.Type
-			}
-		}
-	case *tree.InterfaceType:
-		for _, m := range ty.Methods {
-			if m.Name == sel {
-				return m.Type
-			}
-		}
+	ty, err := c.GetMemberType(checkTy, sel)
+	if err != nil {
+		spew.Dump(c.Under(checkTy))
+		panic(err)
 	}
 
-	spew.Dump(c.Under(checkTy))
-	panic(fmt.Sprintf("type %v has no field or method %v", exprTy, sel))
+	return ty
 }
 
 func (c *Checker) SynthIndexExpr(expr *tree.IndexExpr) tree.Type {
