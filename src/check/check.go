@@ -104,15 +104,22 @@ func (c *Checker) Run() {
 			}
 		}
 
+		seen := Set[tree.Decl]{}
+
 		fmt.Printf("=== Loading Package (%v) ===\n", pkg.ImportPath)
 		for _, decl := range packageSortedDecls[pkg] {
 			switch decl := decl.(type) {
 			case *tree.ImportDecl:
 				// done earlier
 			default:
+				if seen.Contains(decl) {
+					fmt.Printf("skipping %v\n", decl) // TODO (P0) should not happen!!!
+					continue
+				}
 				fmt.Println(declFile[decl].Path)
 				scope := fileScopes[declFile[decl]]
 				scope.DefineTopLevelDecl(decl)
+				seen.Add(decl)
 			}
 		}
 	}
@@ -1375,8 +1382,13 @@ func (c *Checker) SynthIndexExpr(expr *tree.IndexExpr) tree.Type {
 func (c *Checker) SynthSliceExpr(expr *tree.SliceExpr) tree.Type {
 	exprTy := c.Synth(expr.Expr)
 
+	switch ty := c.Under(exprTy).(type) {
+	case *tree.PointerType:
+		exprTy = c.ResolveType(ty.BaseType)
+	}
+
 	var resultTy tree.Type
-	switch exprTy := exprTy.(type) {
+	switch exprTy := c.Under(exprTy).(type) {
 	case *tree.SliceType:
 		resultTy = exprTy
 	case *tree.TypeBuiltin:
