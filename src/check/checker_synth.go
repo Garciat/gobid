@@ -27,8 +27,7 @@ func (c *Checker) Synth(expr tree.Expr) tree.Type {
 	case *tree.IndexExpr:
 		return c.SynthIndexExpr(expr)
 	case *tree.TypeAssertionExpr:
-		spew.Dump(expr)
-		panic("TODO")
+		return c.SynthTypeAssertionExpr(expr)
 	case *tree.CallExpr:
 		return c.SynthCallExpr(expr)
 	case *tree.LiteralExpr:
@@ -48,7 +47,7 @@ func (c *Checker) Synth(expr tree.Expr) tree.Type {
 }
 
 func (c *Checker) SynthNameExpr(expr *tree.NameExpr) tree.Type {
-	return c.Lookup(expr.Name)
+	return c.ResolveType(c.Lookup(expr.Name))
 }
 
 func (c *Checker) SynthImportRef(expr *tree.ImportRef) tree.Type {
@@ -238,6 +237,23 @@ func (c *Checker) SynthIndexExpr(expr *tree.IndexExpr) tree.Type {
 	return resultTy
 }
 
+func (c *Checker) SynthTypeAssertionExpr(expr *tree.TypeAssertionExpr) tree.Type {
+	var fromTy *tree.InterfaceType
+
+	switch ty := c.Synth(expr.Expr).(type) {
+	case *tree.InterfaceType:
+		fromTy = ty
+	default:
+		panic(fmt.Errorf("cannot type assert non-interface type %v", ty))
+	}
+
+	var toTy = c.ResolveType(expr.Type)
+
+	c.CheckAssignableTo(toTy, fromTy)
+
+	return toTy
+}
+
 func (c *Checker) SynthSliceExpr(expr *tree.SliceExpr) tree.Type {
 	exprTy := c.ResolveType(c.Synth(expr.Expr))
 
@@ -409,7 +425,6 @@ func (c *Checker) SynthBuiltinConversion(expr tree.Expr, targetTy *tree.TypeBuil
 }
 
 func (c *Checker) SynthLiteralExpr(expr *tree.LiteralExpr) tree.Type {
-	// TODO untype literal types
 	switch expr.Literal.(type) {
 	case *tree.LiteralInt:
 		return &tree.UntypedConstantType{Kind: tree.UntypedConstantInt}
