@@ -199,6 +199,12 @@ func (c *Checker) SynthIndexExpr(expr *tree.IndexExpr) tree.Type {
 		})
 	}
 
+	if len(expr.Indices) != 1 {
+		panic("index expression with more than one index")
+	}
+
+	var index = expr.Indices[0]
+
 	switch ty := exprTy.(type) {
 	case *tree.PointerType:
 		exprTy = c.ResolveType(ty.ElemType)
@@ -233,6 +239,8 @@ func (c *Checker) SynthIndexExpr(expr *tree.IndexExpr) tree.Type {
 		spew.Dump(reflect.TypeOf(exprTy))
 		panic(fmt.Sprintf("cannot index type %v", exprTy))
 	}
+
+	c.CheckAssignableTo(c.Synth(index), indexTy)
 
 	return resultTy
 }
@@ -411,7 +419,7 @@ func (c *Checker) SynthFuncLitExpr(expr *tree.FuncLitExpr) tree.Type {
 }
 
 func (c *Checker) SynthConversionExpr(conv *tree.ConversionExpr) tree.Type {
-	exprTy := c.Synth(conv.Expr)
+	exprTy := c.ResolveType(c.Synth(conv.Expr))
 	targetTy := c.ResolveType(conv.Type)
 
 	switch exprTy.(type) {
@@ -430,6 +438,14 @@ func (c *Checker) SynthConversionExpr(conv *tree.ConversionExpr) tree.Type {
 		return c.SynthBuiltinConversion(conv.Expr, targetTy)
 	case *tree.NamedType:
 		return c.SynthNamedConversion(conv.Expr, targetTy)
+	case *tree.PointerType:
+		switch exprTy := exprTy.(type) {
+		case *tree.BuiltinType:
+			if exprTy.Tag == tree.BuiltinTypeTagUnsafePointer {
+				return targetTy
+			}
+		}
+		panic(fmt.Sprintf("cannot convert %v to %v", exprTy, targetTy))
 	default:
 		spew.Dump(conv)
 		panic("unreachable")
@@ -437,7 +453,7 @@ func (c *Checker) SynthConversionExpr(conv *tree.ConversionExpr) tree.Type {
 }
 
 func (c *Checker) SynthBuiltinConversion(expr tree.Expr, targetTy *tree.BuiltinType) tree.Type {
-	exprTy := c.Synth(expr)
+	exprTy := c.ResolveType(c.Synth(expr))
 
 	switch exprTy := c.Under(exprTy).(type) {
 	case *tree.UntypedConstantType:
@@ -446,6 +462,25 @@ func (c *Checker) SynthBuiltinConversion(expr tree.Expr, targetTy *tree.BuiltinT
 		}
 	case *tree.BuiltinType:
 		if exprTy.IsConversibleTo(targetTy) {
+			return targetTy
+		}
+	}
+
+	switch targetTy.Tag {
+	case tree.BuiltinTypeTagUnsafePointer:
+		switch exprTy := c.Under(exprTy).(type) {
+		case *tree.PointerType:
+			return targetTy
+		case *tree.BuiltinType:
+			if exprTy.Tag == tree.BuiltinTypeTagUnsafePointer {
+				return targetTy
+			}
+			if exprTy.Tag == tree.BuiltinTypeTagUintptr {
+				return targetTy
+			}
+		}
+	case tree.BuiltinTypeTagString:
+		if c.IsByteArray(exprTy) {
 			return targetTy
 		}
 	}
