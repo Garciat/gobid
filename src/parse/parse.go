@@ -46,26 +46,27 @@ func (p *parser) ParsePackage(path string) []*source.FileDef {
 
 	for _, pkg := range packages {
 		for path, f := range pkg.Files {
-			var buildConstraint string
-			for _, grp := range f.Comments {
-				for _, cmt := range grp.List {
-					if strings.HasPrefix(cmt.Text, "//go:build") {
-						buildConstraint = cmt.Text
-					}
-				}
-			}
-			file := p.readAST(path, f)
-			file.BuildConstraint = buildConstraint
-			files = append(files, file)
+			files = append(files, p.readAST(path, f))
 		}
 	}
 
 	return files
 }
 
-func (p *parser) readAST(path string, fast *ast.File) *source.FileDef {
-	//fmt.Printf("=== Parser.readAST(%v) ===\n", path)
-	return ReadFile(path, fast)
+func (p *parser) readAST(path string, f *ast.File) *source.FileDef {
+	file := ReadFile(path, f)
+
+	var buildConstraint string
+	for _, grp := range f.Comments {
+		for _, cmt := range grp.List {
+			if strings.HasPrefix(cmt.Text, "//go:build") {
+				buildConstraint = cmt.Text
+			}
+		}
+	}
+	file.BuildConstraint = buildConstraint
+
+	return file
 }
 
 func ReadFile(path string, file *ast.File) *source.FileDef {

@@ -210,13 +210,6 @@ func ResolvePackageNames(pkg *source.Package) NameResolutionResult {
 	dependencies := make(NameDependencies)
 	for _, name := range packageNames {
 		dependencies[name.Name] = name.Deps
-
-		if name.Name.Value == "waitReasonZero" {
-			fmt.Println("waitReasonZero deps:", dependencies[name.Name])
-		}
-		if name.Name.Value == "waitReason" {
-			fmt.Println("waitReason deps:", dependencies[name.Name])
-		}
 	}
 	VerifyNameCycles(packageNames, dependencies)
 
