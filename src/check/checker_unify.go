@@ -79,7 +79,7 @@ func (c *Checker) Verify() Subst {
 
 	subst = c.Simplify(subst)
 
-	UnifyPrintf("=== subst ===")
+	UnifyPrintf("=== DONE ===\n")
 	UnifyPrintf("%v\n", subst)
 
 	return subst
@@ -201,7 +201,7 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 		panic("TODO")
 	case *tree.TypeApplication:
 		if right, ok := right.(*tree.TypeApplication); ok {
-			if left.Type != right.Type {
+			if !c.Identical(c.ResolveType(left.Type), c.ResolveType(right.Type)) {
 				panic(fmt.Sprintf("cannot unify: %v = %v", left, right))
 			}
 			if len(left.Args) != len(right.Args) {

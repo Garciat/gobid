@@ -1,4 +1,7 @@
 package main
 
-var x1 = 1
-var x2 = x1
+import "fmt"
+
+func init() {
+	fmt.Println("Hello, World!")
+}

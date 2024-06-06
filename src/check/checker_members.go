@@ -139,6 +139,8 @@ func (c *Checker) CheckMethodsSatisfy(ty tree.Type, target []*tree.MethodElem) e
 	pointerReceiver := c.IsPointerType(ty) // TODO should check IsAddressable instead
 	members := c.Members(ty)
 
+	var pointerReceiverMethods []*tree.MethodElem
+
 	for _, method := range target {
 		options := members[method.Name]
 		if len(options) == 0 {
@@ -151,13 +153,19 @@ func (c *Checker) CheckMethodsSatisfy(ty tree.Type, target []*tree.MethodElem) e
 		if !ok {
 			return fmt.Errorf("type %v member %v is a field", ty, method.Name)
 		}
-		if pointerReceiver != option.Method.PointerReceiver {
-			return fmt.Errorf("type %v method %v has pointer receiver mismatch", ty, method.Name)
+		if option.Method.PointerReceiver {
+			pointerReceiverMethods = append(pointerReceiverMethods, option.Method)
 		}
 		if !c.Identical(method.Type, option.Method.Type) {
 			return fmt.Errorf("type %v method %v has type mismatch", ty, method.Name)
 		}
 		// OK
+	}
+
+	if !pointerReceiver {
+		for _, method := range pointerReceiverMethods {
+			return fmt.Errorf("type %v method %v has pointer receiver", ty, method.Name)
+		}
 	}
 
 	return nil

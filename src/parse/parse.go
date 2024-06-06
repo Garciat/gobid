@@ -974,8 +974,9 @@ func ReadCallExpr(expr *ast.CallExpr) tree.Expr {
 		args = append(args, ReadExpr(arg))
 	}
 	return &tree.CallExpr{
-		Func: ReadExpr(expr.Fun),
-		Args: args,
+		Func:     ReadExpr(expr.Fun),
+		Args:     args,
+		Ellipsis: expr.Ellipsis.IsValid(),
 	}
 }
 

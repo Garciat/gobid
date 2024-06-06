@@ -1,11 +1,6 @@
 package main
 
 import "unsafe"
-import "fmt"
-
-func sayHello() {
-	fmt.Println("Hello, World!")
-}
 
 func example1(p unsafe.Pointer) uintptr {
 	return (uintptr)(p)

@@ -397,10 +397,8 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 			panic("not a function")
 		}
 	}
-	var variadicParam *tree.ParameterDecl
-	var variadicIndex int = -1
-	if len(expr.Args) != len(funcTy.Signature.Params.Params) {
-		variadicParam, variadicIndex = funcTy.Signature.GetVariadicParam()
+	variadicParam, variadicIndex := funcTy.Signature.GetVariadicParam()
+	if len(expr.Args) != len(funcTy.Signature.Params.Params) && !expr.Ellipsis {
 		if variadicIndex != -1 && len(expr.Args) < len(funcTy.Signature.Params.Params) {
 			panic("not enough arguments")
 		}
@@ -435,11 +433,16 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 
 		argTy := c.Synth(arg)
 
-		switch paramTy := param.Type.(type) {
+		actualParamTy := param.Type
+		if variadicIndex == i && expr.Ellipsis {
+			actualParamTy = &tree.SliceType{ElemType: actualParamTy}
+		}
+
+		switch param.Type.(type) {
 		case *tree.TypeParam:
-			c.CheckEqualTypes(argTy, paramTy)
+			c.CheckEqualTypes(argTy, actualParamTy)
 		default:
-			c.CheckAssignableTo(argTy, paramTy)
+			c.CheckAssignableTo(argTy, actualParamTy)
 		}
 	}
 
@@ -565,38 +568,46 @@ func (c *Checker) SynthLiteralExpr(expr *tree.LiteralExpr) tree.Type {
 }
 
 func (c *Checker) SynthCompositeLitExpr(expr *tree.CompositeLitExpr) tree.Type {
+	if expr.Type == nil {
+		panic("composite literal without type")
+	}
 	return c.MakeCompositeLit(expr, c.ResolveType(expr.Type))
 }
 
 func (c *Checker) MakeCompositeLit(expr *tree.CompositeLitExpr, targetTy tree.Type) tree.Type {
-	underTy := c.Under(targetTy)
-	switch underTy := underTy.(type) {
+	switch exprTy := c.Under(targetTy).(type) {
 	case *tree.PointerType:
-		elemTy := c.ResolveType(underTy.ElemType)
+		elemTy := c.ResolveType(exprTy.ElemType)
 		if _, ok := c.Under(elemTy).(*tree.PointerType); ok {
 			panic("composite literal of double pointer type?")
 		}
 		return &tree.PointerType{ElemType: c.MakeCompositeLit(expr, elemTy)}
-	}
-
-	switch exprTy := c.Under(targetTy).(type) {
 	case *tree.StructType:
-		return c.CheckCompositeLitStruct(expr, exprTy)
+		c.CheckCompositeLitStruct(expr, exprTy)
 	case *tree.SliceType:
-		return c.CheckCompositeLitSlice(expr, exprTy)
+		c.CheckCompositeLitSlice(expr, exprTy)
 	case *tree.MapType:
-		return c.CheckCompositeLitMap(expr, exprTy)
+		c.CheckCompositeLitMap(expr, exprTy)
 	case *tree.ArrayType:
-		return c.CheckCompositeLitArray(expr, exprTy)
+		c.CheckCompositeLitArray(expr, exprTy)
+
+		switch exprTy.Len.(type) {
+		case *tree.EllipsisExpr:
+			return &tree.ArrayType{
+				ElemType: exprTy.ElemType,
+				Len:      &tree.ConstIntExpr{Value: int64(len(expr.Elems))},
+			}
+		}
 	default:
 		spew.Dump(exprTy)
 		panic("unreachable")
 	}
+	return targetTy
 }
 
-func (c *Checker) CheckCompositeLitStruct(expr *tree.CompositeLitExpr, structTy *tree.StructType) tree.Type {
+func (c *Checker) CheckCompositeLitStruct(expr *tree.CompositeLitExpr, structTy *tree.StructType) {
 	if len(expr.Elems) == 0 {
-		return structTy
+		return
 	}
 
 	ordered := expr.Elems[0].Key == nil
@@ -654,42 +665,23 @@ func (c *Checker) CheckCompositeLitStruct(expr *tree.CompositeLitExpr, structTy 
 			panic(fmt.Sprintf("type %v has no field %v", structTy, elem.Key))
 		}
 	}
-
-	return structTy
 }
 
-func (c *Checker) CheckCompositeLitSlice(expr *tree.CompositeLitExpr, sliceTy *tree.SliceType) tree.Type {
+func (c *Checker) CheckCompositeLitSlice(expr *tree.CompositeLitExpr, sliceTy *tree.SliceType) {
 	for _, elem := range expr.Elems {
 		c.CheckExpr(elem.Value, c.ResolveType(sliceTy.ElemType))
 	}
-	return sliceTy
 }
 
-func (c *Checker) CheckCompositeLitMap(expr *tree.CompositeLitExpr, mapTy *tree.MapType) tree.Type {
+func (c *Checker) CheckCompositeLitMap(expr *tree.CompositeLitExpr, mapTy *tree.MapType) {
 	for _, elem := range expr.Elems {
 		c.CheckExpr(elem.Key, c.ResolveType(mapTy.KeyType))
 		c.CheckExpr(elem.Value, c.ResolveType(mapTy.ValueType))
 	}
-	return mapTy
 }
 
-func (c *Checker) CheckCompositeLitArray(expr *tree.CompositeLitExpr, arrayTy *tree.ArrayType) tree.Type {
-	var arrayLen int64
-	switch arrayTy.Len.(type) {
-	case *tree.EllipsisExpr:
-		arrayLen = -1
-	default:
-		arrayLen = c.EvaluateConstantIntExpr(nil, arrayTy.Len)
-		if int64(len(expr.Elems)) > arrayLen {
-			panic("composite literal with wrong number of elements")
-		}
-	}
+func (c *Checker) CheckCompositeLitArray(expr *tree.CompositeLitExpr, arrayTy *tree.ArrayType) {
 	for _, elem := range expr.Elems {
 		c.CheckExpr(elem.Value, arrayTy.ElemType)
-	}
-	if arrayLen == -1 {
-		return &tree.ArrayType{ElemType: arrayTy.ElemType, Len: &tree.ConstIntExpr{Value: int64(len(expr.Elems))}}
-	} else {
-		return &tree.ArrayType{ElemType: arrayTy.ElemType, Len: &tree.ConstIntExpr{Value: arrayLen}}
 	}
 }

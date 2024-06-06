@@ -214,9 +214,9 @@ type TypeAssertionExpr struct {
 
 type CallExpr struct {
 	ExprBase
-	Func Expr
-	Args []Expr
-	// TODO: Ellipsis
+	Func     Expr
+	Args     []Expr
+	Ellipsis bool
 }
 
 type NameExpr struct {
