@@ -126,6 +126,25 @@ type UntypedConstantType struct {
 	Kind UntypedConstantKind
 }
 
+func (d *UntypedConstantType) DefaultType() *BuiltinType {
+	switch d.Kind {
+	case UntypedConstantInt:
+		return BuiltinTypeInt
+	case UntypedConstantFloat:
+		return BuiltinTypeFloat64
+	case UntypedConstantComplex:
+		return BuiltinTypeComplex128
+	case UntypedConstantRune:
+		return BuiltinTypeRune
+	case UntypedConstantString:
+		return BuiltinTypeString
+	case UntypedConstantBool:
+		return BuiltinTypeBool
+	default:
+		panic("unreachable")
+	}
+}
+
 func (t *UntypedConstantType) IsString() bool {
 	return t.Kind == UntypedConstantString
 }

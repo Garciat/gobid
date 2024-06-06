@@ -67,10 +67,10 @@ func (c *Checker) DefineConstDecl(decl *tree.ConstDecl) {
 			declTy = c.ResolveType(decl.Type)
 			c.CheckAssignableTo(valueTy, declTy)
 		} else {
-			declTy = valueTy
+			declTy = value.Type().DefaultType()
 		}
 
-		c.VarCtx.Parent.DefConst(decl.Name, declTy, value)
+		c.VarCtx.Parent.Def(decl.Name, &tree.ConstValueType{Value: value, Type: declTy})
 	} else {
 		valueTy := c.Synth(decl.Value)
 		var declTy tree.Type

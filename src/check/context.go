@@ -44,13 +44,11 @@ type VarContext struct {
 	ScopeKind ScopeKind
 	Parent    *VarContext
 	Types     map[Identifier]tree.Type
-	Constants map[Identifier]tree.Expr
 }
 
 func NewVarContext() *VarContext {
 	return &VarContext{
-		Types:     map[Identifier]tree.Type{},
-		Constants: map[Identifier]tree.Expr{},
+		Types: map[Identifier]tree.Type{},
 	}
 }
 
@@ -59,13 +57,15 @@ func (c *VarContext) Fork(kind ScopeKind) *VarContext {
 		ScopeKind: kind,
 		Parent:    c,
 		Types:     map[Identifier]tree.Type{},
-		Constants: map[Identifier]tree.Expr{},
 	}
 }
 
 func (c *VarContext) Lookup(name Identifier) (tree.Type, bool) {
 	ty, ok := c.Types[name]
 	if ok {
+		if ty, ok := ty.(*tree.ConstValueType); ok {
+			return ty.Type, true
+		}
 		return ty, true
 	}
 	if c.Parent != nil {
@@ -75,9 +75,12 @@ func (c *VarContext) Lookup(name Identifier) (tree.Type, bool) {
 }
 
 func (c *VarContext) LookupConst(name Identifier) (tree.Expr, bool) {
-	expr, ok := c.Constants[name]
+	expr, ok := c.Types[name]
 	if ok {
-		return expr, true
+		if expr, ok := expr.(*tree.ConstValueType); ok {
+			return expr.Value, true
+		}
+		panic(fmt.Errorf("not a constant: %v", name))
 	}
 	if c.Parent != nil {
 		return c.Parent.LookupConst(name)
@@ -101,7 +104,6 @@ func (c *VarContext) DefConst(name Identifier, ty tree.Type, value tree.Expr) tr
 			panic(fmt.Errorf("redefined: %v", name))
 		}
 		c.Types[name] = ty
-		c.Constants[name] = value
 	}
 	return ty
 }

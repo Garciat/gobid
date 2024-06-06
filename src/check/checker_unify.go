@@ -162,7 +162,7 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 		c.UnifyEq(right, left, subst)
 	case *tree.TypeParam:
 		if right, ok := right.(*tree.UntypedConstantType); ok {
-			c.UnifyEq(left, c.UntypedDefaultType(right), subst)
+			c.UnifyEq(left, right.DefaultType(), subst)
 			return
 		}
 		if s, ok := subst[left.Name]; ok {
@@ -227,7 +227,7 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 				return
 			}
 		}
-		c.UnifyEq(c.UntypedDefaultType(left), right, subst)
+		c.UnifyEq(left.DefaultType(), right, subst)
 	case *tree.FunctionType:
 		if right, ok := right.(*tree.FunctionType); ok {
 			if len(left.Signature.TypeParams.Params) != 0 {

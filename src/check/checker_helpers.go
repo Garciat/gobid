@@ -119,20 +119,3 @@ func (c *Checker) IsStringLike(ty tree.Type) bool {
 		}
 	})
 }
-
-func (c *Checker) UntypedDefaultType(ty *tree.UntypedConstantType) tree.Type {
-	switch ty.Kind {
-	case tree.UntypedConstantInt:
-		return c.BuiltinType("int")
-	case tree.UntypedConstantBool:
-		return c.BuiltinType("bool")
-	case tree.UntypedConstantString:
-		return c.BuiltinType("string")
-	case tree.UntypedConstantFloat:
-		return c.BuiltinType("float64")
-	case tree.UntypedConstantRune:
-		return c.BuiltinType("rune")
-	default:
-		panic("unreachable")
-	}
-}
