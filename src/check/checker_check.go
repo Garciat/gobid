@@ -7,8 +7,25 @@ import (
 	"github.com/garciat/gobid/tree"
 )
 
-func (c *Checker) CheckAssignableTo(src, dst tree.Type) {
-	c.TyCtx.AddRelation(RelationSubtype{Sub: src, Super: dst})
+func (c *Checker) CheckAssignableTo(sub, super tree.Type) {
+	if sub == nil || super == nil {
+		panic("nil type")
+	}
+	c.TyCtx.AddRelation(RelationSubtype{Sub: sub, Super: super})
+}
+
+func (c *Checker) CheckEqualTypes(left, right tree.Type) {
+	if left == nil || right == nil {
+		panic("nil type")
+	}
+	c.TyCtx.AddRelation(RelationEq{Left: left, Right: right})
+}
+
+func (c *Checker) CheckSatisfies(ty tree.Type, constraint *tree.InterfaceType) {
+	if ty == nil || constraint == nil {
+		panic("nil type")
+	}
+	c.TyCtx.AddRelation(RelationSatisfies{Type: ty, Constraint: constraint})
 }
 
 func (c *Checker) CheckFile(file *source.FileDef) {
@@ -469,11 +486,11 @@ func (c *Checker) CheckExpr(expr tree.Expr, ty tree.Type) {
 }
 
 func (c *Checker) CheckNameExpr(expr *tree.NameExpr, ty tree.Type) {
-	c.TyCtx.AddEq(c.Lookup(expr.Name), c.ResolveType(ty))
+	c.CheckAssignableTo(c.Synth(expr), c.ResolveType(ty))
 }
 
 func (c *Checker) CheckPackageNameExpr(expr *tree.PackageNameExpr, ty tree.Type) {
-	c.TyCtx.AddEq(c.Synth(expr), c.ResolveType(ty))
+	c.CheckAssignableTo(c.Synth(expr), c.ResolveType(ty))
 }
 
 func (c *Checker) CheckBinaryExpr(expr *tree.BinaryExpr, ty tree.Type) {
@@ -481,27 +498,7 @@ func (c *Checker) CheckBinaryExpr(expr *tree.BinaryExpr, ty tree.Type) {
 }
 
 func (c *Checker) CheckUnaryExpr(expr *tree.UnaryExpr, ty tree.Type) {
-	exprTy := c.Synth(expr.Expr)
-	switch expr.Op {
-	case tree.UnaryOpNeg:
-		// TODO check is numeric
-		c.CheckExpr(expr.Expr, c.ResolveType(ty))
-	case tree.UnaryOpNot:
-		c.CheckExpr(expr.Expr, c.BuiltinType("bool"))
-	case tree.UnaryOpAddr:
-		c.CheckAssignableTo(&tree.PointerType{ElemType: exprTy}, c.ResolveType(ty))
-	case tree.UnaryOpDeref:
-		switch exprTy := c.Under(exprTy).(type) {
-		case *tree.PointerType:
-			c.CheckAssignableTo(c.ResolveType(exprTy.ElemType), c.ResolveType(ty))
-		default:
-			spew.Dump(expr)
-			panic("cannot dereference non-pointer")
-		}
-	default:
-		spew.Dump(expr, ty)
-		panic("unreachable")
-	}
+	c.CheckAssignableTo(c.Synth(expr), c.ResolveType(ty))
 }
 
 func (c *Checker) CheckSelectorExpr(expr *tree.SelectorExpr, ty tree.Type) {
@@ -509,36 +506,25 @@ func (c *Checker) CheckSelectorExpr(expr *tree.SelectorExpr, ty tree.Type) {
 }
 
 func (c *Checker) CheckIndexExpr(expr *tree.IndexExpr, ty tree.Type) {
-	switch exprTy := c.Synth(expr.Expr).(type) {
-	case *tree.SliceType:
-		if len(expr.Indices) != 1 {
-			panic("indexing a slice with multiple indices")
-		}
-		c.CheckExpr(expr.Indices[0], tree.UntypedInt())
-		c.TyCtx.AddEq(c.ResolveType(exprTy.ElemType), c.ResolveType(ty))
-	default:
-		spew.Dump(expr)
-		panic("unreachable")
-	}
+	c.CheckAssignableTo(c.Synth(expr), c.ResolveType(ty))
 }
 
 func (c *Checker) CheckCallExpr(expr *tree.CallExpr, ty tree.Type) {
-	callTy := c.Synth(expr)
-	c.CheckAssignableTo(callTy, c.ResolveType(ty))
+	c.CheckAssignableTo(c.Synth(expr), c.ResolveType(ty))
 }
 
 func (c *Checker) CheckLiteralExpr(expr *tree.LiteralExpr, ty tree.Type) {
-	exprTy := c.Synth(expr)
-	c.CheckAssignableTo(exprTy, c.ResolveType(ty))
+	c.CheckAssignableTo(c.Synth(expr), c.ResolveType(ty))
 }
 
 func (c *Checker) CheckCompositeLitExpr(expr *tree.CompositeLitExpr, ty tree.Type) {
+	var exprTy tree.Type
 	if expr.Type == nil {
-		c.MakeCompositeLit(expr, c.ResolveType(ty))
+		exprTy = c.MakeCompositeLit(expr, c.ResolveType(ty))
 	} else {
-		exprTy := c.Synth(expr)
-		c.CheckAssignableTo(exprTy, c.ResolveType(ty))
+		exprTy = c.Synth(expr)
 	}
+	c.CheckAssignableTo(exprTy, c.ResolveType(ty))
 }
 
 func (c *Checker) CheckFuncLitExpr(expr *tree.FuncLitExpr, ty tree.Type) {

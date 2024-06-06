@@ -251,6 +251,13 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 			return // OK
 		}
 		panic(fmt.Sprintf("cannot unify: %v = %v", left, right))
+	case *tree.StructType:
+		if right, ok := c.Under(right).(*tree.StructType); ok {
+			if c.Identical(left, right) {
+				return
+			}
+		}
+		panic(fmt.Sprintf("cannot unify: %v = %v", left, right))
 	default:
 		spew.Dump(left, right)
 		panic("unreachable")
@@ -373,7 +380,7 @@ func (c *Checker) BasicSatisfy(sub tree.Type, inter *tree.InterfaceType, subst S
 			c.UnifyEq(sub, single, subst)
 		}
 		// c.UnifySatisfies(sub, &InterfaceType{Methods: supertypeset.Methods}, subst)
-		c.TyCtx.AddRelation(RelationSubtype{Sub: sub, Super: &tree.InterfaceType{Methods: supertypeset.Methods}})
+		c.CheckAssignableTo(sub, &tree.InterfaceType{Methods: supertypeset.Methods})
 		return // leave for next iteration?
 	}
 	if len(supertypeset.Methods) > 0 {

@@ -32,7 +32,7 @@ func (c *Checker) InstantiateTypeFunc(app *tree.TypeApplication, argF func(tyPar
 	for i, tyArg := range app.Args {
 		tyParam := gen.TypeParams.Params[i]
 		subst[tyParam.Name] = tyArg
-		c.TyCtx.AddRelation(RelationSatisfies{Type: tyArg, Constraint: tyParam.Constraint})
+		c.CheckSatisfies(tyArg, tyParam.Constraint)
 		argF(tyParam, tyArg)
 	}
 	return named, subst

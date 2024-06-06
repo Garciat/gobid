@@ -15,11 +15,10 @@ func (c *Checker) Identical(ty1, ty2 tree.Type) bool {
 		}
 		return false
 	case *tree.TypeBuiltin:
-		ty, ok := ty2.(*tree.TypeBuiltin)
-		if !ok {
-			return false
+		if ty2, ok := ty2.(*tree.TypeBuiltin); ok {
+			return ty1.Name == ty2.Name
 		}
-		return ty1.Name == ty.Name
+		return false
 	case *tree.TypeParam:
 		if ty2, ok := ty2.(*tree.TypeParam); ok {
 			return ty1.Name == ty2.Name
@@ -70,11 +69,11 @@ func (c *Checker) Identical(ty1, ty2 tree.Type) bool {
 			if len(ty1.Fields) != len(ty2.Fields) {
 				return false
 			}
-			for i, field := range ty1.Fields {
-				if field.Name != ty2.Fields[i].Name {
+			for i := range ty1.Fields {
+				if ty1.Fields[i].Name != ty2.Fields[i].Name {
 					return false
 				}
-				if !c.Identical(field.Type, ty2.Fields[i].Type) {
+				if !c.Identical(c.ResolveType(ty1.Fields[i].Type), c.ResolveType(ty2.Fields[i].Type)) {
 					return false
 				}
 			}

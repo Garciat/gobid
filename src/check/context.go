@@ -14,7 +14,7 @@ type TypeContext struct {
 	Relations []Relation
 }
 
-func (c TypeContext) String() string {
+func (c *TypeContext) String() string {
 	parent := ""
 	if c.Parent != nil {
 		parent = fmt.Sprintf("%v || ", c.Parent)
@@ -31,10 +31,6 @@ func (c TypeContext) String() string {
 
 func (c *TypeContext) AddRelation(rel Relation) {
 	c.Relations = append(c.Relations, rel)
-}
-
-func (c *TypeContext) AddEq(left, right tree.Type) {
-	c.AddRelation(RelationEq{Left: left, Right: right})
 }
 
 func (c *TypeContext) Fork() *TypeContext {

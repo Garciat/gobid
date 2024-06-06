@@ -75,13 +75,13 @@ func (c *Checker) SynthBinaryExpr(expr *tree.BinaryExpr) tree.Type {
 		// TODO check comparable
 		leftTy := c.Synth(expr.Left)
 		rightTy := c.Synth(expr.Right)
-		c.TyCtx.AddEq(leftTy, rightTy)
+		c.CheckEqualTypes(leftTy, rightTy)
 		return c.BuiltinType("bool")
 	case tree.BinaryOpAdd, tree.BinaryOpSub, tree.BinaryOpMul, tree.BinaryOpQuo, tree.BinaryOpRem:
 		// TODO check numeric?
 		leftTy := c.Synth(expr.Left)
 		rightTy := c.Synth(expr.Right)
-		c.TyCtx.AddEq(leftTy, rightTy)
+		c.CheckEqualTypes(leftTy, rightTy)
 		return leftTy
 	case tree.BinaryOpLAnd, tree.BinaryOpLOr:
 		c.CheckExpr(expr.Left, c.BuiltinType("bool"))
@@ -91,7 +91,7 @@ func (c *Checker) SynthBinaryExpr(expr *tree.BinaryExpr) tree.Type {
 		// TODO check numeric?
 		leftTy := c.Synth(expr.Left)
 		rightTy := c.Synth(expr.Right)
-		c.TyCtx.AddEq(leftTy, rightTy)
+		c.CheckEqualTypes(leftTy, rightTy)
 		return leftTy
 	default:
 		spew.Dump(expr)
@@ -324,12 +324,12 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 
 	for i, tyArg := range typeArgs {
 		tyParam := funcTy.Signature.TypeParams.Params[i]
-		c.TyCtx.AddRelation(RelationSatisfies{Type: tyArg, Constraint: tyParam.Constraint})
-		c.TyCtx.AddEq(tyArg, subst[tyParam.Name])
+		c.CheckSatisfies(tyArg, tyParam.Constraint)
+		c.CheckEqualTypes(tyArg, subst[tyParam.Name])
 	}
 	for _, tyParam := range funcTy.Signature.TypeParams.Params {
 		ty := &tree.TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint}
-		c.TyCtx.AddRelation(RelationSubtype{Sub: ty, Super: tyParam.Constraint})
+		c.CheckSatisfies(ty, tyParam.Constraint)
 	}
 	for i, arg := range expr.Args {
 		var param *tree.ParameterDecl
@@ -343,15 +343,17 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 
 		switch paramTy := param.Type.(type) {
 		case *tree.TypeParam:
-			c.TyCtx.AddEq(argTy, paramTy)
+			c.CheckEqualTypes(argTy, paramTy)
 		default:
 			c.CheckAssignableTo(argTy, paramTy)
 		}
 	}
-	returns := []tree.Type{}
+
+	var returns []tree.Type
 	for _, result := range funcTy.Signature.Results.Params {
 		returns = append(returns, result.Type)
 	}
+
 	switch len(returns) {
 	case 0:
 		return &tree.TupleType{Elems: []tree.Type{}}
@@ -524,7 +526,7 @@ func (c *Checker) SynthBuiltinCopyCall(expr *tree.CallExpr) tree.Type {
 		panic(fmt.Sprintf("copy() with non-slice type %v", ty2))
 	}
 
-	c.TyCtx.AddEq(elemTy1, elemTy2)
+	c.CheckEqualTypes(elemTy1, elemTy2)
 
 	return c.BuiltinType("int")
 }
@@ -564,22 +566,22 @@ func (c *Checker) MakeCompositeLit(expr *tree.CompositeLitExpr, targetTy tree.Ty
 
 	switch exprTy := c.Under(targetTy).(type) {
 	case *tree.StructType:
-		return c.MakeCompositeLitStruct(expr, exprTy)
+		return c.CheckCompositeLitStruct(expr, exprTy)
 	case *tree.SliceType:
-		return c.MakeCompositeLitSlice(expr, exprTy)
+		return c.CheckCompositeLitSlice(expr, exprTy)
 	case *tree.MapType:
-		return c.MakeCompositeLitMap(expr, exprTy)
+		return c.CheckCompositeLitMap(expr, exprTy)
 	case *tree.ArrayType:
-		return c.MakeCompositeLitArray(expr, exprTy)
+		return c.CheckCompositeLitArray(expr, exprTy)
 	default:
 		spew.Dump(exprTy)
 		panic("unreachable")
 	}
 }
 
-func (c *Checker) MakeCompositeLitStruct(expr *tree.CompositeLitExpr, structTy *tree.StructType) tree.Type {
+func (c *Checker) CheckCompositeLitStruct(expr *tree.CompositeLitExpr, structTy *tree.StructType) tree.Type {
 	if len(expr.Elems) == 0 {
-		return expr.Type
+		return structTy
 	}
 
 	ordered := expr.Elems[0].Key == nil
@@ -638,25 +640,25 @@ func (c *Checker) MakeCompositeLitStruct(expr *tree.CompositeLitExpr, structTy *
 		}
 	}
 
-	return expr.Type
+	return structTy
 }
 
-func (c *Checker) MakeCompositeLitSlice(expr *tree.CompositeLitExpr, sliceTy *tree.SliceType) tree.Type {
+func (c *Checker) CheckCompositeLitSlice(expr *tree.CompositeLitExpr, sliceTy *tree.SliceType) tree.Type {
 	for _, elem := range expr.Elems {
 		c.CheckExpr(elem.Value, c.ResolveType(sliceTy.ElemType))
 	}
-	return expr.Type
+	return sliceTy
 }
 
-func (c *Checker) MakeCompositeLitMap(expr *tree.CompositeLitExpr, mapTy *tree.MapType) tree.Type {
+func (c *Checker) CheckCompositeLitMap(expr *tree.CompositeLitExpr, mapTy *tree.MapType) tree.Type {
 	for _, elem := range expr.Elems {
 		c.CheckExpr(elem.Key, c.ResolveType(mapTy.KeyType))
 		c.CheckExpr(elem.Value, c.ResolveType(mapTy.ValueType))
 	}
-	return expr.Type
+	return mapTy
 }
 
-func (c *Checker) MakeCompositeLitArray(expr *tree.CompositeLitExpr, arrayTy *tree.ArrayType) tree.Type {
+func (c *Checker) CheckCompositeLitArray(expr *tree.CompositeLitExpr, arrayTy *tree.ArrayType) tree.Type {
 	var arrayLen int64
 	switch arrayTy.Len.(type) {
 	case *tree.EllipsisExpr:
