@@ -1,3 +1,3 @@
 Next:
 
-  - Expand name resolution to function definitions
+  - Create folder with test cases

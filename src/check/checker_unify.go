@@ -6,7 +6,7 @@ import (
 	"github.com/garciat/gobid/tree"
 )
 
-const DebugUnify = false
+const DebugUnify = true
 
 func UnifyPrintf(format string, args ...interface{}) {
 	if DebugUnify {
@@ -349,13 +349,15 @@ func (c *Checker) UnifySatisfies(sub tree.Type, inter *tree.InterfaceType, subst
 	c.BasicSatisfy(sub, inter, subst, &typeset)
 
 	if typeset != nil && !typeset.Universe {
-		for _, term := range typeset.Types {
-			termTy := c.ResolveType(term)
+		for _, term := range typeset.Terms {
+			termTy := c.ResolveType(term.Type)
 			if !c.IsConcreteType(termTy) {
 				panic("cannot make union of non-concrete types")
 			}
+			if term.Tilde {
+				sub = c.Under(sub)
+			}
 			if c.Identical(sub, termTy) {
-				c.UnifyEq(sub, termTy, subst) // necessary?
 				return
 			}
 		}
@@ -367,11 +369,15 @@ func (c *Checker) UnifySatisfies(sub tree.Type, inter *tree.InterfaceType, subst
 func (c *Checker) BasicSatisfy(sub tree.Type, inter *tree.InterfaceType, subst Subst, out **TypeSet) {
 	inter = c.SimplifyInterface(inter)
 	supertypeset := c.InterfaceTypeSet(inter)
-	if !supertypeset.Universe && len(supertypeset.Types) == 0 {
+	if !supertypeset.Universe && len(supertypeset.Terms) == 0 {
 		panic("cannot satisfy empty set")
 	}
-	if len(supertypeset.Types) == 1 {
-		single := c.ResolveType(supertypeset.Types[0])
+	if len(supertypeset.Terms) == 1 {
+		term := supertypeset.Terms[0]
+		single := c.ResolveType(term.Type)
+		if term.Tilde {
+			sub = c.Under(sub)
+		}
 		// TODO hacky
 		if c.Identical(sub, single) {
 			return
@@ -401,12 +407,12 @@ func (c *Checker) BasicSatisfy(sub tree.Type, inter *tree.InterfaceType, subst S
 		if len(subtypeset.Methods) != 0 {
 			panic("TODO")
 		}
-		for _, term := range subtypeset.Types {
-			termTy := c.ResolveType(term)
+		for _, term := range subtypeset.Terms {
+			termTy := c.ResolveType(term.Type)
 			found := false
-			for _, superTerm := range supertypeset.Types {
-				superTermTy := c.ResolveType(superTerm)
-				if c.Identical(termTy, superTermTy) {
+			for _, superTerm := range supertypeset.Terms {
+				superTermTy := c.ResolveType(superTerm.Type)
+				if term.Tilde == superTerm.Tilde && c.Identical(termTy, superTermTy) {
 					found = true
 				}
 			}
@@ -416,8 +422,8 @@ func (c *Checker) BasicSatisfy(sub tree.Type, inter *tree.InterfaceType, subst S
 		}
 		return
 	}
-	if len(supertypeset.Types) == 1 {
-		c.UnifySubtype(sub, supertypeset.Types[0], subst)
+	if len(supertypeset.Terms) == 1 {
+		c.UnifySubtype(sub, supertypeset.Terms[0].Type, subst)
 		return
 	}
 	*out = &supertypeset

@@ -169,8 +169,8 @@ func (c *Checker) DoSelect(exprTy tree.Type, sel common.Identifier) tree.Type {
 					return m.Type
 				}
 			}
-			if len(set.Types) == 1 {
-				return c.DoSelect(c.ResolveType(set.Types[0]), sel)
+			if len(set.Terms) == 1 {
+				return c.DoSelect(c.ResolveType(set.Terms[0].Type), sel)
 			}
 		}
 	}

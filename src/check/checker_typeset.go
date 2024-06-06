@@ -7,14 +7,27 @@ import (
 
 type TypeSet struct {
 	Methods  []*tree.MethodElem
-	Types    []tree.Type
+	Terms    []TypeSetTerm
 	Universe bool
+}
+
+func (ts *TypeSet) IsEmpty() bool {
+	return len(ts.Terms) == 0 && !ts.Universe
+}
+
+func SingleTypeSet(ty tree.Type, tilde bool) TypeSet {
+	return TypeSet{Terms: []TypeSetTerm{{Type: ty, Tilde: tilde}}, Universe: false}
+}
+
+type TypeSetTerm struct {
+	Type  tree.Type
+	Tilde bool
 }
 
 func (c *Checker) Combine(lhs, rhs TypeSet) TypeSet {
 	result := TypeSet{
 		Methods:  []*tree.MethodElem{},
-		Types:    []tree.Type{},
+		Terms:    []TypeSetTerm{},
 		Universe: lhs.Universe && rhs.Universe,
 	}
 
@@ -34,22 +47,22 @@ func (c *Checker) Combine(lhs, rhs TypeSet) TypeSet {
 	}
 
 	if lhs.Universe && rhs.Universe {
-		if len(lhs.Types) != 0 {
+		if len(lhs.Terms) != 0 {
 			panic("weird")
 		}
-		if len(rhs.Types) != 0 {
+		if len(rhs.Terms) != 0 {
 			panic("weird")
 		}
 	} else if lhs.Universe && !rhs.Universe {
-		result.Types = append(result.Types, rhs.Types...)
+		result.Terms = append(result.Terms, rhs.Terms...)
 	} else if !lhs.Universe && rhs.Universe {
-		result.Types = append(result.Types, lhs.Types...)
+		result.Terms = append(result.Terms, lhs.Terms...)
 	} else {
 		// intersect
-		for _, t := range rhs.Types {
-			for _, u := range lhs.Types {
-				if c.Identical(t, u) {
-					result.Types = append(result.Types, t)
+		for _, t := range rhs.Terms {
+			for _, u := range lhs.Terms {
+				if t.Tilde == u.Tilde && c.Identical(t.Type, u.Type) {
+					result.Terms = append(result.Terms, t)
 				}
 			}
 		}
@@ -72,9 +85,6 @@ func (c *Checker) InterfaceTypeSet(ty *tree.InterfaceType) TypeSet {
 		var next TypeSet
 		if len(constraint.TypeElem.Union) == 1 {
 			term := constraint.TypeElem.Union[0]
-			if term.Tilde {
-				panic("TODO")
-			}
 			termTy := c.ResolveType(term.Type)
 			switch underTy := c.Under(termTy).(type) {
 			case *tree.InterfaceType:
@@ -83,17 +93,14 @@ func (c *Checker) InterfaceTypeSet(ty *tree.InterfaceType) TypeSet {
 				if underTy.Bound != nil {
 					next = c.InterfaceTypeSet(underTy.Bound)
 				} else {
-					next = TypeSet{Types: []tree.Type{underTy}, Universe: false}
+					next = SingleTypeSet(termTy, term.Tilde)
 				}
 			default:
-				next = TypeSet{Types: []tree.Type{termTy}, Universe: false}
+				next = SingleTypeSet(termTy, term.Tilde)
 			}
 		} else {
-			var types []tree.Type
+			var types []TypeSetTerm
 			for _, term := range constraint.TypeElem.Union {
-				if term.Tilde {
-					panic("TODO")
-				}
 				termTy := c.ResolveType(term.Type)
 				switch ty := c.Under(termTy).(type) {
 				case *tree.InterfaceType:
@@ -104,51 +111,13 @@ func (c *Checker) InterfaceTypeSet(ty *tree.InterfaceType) TypeSet {
 					spew.Dump(ty)
 					panic("what")
 				default:
-					types = append(types, ty)
+					types = append(types, TypeSetTerm{Type: termTy, Tilde: term.Tilde})
 				}
 			}
-			next = TypeSet{Types: types, Universe: false}
+			next = TypeSet{Terms: types, Universe: false}
 		}
 		typeset = c.Combine(typeset, next)
 	}
 
 	return typeset
-}
-
-func (c *Checker) TypeSet(con tree.TypeConstraint) TypeSet {
-	if len(con.TypeElem.Union) == 1 {
-		term := con.TypeElem.Union[0]
-		if term.Tilde {
-			panic("TODO")
-		}
-		termTy := c.ResolveType(term.Type)
-		switch ty := c.Under(termTy).(type) {
-		case *tree.InterfaceType:
-			return c.InterfaceTypeSet(ty)
-		case *tree.TypeParam:
-			if ty.Bound != nil {
-				return c.InterfaceTypeSet(ty.Bound)
-			}
-			return TypeSet{Types: []tree.Type{ty}, Universe: false}
-		default:
-			return TypeSet{Types: []tree.Type{ty}, Universe: false}
-		}
-	}
-	var types []tree.Type
-	for _, term := range con.TypeElem.Union {
-		if term.Tilde {
-			panic("TODO")
-		}
-		termTy := c.ResolveType(term.Type)
-		switch ty := c.Under(termTy).(type) {
-		case *tree.InterfaceType:
-			if len(ty.Methods) == 0 {
-				spew.Dump(ty)
-				panic("cannot make union of interface with methods")
-			}
-		default:
-			types = append(types, ty)
-		}
-	}
-	return TypeSet{Types: types, Universe: false}
 }

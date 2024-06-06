@@ -85,8 +85,8 @@ func (c *Checker) IsLike(ty tree.Type, pred func(ty tree.Type) bool) bool {
 		if tyset.Universe {
 			return false
 		}
-		for _, t := range tyset.Types {
-			if !pred(t) {
+		for _, t := range tyset.Terms {
+			if !pred(t.Type) {
 				return false
 			}
 		}
