@@ -58,10 +58,6 @@ func (c *Checker) Run() {
 	fileScopes := make(map[*source.FileDef]*Checker, len(packages)) // minimum size :shrug:
 
 	for _, pkg := range packages {
-		if pkg.ImportPath == "unsafe" {
-			continue // TODO should not be here
-		}
-
 		packageScopes[pkg] = c.BeginPackageScope(pkg)
 		for _, file := range pkg.Files {
 			fileScopes[file] = packageScopes[pkg].BeginFileScope(file)
@@ -77,21 +73,7 @@ func (c *Checker) Run() {
 		c.PackageSymbols[pkg.ImportPath] = packageScopes[pkg].VarCtx // TODO seems unprincipled
 	}
 
-	packageNameResults := make(map[*source.Package]NameResolutionResult, len(packages))
-
 	for _, pkg := range packages {
-		if pkg.ImportPath == "unsafe" {
-			continue // TODO should not be here
-		}
-
-		packageNameResults[pkg] = ResolvePackageNames(pkg)
-	}
-
-	for _, pkg := range packages {
-		if pkg.ImportPath == "unsafe" {
-			continue // TODO should not be here
-		}
-
 		// Keep track which file owns which declaration
 		declFile := map[tree.Decl]*source.FileDef{}
 		for _, file := range pkg.Files {
@@ -100,10 +82,12 @@ func (c *Checker) Run() {
 			}
 		}
 
+		nameResolution := ResolvePackageNames(pkg)
+
 		seen := Set[tree.Decl]{}
 
 		GeneralPrintf("=== Loading Package (%v) ===\n", pkg.ImportPath)
-		for _, decl := range packageNameResults[pkg].SortedDecls {
+		for _, decl := range nameResolution.SortedDecls {
 			switch decl := decl.(type) {
 			case *tree.ImportDecl:
 				// done earlier
@@ -119,7 +103,7 @@ func (c *Checker) Run() {
 			}
 		}
 
-		for receiverName, methodsByName := range packageNameResults[pkg].Methods {
+		for receiverName, methodsByName := range nameResolution.Methods {
 			packageScope := packageScopes[pkg]
 			receiverTy, ok := packageScope.ResolveType(&tree.TypeName{Name: receiverName}).(*tree.NamedType)
 			if !ok {

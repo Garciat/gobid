@@ -412,7 +412,7 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 		subst[tyParam.Name] = &tree.TypeParam{Name: c.FreshTypeName(), Bound: tyParam.Constraint}
 	}
 	funcTy = c.ApplySubst(funcTy, subst).(*tree.FunctionType)
-	fmt.Printf("subst FunctionType: %v\n", funcTy)
+	CheckerPrintf("subst FunctionType: %v\n", funcTy)
 
 	for i, tyArg := range typeArgs {
 		tyParam := funcTy.Signature.TypeParams.Params[i]

@@ -24,9 +24,10 @@ type CompilationUnit struct {
 
 func NewCompilationUnit(
 	root ImportPath,
+	paths ...string,
 ) *CompilationUnit {
 	return &CompilationUnit{
-		finder: files.NewFinder(),
+		finder: files.NewFinder(paths),
 		parser: parse.NewParser(),
 		Root:   root,
 		BuildTags: BuildTags{
@@ -70,6 +71,10 @@ func (u *CompilationUnit) LoadFile(target ImportPath, file *source.FileDef) {
 	pkg.AddFile(file)
 
 	for _, ip := range file.Imports {
+		if ip == "unsafe" {
+			continue
+		}
+
 		pkg.AddDependency(ip)
 
 		if _, ok := u.Packages[ip]; !ok {

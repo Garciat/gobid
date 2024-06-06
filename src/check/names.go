@@ -242,6 +242,13 @@ func ResolvePackageNames(pkg *source.Package) NameResolutionResult {
 
 // ====================
 
+var resolverFreshNameCounter = 0
+
+func ResolverFreshName(prefix string) common.Identifier {
+	resolverFreshNameCounter++
+	return common.NewIdentifier(fmt.Sprintf("%s%v", prefix, resolverFreshNameCounter))
+}
+
 type GraphWalker struct {
 	Context          *NameContext
 	Imports          common.Map[common.Identifier, common.ImportPath]
@@ -265,10 +272,10 @@ func (gw *GraphWalker) Define(
 	deps common.Set[common.Identifier],
 ) {
 	if name == common.IgnoreIdent {
-		name = common.NewIdentifier(fmt.Sprintf("@%v", len(gw.Context.Names)))
+		name = ResolverFreshName("ignore_")
 	}
 	if kind == common.DeclKindFunc && name.Value == "init" {
-		name = common.NewIdentifier(fmt.Sprintf("init_%v", len(gw.Context.Names)))
+		name = ResolverFreshName("init_")
 	}
 	gw.Context.Names[name] = &NameInfo{
 		Kind: kind,
