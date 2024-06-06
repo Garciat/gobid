@@ -18,6 +18,8 @@ func (c *Checker) SynthBuiltinFunctionCall(f *tree.BuiltinFunctionType, expr *tr
 		return c.SynthBuiltinLenCall(expr)
 	case "cap":
 		return c.SynthBuiltinCapCall(expr)
+	case "close":
+		return c.SynthBuiltinCloseCall(expr)
 	case "panic":
 		return c.SynthBuiltinPanicCall(expr)
 	case "print":
@@ -145,6 +147,28 @@ func (c *Checker) SynthBuiltinCapCall(expr *tree.CallExpr) tree.Type {
 	}
 
 	return c.BuiltinType("int")
+}
+
+func (c *Checker) SynthBuiltinCloseCall(expr *tree.CallExpr) tree.Type {
+	if len(expr.Args) != 1 {
+		panic("builtin close() takes exactly one argument")
+	}
+
+	ty := c.Synth(expr.Args[0])
+
+	ok := c.IsLike(ty, func(ty tree.Type) bool {
+		switch ty := ty.(type) {
+		case *tree.ChannelType:
+			return ty.Dir == tree.ChannelDirSend || ty.Dir == tree.ChannelDirBoth
+		default:
+			return false
+		}
+	})
+	if !ok {
+		panic(fmt.Sprintf("close() on incompatible type %v", ty))
+	}
+
+	return &tree.VoidType{}
 }
 
 func (c *Checker) SynthBuiltinPanicCall(expr *tree.CallExpr) tree.Type {

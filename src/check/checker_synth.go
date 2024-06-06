@@ -211,6 +211,30 @@ func (c *Checker) SynthIndexExpr(expr *tree.IndexExpr) tree.Type {
 	}
 
 	var indexTy, resultTy tree.Type
+
+	ok := c.IsLike(exprTy, func(ty tree.Type) bool {
+		switch ty := ty.(type) {
+		case *tree.BuiltinType:
+			if ty.IsString() {
+				indexTy = tree.UntypedConstantIntType
+				resultTy = tree.BuiltinTypeByte
+				return true
+			}
+			return false
+		default:
+			if c.IsByteArray(ty) {
+				indexTy = tree.UntypedConstantIntType
+				resultTy = tree.BuiltinTypeByte
+				return true
+			}
+			return false
+		}
+	})
+	if ok {
+		c.CheckExpr(index, indexTy)
+		return resultTy
+	}
+
 	switch exprTy := c.Under(exprTy).(type) {
 	case *tree.FunctionType:
 		panic("unexpected function type (should be handled by CallExpr)")
@@ -271,6 +295,7 @@ func (c *Checker) SynthSliceExpr(expr *tree.SliceExpr) tree.Type {
 	}
 
 	var resultTy tree.Type
+
 	switch exprTy := c.Under(exprTy).(type) {
 	case *tree.SliceType:
 		resultTy = exprTy
@@ -287,18 +312,37 @@ func (c *Checker) SynthSliceExpr(expr *tree.SliceExpr) tree.Type {
 	}
 
 	if resultTy == nil {
-		spew.Dump(exprTy)
-		panic(fmt.Sprintf("cannot slice type %v", exprTy))
+		ok := c.IsLike(exprTy, func(ty tree.Type) bool {
+			switch ty := ty.(type) {
+			case *tree.BuiltinType:
+				if ty.IsString() {
+					resultTy = exprTy
+					return true
+				}
+				return false
+			default:
+				if c.IsByteArray(ty) {
+					resultTy = exprTy
+					return true
+				}
+				return false
+			}
+		})
+		if !ok {
+			spew.Dump(exprTy)
+			panic(fmt.Sprintf("cannot slice type %v", exprTy))
+		}
+		common.Assert(resultTy != nil, "BUG")
 	}
 
 	if expr.Low != nil {
-		c.CheckExpr(expr.Low, tree.UntypedConstantIntType)
+		c.CheckAssignableTo(c.Synth(expr.Low), tree.BuiltinTypeInt)
 	}
 	if expr.High != nil {
-		c.CheckExpr(expr.High, tree.UntypedConstantIntType)
+		c.CheckAssignableTo(c.Synth(expr.High), tree.BuiltinTypeInt)
 	}
 	if expr.Max != nil {
-		c.CheckExpr(expr.Max, tree.UntypedConstantIntType)
+		c.CheckAssignableTo(c.Synth(expr.Max), tree.BuiltinTypeInt)
 	}
 
 	return resultTy
@@ -337,7 +381,7 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 			if len(expr.Args) != 1 {
 				panic("conversion without exactly one argument")
 			}
-			return c.SynthBuiltinConversion(expr.Args[0], ty)
+			return c.SynthConversionExpr(&tree.ConversionExpr{Expr: expr.Args[0], Type: c.ResolveType(ty)})
 		case *tree.NamedType:
 			if len(expr.Args) != 1 {
 				panic("conversion without exactly one argument")
@@ -427,6 +471,9 @@ func (c *Checker) SynthConversionExpr(conv *tree.ConversionExpr) tree.Type {
 		if c.AcceptsNil(targetTy) {
 			return targetTy
 		}
+	case *tree.TypeParam:
+		c.CheckAssignableTo(exprTy, targetTy) // delegate to unification?
+		return targetTy
 	}
 
 	if c.IsStringLike(exprTy) && c.IsByteArray(targetTy) {
@@ -445,7 +492,7 @@ func (c *Checker) SynthConversionExpr(conv *tree.ConversionExpr) tree.Type {
 				return targetTy
 			}
 		}
-		panic(fmt.Sprintf("cannot convert %v to %v", exprTy, targetTy))
+		panic(fmt.Errorf("cannot convert %v to %v", exprTy, targetTy))
 	default:
 		spew.Dump(conv)
 		panic("unreachable")
