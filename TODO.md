@@ -1,3 +1,1 @@
 Next:
-
-- Implement embedded structs

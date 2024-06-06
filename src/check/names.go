@@ -155,7 +155,7 @@ func ResolvePackageNames(pkg *source.Package) NameResolutionResult {
 
 		importReplacements := make(common.Map[common.Identifier, tree.Node])
 		for id, path := range walker.Imports {
-			importReplacements[id] = &tree.ImportNameExpr{Path: path, Name: id}
+			importReplacements[id] = &tree.ImportRef{ImportPath: path, ImportDeclaredName: id}
 
 			for _, name := range walker.Context.Names {
 				name.Deps.Remove(id)
@@ -402,8 +402,8 @@ func (gw *GraphWalker) GraphWalkMethodDecl(decl *tree.MethodDecl) WalkResult {
 		switch receiverTy := receiverTy.Type.(type) {
 		case *tree.TypeName:
 			methodHolder = receiverTy.Name
-		case *tree.QualIdentifier:
-			panic("cannot have package-qualified receiver type")
+		case *tree.ImportTypeName:
+			panic("cannot define method on imported type")
 		default:
 			panic("unreachable?")
 		}
@@ -478,10 +478,10 @@ func (gw *GraphWalker) GraphWalkType(arg *tree.Type) WalkResult {
 	switch ty := (*arg).(type) {
 	case *tree.NamedType:
 		panic("doesn't exist yet")
-	case *tree.QualIdentifier:
-		return EmptyResult()
 	case *tree.TypeName:
 		return NewTypeRef(ty.Name, arg)
+	case *tree.ImportTypeName:
+		return gw.GraphWalkImportTypeName(ty)
 	case *tree.TypeApplication:
 		return gw.GraphWalkTypeApplication(ty)
 	case *tree.InterfaceType:
@@ -504,6 +504,10 @@ func (gw *GraphWalker) GraphWalkType(arg *tree.Type) WalkResult {
 		spew.Dump(ty)
 		panic("unreachable")
 	}
+}
+
+func (gw *GraphWalker) GraphWalkImportTypeName(ty *tree.ImportTypeName) WalkResult {
+	return gw.GraphWalkType(&ty.Import)
 }
 
 func (gw *GraphWalker) GraphWalkTypeApplication(ty *tree.TypeApplication) WalkResult {
@@ -708,7 +712,7 @@ func ApplyReplacements(
 func MakeReplacement(pkg *source.Package, name *NameInfo) tree.Node {
 	switch name.Kind {
 	case common.DeclKindImport:
-		return &tree.ImportNameExpr{Path: pkg.ImportPath, Name: name.Name}
+		return &tree.ImportRef{ImportPath: pkg.ImportPath, ImportDeclaredName: name.Name}
 	case common.DeclKindConst, common.DeclKindVar, common.DeclKindFunc:
 		return &tree.PackageNameExpr{Path: pkg.ImportPath, Name: name.Name}
 	case common.DeclKindType, common.DeclKindAlias:

@@ -1074,10 +1074,7 @@ func ReadType(expr ast.Expr) tree.Type {
 			ElemType: ReadType(expr.Value),
 		}
 	case *ast.SelectorExpr:
-		return &tree.QualIdentifier{
-			Package: expr.X.(*ast.Ident).Name,
-			Name:    NewIdentifier(expr.Sel.Name),
-		}
+		return ReadQualIdentifier(expr)
 	case *ast.ParenExpr:
 		return ReadType(expr.X)
 	default:
@@ -1111,9 +1108,9 @@ func ReadQualIdentifier(expr ast.Expr) tree.Type {
 	case *ast.Ident:
 		return &tree.TypeName{Name: NewIdentifier(expr.Name)}
 	case *ast.SelectorExpr:
-		return &tree.QualIdentifier{
-			Package: expr.X.(*ast.Ident).Name,
-			Name:    NewIdentifier(expr.Sel.Name),
+		return &tree.ImportTypeName{
+			Import: ReadType(expr.X),
+			Name:   NewIdentifier(expr.Sel.Name),
 		}
 	default:
 		spew.Dump(expr)

@@ -118,7 +118,7 @@ func (c *Checker) GetStructEmbedFieldName(ty tree.Type) common.Identifier {
 		return ty.Name
 	case *tree.PackageTypeName:
 		return ty.Name
-	case *tree.QualIdentifier:
+	case *tree.ImportTypeName:
 		return ty.Name
 	default:
 		spew.Dump(ty)

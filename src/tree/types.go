@@ -46,6 +46,16 @@ func (t *PackageTypeName) String() string {
 	return fmt.Sprintf(`"%s".%s`, t.Path, t.Name)
 }
 
+type ImportTypeName struct {
+	TypeBase
+	Import Type
+	Name   Identifier
+}
+
+func (t *ImportTypeName) String() string {
+	return fmt.Sprintf("%s.%s", t.Import, t.Name)
+}
+
 type TypeOfType struct {
 	TypeBase
 	Type Type
@@ -197,19 +207,6 @@ type TypeParam struct {
 
 func (t *TypeParam) String() string {
 	return fmt.Sprintf("%sₚ", t.Name.Value)
-}
-
-type QualIdentifier struct {
-	TypeBase
-	Package string // could be empty
-	Name    Identifier
-}
-
-func (i QualIdentifier) String() string {
-	if i.Package == "" {
-		return i.Name.String()
-	}
-	return fmt.Sprintf("%s.%s", i.Package, i.Name)
 }
 
 type TypeApplication struct {

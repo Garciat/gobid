@@ -51,17 +51,17 @@ func (u *CompilationUnit) LoadFile(target ImportPath, file *source.FileDef) {
 	}
 
 	if strings.HasSuffix(file.Path, "_test.go") {
-		//fmt.Printf("skipping test file %v\n", file.Path)
+		//fmt.Printf("skipping test file %v\n", file.ImportPath)
 		return
 	}
 
 	if !u.EvalArchSuffix(file.Path) {
-		//fmt.Printf("skipping file %v with arch suffix\n", file.Path)
+		//fmt.Printf("skipping file %v with arch suffix\n", file.ImportPath)
 		return
 	}
 
 	if !u.EvalBuildConstraint(file.BuildConstraint) {
-		//fmt.Printf("skipping file %v with build constraint '%v'\n", file.Path, file.BuildConstraint)
+		//fmt.Printf("skipping file %v with build constraint '%v'\n", file.ImportPath, file.BuildConstraint)
 		return
 	}
 

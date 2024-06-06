@@ -2,7 +2,7 @@ package check
 
 import (
 	"fmt"
-	"github.com/garciat/gobid/common"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/garciat/gobid/tree"
 )
 
@@ -12,14 +12,11 @@ func (c *Checker) ResolveValue(ty tree.Type) tree.Type {
 		return c.Lookup(ty.Name)
 	case *tree.PackageTypeName:
 		return c.PackageLookup(ty.Path, ty.Name)
-	case *tree.QualIdentifier:
-		// TODO hacky
-		if ty.Package == "" {
-			return c.Lookup(ty.Name)
-		}
-		imp, ok := c.Lookup(common.NewIdentifier(ty.Package)).(*tree.ImportType)
+	case *tree.ImportTypeName:
+		imp, ok := ty.Import.(*tree.ImportRef)
 		if !ok {
-			panic(fmt.Errorf("not an import: %v", ty.Package))
+			spew.Dump(ty.Import)
+			panic(fmt.Errorf("not an import: %v", ty.Import))
 		}
 		return c.PackageLookup(imp.ImportPath, ty.Name)
 	default:
@@ -34,8 +31,10 @@ func (c *Checker) ResolveType(ty tree.Type) tree.Type {
 		valueTy = c.ResolveValue(ty)
 	case *tree.PackageTypeName:
 		valueTy = c.ResolveValue(ty)
-	case *tree.QualIdentifier:
+	case *tree.ImportTypeName:
 		valueTy = c.ResolveValue(ty)
+	case *tree.TypeOfType:
+		return ty.Type
 	default:
 		return ty
 	}
@@ -44,7 +43,7 @@ func (c *Checker) ResolveType(ty tree.Type) tree.Type {
 	case *tree.TypeOfType:
 		return valueTy.Type
 	default:
-		panic(fmt.Errorf("not a type: %v", ty))
+		panic(fmt.Errorf("not a type: %v", valueTy))
 	}
 }
 

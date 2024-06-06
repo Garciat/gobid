@@ -67,12 +67,17 @@ func (c *Checker) EvaluateConstantExpr(decl *tree.ConstDecl, expr tree.Expr) tre
 			return c.EvaluateConstantExpr(decl, c.LookupConst(expr.Name))
 		}
 	case *tree.SelectorExpr:
-		lhs, ok := expr.Expr.(*tree.ImportNameExpr)
+		ty, ok := expr.Expr.(*tree.TypeExpr)
 		if !ok {
 			spew.Dump(expr)
 			panic("unreachable?")
 		}
-		return c.EvaluateConstantExpr(decl, c.PackageLookupConst(lhs.Path, expr.Sel))
+		lhs, ok := ty.Type.(*tree.ImportRef)
+		if !ok {
+			spew.Dump(expr)
+			panic("unreachable?")
+		}
+		return c.EvaluateConstantExpr(decl, c.PackageLookupConst(lhs.ImportPath, expr.Sel))
 	case *tree.PackageNameExpr:
 		return c.EvaluateConstantExpr(decl, c.PackageLookupConst(expr.Path, expr.Name))
 	case *tree.ConstIntExpr:
@@ -217,11 +222,15 @@ func (c *Checker) EvaluateConstantExpr(decl *tree.ConstDecl, expr tree.Expr) tre
 		}
 		switch fun := expr.Func.(type) {
 		case *tree.SelectorExpr:
-			imp, ok := fun.Expr.(*tree.ImportNameExpr)
+			ty, ok := fun.Expr.(*tree.TypeExpr)
 			if !ok {
 				break
 			}
-			if imp.Path != "unsafe" {
+			imp, ok := ty.Type.(*tree.ImportRef)
+			if !ok {
+				break
+			}
+			if imp.ImportPath != "unsafe" {
 				break
 			}
 			switch fun.Sel.Value {

@@ -56,6 +56,8 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 			return substTy
 		}
 		return ty
+	case *tree.ImportTypeName:
+		return ty
 	case *tree.PackageTypeName:
 		return ty
 	case *tree.TypeBuiltin:
@@ -130,8 +132,7 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 		return ty
 	case *tree.TypeOfType:
 		return &tree.TypeOfType{Type: c.ApplySubst(ty.Type, subst)}
-	case *tree.QualIdentifier:
-		return ty
+
 	default:
 		spew.Dump(ty)
 		panic("unreachable")

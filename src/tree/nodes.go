@@ -278,11 +278,19 @@ type NameExpr struct {
 	Name Identifier
 }
 
-type ImportNameExpr struct {
-	ExprBase
-	Path ImportPath
-	Name Identifier
+type ImportRef struct {
+	ImportPath         ImportPath
+	ImportDeclaredName Identifier
 }
+
+func (i ImportRef) _Node() {}
+
+func (i ImportRef) _Expr() {}
+
+func (i ImportRef) _Type() {}
+
+var _ Expr = &ImportRef{}
+var _ Type = &ImportRef{}
 
 type PackageNameExpr struct {
 	ExprBase
@@ -674,7 +682,7 @@ func WalkExpr(v ExprVisitor, expr Expr) {
 			WalkExpr(v, e.Value)
 		}
 	case *TypeExpr:
-	case *ImportNameExpr:
+	case *ImportRef:
 	case *PackageNameExpr:
 	default:
 		spew.Dump(expr)

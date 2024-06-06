@@ -75,7 +75,7 @@ func (c *Checker) CheckTypeDeclType(ty tree.Type) {
 		// nothing to do
 	case *tree.PackageTypeName:
 		// nothing to do
-	case *tree.QualIdentifier:
+	case *tree.ImportTypeName:
 		// nothing to do
 	case *tree.TypeApplication:
 		c.TypeApplicationFunc(ty, func(tyParam *tree.TypeParamDecl, tyArg tree.Type) {

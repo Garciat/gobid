@@ -12,8 +12,8 @@ func (c *Checker) Synth(expr tree.Expr) tree.Type {
 	switch expr := expr.(type) {
 	case *tree.NameExpr:
 		return c.SynthNameExpr(expr)
-	case *tree.ImportNameExpr:
-		return c.SynthImportNameExpr(expr)
+	case *tree.ImportRef:
+		return c.SynthImportRef(expr)
 	case *tree.PackageNameExpr:
 		return c.SynthPackageNameExpr(expr)
 	case *tree.BinaryExpr:
@@ -51,8 +51,8 @@ func (c *Checker) SynthNameExpr(expr *tree.NameExpr) tree.Type {
 	return c.Lookup(expr.Name)
 }
 
-func (c *Checker) SynthImportNameExpr(expr *tree.ImportNameExpr) tree.Type {
-	return &tree.ImportType{ImportPath: expr.Path}
+func (c *Checker) SynthImportRef(expr *tree.ImportRef) tree.Type {
+	return &tree.ImportType{ImportPath: expr.ImportPath}
 }
 
 func (c *Checker) SynthPackageNameExpr(expr *tree.PackageNameExpr) tree.Type {
@@ -134,9 +134,17 @@ func (c *Checker) SynthSelectorExpr(expr *tree.SelectorExpr) tree.Type {
 }
 
 func (c *Checker) DoSelect(exprTy tree.Type, sel common.Identifier) tree.Type {
-	switch imp := c.ResolveValue(exprTy).(type) {
+	switch ty := c.ResolveValue(exprTy).(type) {
 	case *tree.ImportType:
-		return c.PackageLookup(imp.ImportPath, sel)
+		return c.PackageLookup(ty.ImportPath, sel)
+	}
+
+	switch ty := exprTy.(type) {
+	case *tree.TypeOfType:
+		switch ty := ty.Type.(type) {
+		case *tree.ImportRef:
+			return c.PackageLookup(ty.ImportPath, sel)
+		}
 	}
 
 	checkTy := c.ResolveType(exprTy)
@@ -604,13 +612,15 @@ func (c *Checker) MakeCompositeLitStruct(expr *tree.CompositeLitExpr, structTy *
 					switch keyTy := keyTy.Type.(type) {
 					case *tree.PackageTypeName:
 						targetFieldName = keyTy.Name
+					case *tree.ImportRef:
+						targetFieldName = keyTy.ImportDeclaredName
 					default:
 						spew.Dump(keyTy)
 						panic("composite literal must use identifier as key name")
 					}
-				case *tree.ImportNameExpr:
+				case *tree.ImportRef:
 					// TODO quirk of the name resolver
-					targetFieldName = keyTy.Name
+					targetFieldName = keyTy.ImportDeclaredName
 				case *tree.PackageNameExpr:
 					// TODO quirk of the name resolver
 					targetFieldName = keyTy.Name
