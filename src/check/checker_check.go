@@ -255,6 +255,10 @@ func (c *Checker) CheckStatement(stmt tree.Statement) {
 		c.CheckForStmt(stmt)
 	case *tree.SwitchStmt:
 		c.CheckSwitchStmt(stmt)
+	case *tree.DeferStmt:
+		c.CheckExpr(stmt.Call, c.BuiltinType("any"))
+	case *tree.GoStmt:
+		c.CheckExpr(stmt.Call, c.BuiltinType("any"))
 	default:
 		spew.Dump(stmt)
 		panic("unreachable")
@@ -318,8 +322,7 @@ func (c *Checker) CheckReturnStmt(stmt *tree.ReturnStmt) {
 	fn := c.AssertInFunctionScope()
 	if len(stmt.Results) == len(fn.Results.Params) {
 		for i, result := range stmt.Results {
-			ty := c.Synth(result)
-			c.CheckAssignableTo(ty, fn.Results.Params[i].Type)
+			c.CheckAssignableTo(c.Synth(result), c.ResolveType(fn.Results.Params[i].Type))
 		}
 	} else if len(stmt.Results) == 1 && len(fn.Results.Params) > 0 {
 		ty := c.Synth(stmt.Results[0])
@@ -329,7 +332,7 @@ func (c *Checker) CheckReturnStmt(stmt *tree.ReturnStmt) {
 				panic("wrong number of return in tuple expansion")
 			}
 			for i, param := range fn.Results.Params {
-				c.CheckAssignableTo(ty.Elems[i], param.Type)
+				c.CheckAssignableTo(ty.Elems[i], c.ResolveType(param.Type))
 			}
 		default:
 			panic("non-tuple type")

@@ -61,7 +61,7 @@ func (c *Checker) Identical(ty1, ty2 tree.Type) bool {
 			if ty1.Len != ty2.Len {
 				return false
 			}
-			return c.Identical(ty1.ElemType, ty2.ElemType)
+			return c.Identical(c.ResolveType(ty1.ElemType), c.ResolveType(ty2.ElemType))
 		}
 		return false
 	case *tree.StructType:

@@ -113,7 +113,7 @@ func (c *Checker) SynthUnaryExpr(expr *tree.UnaryExpr) tree.Type {
 	case tree.UnaryOpDeref:
 		switch ty := ty.(type) {
 		case *tree.PointerType:
-			return ty.ElemType
+			return c.ResolveType(ty.ElemType)
 		case *tree.TypeOfType:
 			return &tree.TypeOfType{Type: &tree.PointerType{ElemType: ty.Type}}
 		default:
@@ -121,8 +121,14 @@ func (c *Checker) SynthUnaryExpr(expr *tree.UnaryExpr) tree.Type {
 			panic(fmt.Sprintf("cannot dereference %v of type %v", expr, ty))
 		}
 	case tree.UnaryOpBitNot:
-		// TODO check numeric?
+		// TODO check integral type
 		return ty
+	case tree.UnaryOpArrow:
+		switch ty := c.Under(ty).(type) {
+		case *tree.ChannelType:
+			return c.ResolveType(ty.ElemType)
+		}
+		panic(fmt.Sprintf("receive on non-chan type %v", ty))
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
@@ -388,147 +394,6 @@ func (c *Checker) SynthBuiltinConversion(expr tree.Expr, targetTy *tree.TypeBuil
 		}
 	}
 	panic(fmt.Sprintf("cannot convert %v to %v", exprTy, targetTy))
-}
-
-func (c *Checker) SynthBuiltinFunctionCall(f *tree.BuiltinFunctionType, expr *tree.CallExpr) tree.Type {
-	switch f.Name {
-	case "new":
-		return c.SynthBuiltinNewCall(expr)
-	case "make":
-		return c.SynthBuiltinMakeCall(expr)
-	case "append":
-		return c.SynthBuiltinAppendCall(expr)
-	case "len":
-		return c.SynthBuiltinLenCall(expr)
-	case "panic":
-		return c.SynthBuiltinPanicCall(expr)
-	case "print":
-		return c.SynthBuiltinPrintCall(expr)
-	case "println":
-		return c.SynthBuiltinPrintlnCall(expr)
-	case "copy":
-		return c.SynthBuiltinCopyCall(expr)
-	default:
-		spew.Dump(f)
-		panic("unreachable")
-	}
-}
-
-func (c *Checker) SynthBuiltinNewCall(expr *tree.CallExpr) tree.Type {
-	if len(expr.Args) != 1 {
-		panic("builtin new() takes exactly one argument")
-	}
-	argTy, ok := c.Synth(expr.Args[0]).(*tree.TypeOfType)
-	if !ok {
-		panic("new() with non-type argument")
-	}
-	return &tree.PointerType{ElemType: argTy.Type}
-}
-
-func (c *Checker) SynthBuiltinMakeCall(expr *tree.CallExpr) tree.Type {
-	if len(expr.Args) == 0 {
-		panic("builtin make() takes at least one argument")
-	}
-	argTy, ok := c.Synth(expr.Args[0]).(*tree.TypeOfType)
-	if !ok {
-		panic("make() with non-type argument")
-	}
-	elemTy := argTy.Type
-	switch elemTy.(type) {
-	case *tree.SliceType:
-	case *tree.MapType:
-	case *tree.ChannelType:
-	default:
-		panic("make() with non-slice, non-map, non-channel type")
-	}
-	for _, arg := range expr.Args[1:] {
-		c.CheckExpr(arg, c.BuiltinType("int"))
-	}
-	return elemTy
-}
-
-func (c *Checker) SynthBuiltinAppendCall(expr *tree.CallExpr) tree.Type {
-	if len(expr.Args) < 2 {
-		panic("builtin append() takes at least two arguments")
-	}
-	firstTy := c.Synth(expr.Args[0])
-	sliceTy, ok := firstTy.(*tree.SliceType)
-	if !ok {
-		panic("append() with non-slice type")
-	}
-	for _, arg := range expr.Args[1:] {
-		c.CheckAssignableTo(c.Synth(arg), sliceTy.ElemType)
-	}
-	return sliceTy
-}
-
-func (c *Checker) SynthBuiltinLenCall(expr *tree.CallExpr) tree.Type {
-	if len(expr.Args) != 1 {
-		panic("builtin len() takes exactly one argument")
-	}
-
-	argTy := c.Synth(expr.Args[0])
-
-	if !c.HasLen(argTy) {
-		panic(fmt.Sprintf("len() on incompatible type %v", argTy))
-	}
-
-	return c.BuiltinType("int")
-}
-
-func (c *Checker) SynthBuiltinPanicCall(expr *tree.CallExpr) tree.Type {
-	if len(expr.Args) != 1 {
-		panic("builtin panic() takes exactly one argument")
-	}
-	c.CheckExpr(expr.Args[0], tree.EmptyInterface())
-	return &tree.BottomType{}
-}
-
-func (c *Checker) SynthBuiltinPrintCall(expr *tree.CallExpr) tree.Type {
-	for _, arg := range expr.Args {
-		c.Synth(arg)
-	}
-	return &tree.VoidType{}
-}
-
-func (c *Checker) SynthBuiltinPrintlnCall(expr *tree.CallExpr) tree.Type {
-	for _, arg := range expr.Args {
-		c.Synth(arg)
-	}
-	return &tree.VoidType{}
-}
-
-func (c *Checker) SynthBuiltinCopyCall(expr *tree.CallExpr) tree.Type {
-	if len(expr.Args) != 2 {
-		panic("builtin copy() takes exactly two arguments")
-	}
-
-	ty1 := c.Synth(expr.Args[0])
-	ty2 := c.Synth(expr.Args[1])
-
-	if c.IsByteArray(ty1) && c.IsStringLike(ty2) {
-		return c.BuiltinType("int")
-	}
-
-	var elemTy1, elemTy2 tree.Type
-
-	switch ty1 := c.Under(ty1).(type) {
-	case *tree.SliceType:
-		elemTy1 = ty1.ElemType
-	default:
-		panic(fmt.Sprintf("copy() with non-slice type %v", ty1))
-	}
-
-	switch ty2 := c.Under(ty2).(type) {
-	case *tree.SliceType:
-		elemTy2 = ty2.ElemType
-	default:
-		panic(fmt.Sprintf("copy() with non-slice type %v", ty2))
-	}
-
-	c.CheckEqualTypes(elemTy1, elemTy2)
-
-	return c.BuiltinType("int")
 }
 
 func (c *Checker) SynthLiteralExpr(expr *tree.LiteralExpr) tree.Type {

@@ -68,6 +68,16 @@ func (c *Checker) IsNumeric(ty tree.Type) bool {
 	}
 }
 
+func (c *Checker) IsPointerToArrayType(ty tree.Type) bool {
+	switch ty := c.Under(ty).(type) {
+	case *tree.PointerType:
+		_, ok := c.Under(ty.ElemType).(*tree.ArrayType)
+		return ok
+	default:
+		return false
+	}
+}
+
 func (c *Checker) IsLike(ty tree.Type, pred func(ty tree.Type) bool) bool {
 	switch argTy := c.Under(ty).(type) {
 	case *tree.TypeParam:
@@ -107,24 +117,6 @@ func (c *Checker) IsStringLike(ty tree.Type) bool {
 		default:
 			return false
 		}
-	})
-}
-
-func (c *Checker) HasLen(ty tree.Type) bool {
-	return c.IsLike(ty, func(ty tree.Type) bool {
-		switch ty := ty.(type) {
-		case *tree.SliceType:
-		case *tree.ArrayType:
-		case *tree.MapType:
-		case *tree.ChannelType:
-		case *tree.TypeBuiltin:
-			return ty.Name.Value == "string"
-		case *tree.UntypedConstantType:
-			return ty.IsCompatible("string")
-		default:
-			return false
-		}
-		return true
 	})
 }
 
