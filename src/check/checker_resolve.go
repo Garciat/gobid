@@ -13,16 +13,18 @@ func (c *Checker) ResolveValue(ty tree.Type) tree.Type {
 	case *tree.PackageTypeName:
 		return c.PackageLookup(ty.Path, ty.Name)
 	case *tree.ImportTypeName:
-		switch imp := ty.Import.(type) {
+		switch impTy := ty.Import.(type) {
 		case *tree.TypeName:
-			return c.Lookup(imp.Name)
-		case *tree.ImportType:
-			return imp
-		case *tree.ImportRef:
+			imp, ok := c.Lookup(impTy.Name).(*tree.ImportType)
+			if !ok {
+				panic(fmt.Errorf("not an import: %v", imp))
+			}
 			return c.PackageLookup(imp.ImportPath, ty.Name)
+		case *tree.ImportRef:
+			return c.PackageLookup(impTy.ImportPath, ty.Name)
 		default:
-			spew.Dump(imp)
-			panic(fmt.Errorf("not an import: %v", imp))
+			spew.Dump(impTy)
+			panic(fmt.Errorf("not an import: %v", impTy))
 		}
 	default:
 		return ty
