@@ -7,6 +7,7 @@ import (
 )
 
 func (c *Checker) FreshTypeName() Identifier {
+	// TODO save the name in the scope
 	*c.Fresh = *c.Fresh + 1
 	return NewIdentifier(fmt.Sprintf("@T%d", *c.Fresh))
 }
@@ -61,7 +62,7 @@ func (c *Checker) DefineImport(decl *tree.ImportDecl) {
 }
 
 func (c *Checker) DefineValue(name Identifier, ty tree.Type) {
-	fmt.Printf("DEFINING %v = %v\n", name, ty)
+	CheckerPrintf("DEFINING %v = %v\n", name, ty)
 	if c.VarCtx.ScopeKind == ScopeKindFile {
 		Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
 		c.VarCtx.Parent.Def(name, ty)
@@ -71,7 +72,7 @@ func (c *Checker) DefineValue(name Identifier, ty tree.Type) {
 }
 
 func (c *Checker) DefineType(name Identifier, ty tree.Type) {
-	fmt.Printf("DEFINING TYPE %v = %v\n", name, ty)
+	CheckerPrintf("DEFINING TYPE %v = %v\n", name, ty)
 
 	var target *VarContext
 	if c.VarCtx.ScopeKind == ScopeKindFile {
@@ -88,10 +89,10 @@ func (c *Checker) DefineFunction(name Identifier, ty *tree.FunctionType) {
 	if name == NewIdentifier("init") {
 		// init functions are not defined
 		// TODO check signature
-		fmt.Printf("IGNORING DEFINITION init %v\n", ty.Signature)
+		CheckerPrintf("IGNORING DEFINITION init %v\n", ty.Signature)
 		return
 	}
-	fmt.Printf("DEFINING func %v%v\n", name, ty.Signature)
+	CheckerPrintf("DEFINING func %v%v\n", name, ty.Signature)
 	Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
 	c.VarCtx.Parent.Def(name, ty)
 }
@@ -101,7 +102,7 @@ func (c *Checker) DefineMethod(holder, name Identifier, ty *tree.MethodType) {
 	if ty.PointerReceiver {
 		prefix = "*"
 	}
-	fmt.Printf("DEFINING METHOD func (%s%v) %v%v\n", prefix, holder, name, ty.Type.Signature)
+	CheckerPrintf("DEFINING METHOD func (%s%v) %v%v\n", prefix, holder, name, ty.Type.Signature)
 	methodName := NewIdentifier(fmt.Sprintf("%s.%s", holder.Value, name.Value))
 	Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
 	c.VarCtx.Parent.Def(methodName, ty)

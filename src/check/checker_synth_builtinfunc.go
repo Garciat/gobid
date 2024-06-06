@@ -115,7 +115,7 @@ func (c *Checker) SynthBuiltinLenCall(expr *tree.CallExpr) tree.Type {
 		return true
 	})
 	if !ok {
-		panic(fmt.Sprintf("len() on incompatible type %v", argTy))
+		panic(fmt.Errorf("len() on incompatible type %v", argTy))
 	}
 
 	return c.BuiltinType("int")
@@ -143,7 +143,7 @@ func (c *Checker) SynthBuiltinCapCall(expr *tree.CallExpr) tree.Type {
 		return true
 	})
 	if !ok {
-		panic(fmt.Sprintf("cap() on incompatible type %v", argTy))
+		panic(fmt.Errorf("cap() on incompatible type %v", argTy))
 	}
 
 	return c.BuiltinType("int")
@@ -165,7 +165,7 @@ func (c *Checker) SynthBuiltinCloseCall(expr *tree.CallExpr) tree.Type {
 		}
 	})
 	if !ok {
-		panic(fmt.Sprintf("close() on incompatible type %v", ty))
+		panic(fmt.Errorf("close() on incompatible type %v", ty))
 	}
 
 	return &tree.VoidType{}
@@ -211,14 +211,14 @@ func (c *Checker) SynthBuiltinCopyCall(expr *tree.CallExpr) tree.Type {
 	case *tree.SliceType:
 		elemTy1 = ty1.ElemType
 	default:
-		panic(fmt.Sprintf("copy() with non-slice type %v", ty1))
+		panic(fmt.Errorf("copy() with non-slice type %v", ty1))
 	}
 
 	switch ty2 := c.Under(ty2).(type) {
 	case *tree.SliceType:
 		elemTy2 = ty2.ElemType
 	default:
-		panic(fmt.Sprintf("copy() with non-slice type %v", ty2))
+		panic(fmt.Errorf("copy() with non-slice type %v", ty2))
 	}
 
 	c.CheckEqualTypes(elemTy1, elemTy2)
@@ -243,7 +243,7 @@ func (c *Checker) SynthBuiltinClearCall(expr *tree.CallExpr) tree.Type {
 		return true
 	})
 	if !ok {
-		panic(fmt.Sprintf("clear() on incompatible type %v", ty))
+		panic(fmt.Errorf("clear() on incompatible type %v", ty))
 	}
 
 	return &tree.VoidType{}
@@ -267,7 +267,7 @@ func (c *Checker) SynthBuiltinRealCall(expr *tree.CallExpr) tree.Type {
 		}
 	})
 	if !ok {
-		panic(fmt.Sprintf("real() on incompatible type %v", argTy))
+		panic(fmt.Errorf("real() on incompatible type %v", argTy))
 	}
 
 	return c.BuiltinType("float64")
@@ -291,7 +291,7 @@ func (c *Checker) SynthBuiltinImagCall(expr *tree.CallExpr) tree.Type {
 		}
 	})
 	if !ok {
-		panic(fmt.Sprintf("imag() on incompatible type %v", argTy))
+		panic(fmt.Errorf("imag() on incompatible type %v", argTy))
 	}
 
 	return c.BuiltinType("float64")

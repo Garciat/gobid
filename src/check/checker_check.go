@@ -7,29 +7,36 @@ import (
 	"github.com/garciat/gobid/tree"
 )
 
+func (c *Checker) TyCtxRedirect() *TypeContext {
+	if c.TyCtx.ScopeKind == ScopeKindFile {
+		// Define relations in package scope
+		return c.TyCtx.Parent
+	}
+	return c.TyCtx
+}
+
 func (c *Checker) CheckAssignableTo(sub, super tree.Type) {
 	if sub == nil || super == nil {
 		panic("nil type")
 	}
-	c.TyCtx.AddRelation(RelationSubtype{Sub: sub, Super: super})
+	c.TyCtxRedirect().AddRelation(RelationSubtype{Sub: sub, Super: super})
 }
 
 func (c *Checker) CheckEqualTypes(left, right tree.Type) {
 	if left == nil || right == nil {
 		panic("nil type")
 	}
-	c.TyCtx.AddRelation(RelationEq{Left: left, Right: right})
+	c.TyCtxRedirect().AddRelation(RelationEq{Left: left, Right: right})
 }
 
 func (c *Checker) CheckSatisfies(ty tree.Type, constraint *tree.InterfaceType) {
 	if ty == nil || constraint == nil {
 		panic("nil type")
 	}
-	c.TyCtx.AddRelation(RelationSatisfies{Type: ty, Constraint: constraint})
+	c.TyCtxRedirect().AddRelation(RelationSatisfies{Type: ty, Constraint: constraint})
 }
 
 func (c *Checker) CheckFile(file *source.FileDef) {
-	fmt.Printf("=== Checker.CheckFile(%v) ===\n", file.Path)
 	for _, decl := range file.Decls {
 		c.CheckDecl(decl)
 	}
@@ -66,7 +73,7 @@ func (c *Checker) CheckConstDecl(decl *tree.ConstDecl) {
 }
 
 func (c *Checker) CheckTypeDecl(decl *tree.TypeDecl) {
-	fmt.Printf("=== CheckTypeDecl(%v) ===\n", decl.Name)
+	CheckerPrintf("=== CheckTypeDecl(%v) ===\n", decl.Name)
 
 	scope := c.BeginTypeScope(decl)
 
@@ -151,7 +158,7 @@ func (c *Checker) CheckVarDecl(decl *tree.VarDecl) {
 }
 
 func (c *Checker) CheckFunctionDecl(decl *tree.FunctionDecl) {
-	fmt.Printf("=== CheckFunctionDecl(%v) ===\n", decl.Name)
+	CheckerPrintf("=== CheckFunctionDecl(%v) ===\n", decl.Name)
 
 	scope := c.BeginFunctionScope(decl.Signature)
 
@@ -159,7 +166,7 @@ func (c *Checker) CheckFunctionDecl(decl *tree.FunctionDecl) {
 }
 
 func (c *Checker) CheckMethodDecl(decl *tree.MethodDecl) {
-	fmt.Printf("=== CheckMethodDecl(%v) ===\n", decl.Name)
+	CheckerPrintf("=== CheckMethodDecl(%v) ===\n", decl.Name)
 
 	scope := c.BeginFunctionScope(decl.Signature)
 
@@ -403,7 +410,7 @@ func (c *Checker) CheckRangeStmt(stmt *tree.RangeStmt) {
 	}
 
 	if keyTy == nil || valueTy == nil {
-		panic(fmt.Sprintf("cannot range over %v", targetTy))
+		panic(fmt.Errorf("cannot range over %v", targetTy))
 	}
 
 	if stmt.Key != nil {

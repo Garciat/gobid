@@ -87,7 +87,7 @@ func (c *Checker) Members(ty tree.Type) MemberSet {
 	case *tree.NamedType:
 		for _, method := range ty.Methods {
 			if members.Contains(method.Name) {
-				panic(fmt.Sprintf("type %v has both field and method called %q", ty, method.Name))
+				panic(fmt.Errorf("type %v has both field and method called %q", ty, method.Name))
 			}
 			members[method.Name] = []TypeMember{&MethodMember{Method: method}}
 		}

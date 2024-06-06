@@ -405,7 +405,7 @@ func EvaluateBinaryOpInt(op tree.BinaryOp, left int64, right int64) tree.ConstEx
 	if v, err := EvaluateBinaryOpIntegerArithmetic(op, left, right); err == nil {
 		return &tree.ConstIntExpr{Value: v}
 	}
-	panic(fmt.Sprintf("unsupported int binary op %v", op))
+	panic(fmt.Errorf("unsupported int binary op %v", op))
 }
 
 func EvaluateBinaryOpUint(op tree.BinaryOp, left, right uint64) tree.ConstExpr {
@@ -415,7 +415,7 @@ func EvaluateBinaryOpUint(op tree.BinaryOp, left, right uint64) tree.ConstExpr {
 	if v, err := EvaluateBinaryOpIntegerArithmetic(op, left, right); err == nil {
 		return &tree.ConstUintExpr{Value: v}
 	}
-	panic(fmt.Sprintf("unsupported uint binary op %v", op))
+	panic(fmt.Errorf("unsupported uint binary op %v", op))
 }
 
 func EvaluateBinaryOpFloat(op tree.BinaryOp, left, right float64) tree.ConstExpr {
@@ -425,7 +425,7 @@ func EvaluateBinaryOpFloat(op tree.BinaryOp, left, right float64) tree.ConstExpr
 	if v, err := EvaluateBinaryOpFloatArithmetic(op, left, right); err == nil {
 		return &tree.ConstFloatExpr{Value: v}
 	}
-	panic(fmt.Sprintf("unsupported float binary op %v", op))
+	panic(fmt.Errorf("unsupported float binary op %v", op))
 }
 
 func EvaluateBinaryOpRune(op tree.BinaryOp, left rune, right rune) tree.ConstExpr {
@@ -435,7 +435,7 @@ func EvaluateBinaryOpRune(op tree.BinaryOp, left rune, right rune) tree.ConstExp
 	if v, err := EvaluateBinaryOpIntegerArithmetic(op, left, right); err == nil {
 		return &tree.ConstRuneExpr{Value: v}
 	}
-	panic(fmt.Sprintf("unsupported int binary op %v", op))
+	panic(fmt.Errorf("unsupported int binary op %v", op))
 }
 
 func EvaluateBinaryOpNumericCompare[T int64 | uint64 | float64 | rune](op tree.BinaryOp, left, right T) (bool, error) {
@@ -508,7 +508,7 @@ func EvaluateBinaryOpBool(op tree.BinaryOp, left, right bool) tree.ConstExpr {
 	case tree.BinaryOpLOr:
 		return &tree.ConstBoolExpr{Value: left || right}
 	default:
-		panic(fmt.Sprintf("unsupported bool binary op %v", op))
+		panic(fmt.Errorf("unsupported bool binary op %v", op))
 	}
 }
 
@@ -517,7 +517,7 @@ func EvaluateBinaryOpString(op tree.BinaryOp, left, right string) tree.ConstExpr
 	case tree.BinaryOpAdd:
 		return &tree.ConstStringExpr{Value: left + right}
 	default:
-		panic(fmt.Sprintf("unsupported string binary op %v", op))
+		panic(fmt.Errorf("unsupported string binary op %v", op))
 	}
 }
 
@@ -536,7 +536,7 @@ func EvaluateUnaryOpFloat(op tree.UnaryOp, value float64) float64 {
 	case tree.UnaryOpNeg:
 		return -value
 	default:
-		panic(fmt.Sprintf("unsupported int unary op %v", op))
+		panic(fmt.Errorf("unsupported int unary op %v", op))
 	}
 }
 
@@ -549,7 +549,7 @@ func EvaluateUnaryOpInteger[T int64 | uint64](op tree.UnaryOp, value T) T {
 	case tree.UnaryOpBitNot:
 		return ^value
 	default:
-		panic(fmt.Sprintf("unsupported int unary op %v", op))
+		panic(fmt.Errorf("unsupported int unary op %v", op))
 	}
 }
 
@@ -558,10 +558,10 @@ func EvaluateUnaryOpBool(op tree.UnaryOp, value bool) bool {
 	case tree.UnaryOpNot:
 		return !value
 	default:
-		panic(fmt.Sprintf("unsupported bool unary op %v", op))
+		panic(fmt.Errorf("unsupported bool unary op %v", op))
 	}
 }
 
 func EvaluateUnaryOpString(op tree.UnaryOp, value string) string {
-	panic(fmt.Sprintf("unsupported string unary op %v", op))
+	panic(fmt.Errorf("unsupported string unary op %v", op))
 }

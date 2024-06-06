@@ -102,7 +102,7 @@ func (c *Checker) Run() {
 
 		seen := Set[tree.Decl]{}
 
-		fmt.Printf("=== Loading Package (%v) ===\n", pkg.ImportPath)
+		GeneralPrintf("=== Loading Package (%v) ===\n", pkg.ImportPath)
 		for _, decl := range packageNameResults[pkg].SortedDecls {
 			switch decl := decl.(type) {
 			case *tree.ImportDecl:
@@ -112,7 +112,7 @@ func (c *Checker) Run() {
 					fmt.Printf("DUPLICATE DECL %v\n", decl) // TODO (P0) should not happen!!!
 					continue
 				}
-				fmt.Println(declFile[decl].Path)
+				GeneralPrintf("%v\n", declFile[decl].Path)
 				scope := fileScopes[declFile[decl]]
 				scope.DefineTopLevelDecl(decl)
 				seen.Add(decl)
@@ -130,10 +130,13 @@ func (c *Checker) Run() {
 	}
 
 	for _, pkg := range packages {
-		fmt.Printf("=== Checking Package (%v) ===\n", pkg.ImportPath)
+		GeneralPrintf("=== Checking Package (%v) ===\n", pkg.ImportPath)
 		for _, file := range pkg.Files {
+			GeneralPrintf("=== Checking File (%v) ===\n", file.Path)
 			scope := fileScopes[file]
 			scope.CheckFile(file)
 		}
+		GeneralPrintf("=== Verifying Package (%v) ===\n", pkg.ImportPath)
+		packageScopes[pkg].Verify()
 	}
 }

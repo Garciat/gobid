@@ -131,7 +131,7 @@ type NameResolutionResult struct {
 }
 
 func ResolvePackageNames(pkg *source.Package) NameResolutionResult {
-	fmt.Printf("=== ResolvePackageNames(%v) ===\n", pkg.ImportPath)
+	CheckerPrintf("=== ResolvePackageNames(%v) ===\n", pkg.ImportPath)
 
 	packageNames := make(common.Map[common.Identifier, *NameInfo])
 	compositeLitKeys := make(common.Set[common.Identifier])
@@ -204,7 +204,7 @@ func ResolvePackageNames(pkg *source.Package) NameResolutionResult {
 	}
 
 	if len(packageExprRefs) != 0 || len(packageTypeRefs) != 0 {
-		panic(fmt.Sprintf("unresolved references:\nexpr=%v\ntype=%v", packageExprRefs, packageTypeRefs))
+		panic(fmt.Errorf("unresolved references:\nexpr=%v\ntype=%v", packageExprRefs, packageTypeRefs))
 	}
 
 	dependencies := make(NameDependencies)
@@ -265,10 +265,10 @@ func (gw *GraphWalker) Define(
 	deps common.Set[common.Identifier],
 ) {
 	if name == common.IgnoreIdent {
-		return
+		name = common.NewIdentifier(fmt.Sprintf("@%v", len(gw.Context.Names)))
 	}
 	if kind == common.DeclKindFunc && name.Value == "init" {
-		return
+		name = common.NewIdentifier(fmt.Sprintf("init_%v", len(gw.Context.Names)))
 	}
 	gw.Context.Names[name] = &NameInfo{
 		Kind: kind,
@@ -298,7 +298,7 @@ func (gw *GraphWalker) GraphWalkDecl(decl tree.Decl) WalkResult {
 	case *tree.MethodDecl:
 		return gw.GraphWalkMethodDecl(decl)
 	default:
-		panic(fmt.Sprintf("unknown decl type: %T", decl))
+		panic(fmt.Errorf("unknown decl type: %T", decl))
 	}
 }
 
@@ -419,7 +419,7 @@ func (gw *GraphWalker) GraphWalkMethodDecl(decl *tree.MethodDecl) WalkResult {
 	receiverMethods := gw.Methods[methodHolder]
 
 	if receiverMethods.Contains(decl.Name) {
-		panic(fmt.Sprintf("duplicate method: %v", decl.Name))
+		panic(fmt.Errorf("duplicate method: %v", decl.Name))
 	}
 
 	receiverMethods[decl.Name] = &tree.MethodElem{
@@ -676,7 +676,7 @@ func VerifyNameCycles(names common.Map[common.Identifier, *NameInfo], dependenci
 		for _, name := range cycle {
 			ns = append(ns, name.Name.Value)
 		}
-		panic(fmt.Sprintf("cycle in dependencies: %v", strings.Join(ns, " -> ")))
+		panic(fmt.Errorf("cycle in dependencies: %v", strings.Join(ns, " -> ")))
 	}
 }
 
@@ -733,7 +733,7 @@ func TopologicalSort2(nodes common.Map[common.Identifier, *NameInfo], edges func
 	for _, node := range nodes {
 		for dep := range edges(node) {
 			if inDegree[dep] == nil {
-				panic(fmt.Sprintf("missing dependency: %v", dep))
+				panic(fmt.Errorf("missing dependency: %v", dep))
 			}
 			inDegree[dep].Add(node)
 		}

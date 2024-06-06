@@ -65,7 +65,7 @@ func (u *CompilationUnit) LoadFile(target ImportPath, file *source.FileDef) {
 		return
 	}
 
-	fmt.Printf("loading file %v\n", file.Path)
+	check.GeneralPrintf("loading file %v\n", file.Path)
 
 	pkg.AddFile(file)
 
@@ -107,7 +107,7 @@ func (u *CompilationUnit) EvalArchSuffix(path string) bool {
 
 func (u *CompilationUnit) ReadPackageFiles(ip ImportPath) []*source.FileDef {
 	if ip == "C" {
-		fmt.Printf("skipping C import\n")
+		check.GeneralPrintf("skipping C import\n")
 		return nil
 	}
 
@@ -131,7 +131,7 @@ func (u *CompilationUnit) Compile() {
 }
 
 func (u *CompilationUnit) CheckPackageDeclarations() {
-	fmt.Printf("=== CheckPackageDeclarations ===\n")
+	check.GeneralPrintf("=== CheckPackageDeclarations ===\n")
 	for _, pkg := range u.Packages {
 		names := make(map[string]struct{})
 		for _, file := range pkg.Files {
@@ -144,7 +144,7 @@ func (u *CompilationUnit) CheckPackageDeclarations() {
 }
 
 func (u *CompilationUnit) CheckPackageCycles() {
-	fmt.Printf("=== CheckPackageCycles ===\n")
+	check.GeneralPrintf("=== CheckPackageCycles ===\n")
 
 	visited := make(map[ImportPath]struct{})
 

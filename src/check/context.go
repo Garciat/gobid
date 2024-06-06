@@ -10,6 +10,7 @@ import (
 // ========================
 
 type TypeContext struct {
+	ScopeKind ScopeKind
 	Parent    *TypeContext
 	Relations []Relation
 }
@@ -33,8 +34,12 @@ func (c *TypeContext) AddRelation(rel Relation) {
 	c.Relations = append(c.Relations, rel)
 }
 
-func (c *TypeContext) Fork() *TypeContext {
-	return &TypeContext{Parent: c, Relations: []Relation{}}
+func (c *TypeContext) Fork(scope ScopeKind) *TypeContext {
+	return &TypeContext{
+		ScopeKind: scope,
+		Parent:    c,
+		Relations: []Relation{},
+	}
 
 }
 
@@ -52,9 +57,9 @@ func NewVarContext() *VarContext {
 	}
 }
 
-func (c *VarContext) Fork(kind ScopeKind) *VarContext {
+func (c *VarContext) Fork(scope ScopeKind) *VarContext {
 	return &VarContext{
-		ScopeKind: kind,
+		ScopeKind: scope,
 		Parent:    c,
 		Types:     map[Identifier]tree.Type{},
 	}

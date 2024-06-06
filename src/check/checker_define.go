@@ -51,14 +51,14 @@ func (c *Checker) DefineImportDecl(decl *tree.ImportDecl) {
 }
 
 func (c *Checker) DefineConstDecl(decl *tree.ConstDecl) {
-	fmt.Printf("DEFINING CONSTANT %v\n", decl.Name)
+	CheckerPrintf("DEFINING CONSTANT %v\n", decl.Name)
 
 	if c.VarCtx.ScopeKind == ScopeKindFile {
 		common.Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
 
 		// Only evaluate constants in package scope
 		value := c.EvaluateConstantExpr(decl, decl.Value)
-		fmt.Printf("EVALUATED %v = %v\n", decl.Name, value)
+		CheckerPrintf("EVALUATED %v = %v\n", decl.Name, value)
 
 		valueTy := value.Type()
 
@@ -128,7 +128,7 @@ func (c *Checker) DefineVarDecl(decl *tree.VarDecl) {
 				panic("multiple-value return in single-value context")
 			}
 			if len(tupleTy.Elems) != len(decl.Names) {
-				panic(fmt.Sprintf("assignment mismatch: %v variables but RHS returns %v values", len(decl.Names), len(tupleTy.Elems)))
+				panic(fmt.Errorf("assignment mismatch: %v variables but RHS returns %v values", len(decl.Names), len(tupleTy.Elems)))
 			}
 			return tupleTy
 		})

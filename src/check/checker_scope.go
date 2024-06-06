@@ -34,7 +34,7 @@ func (k ScopeKind) String() string {
 
 func (c *Checker) _BeginScope(kind ScopeKind) *Checker {
 	copy := c.Copy()
-	copy.TyCtx = c.TyCtx.Fork()
+	copy.TyCtx = c.TyCtx.Fork(kind)
 	copy.VarCtx = c.VarCtx.Fork(kind)
 	return copy
 }

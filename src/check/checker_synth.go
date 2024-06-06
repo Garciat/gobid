@@ -57,12 +57,12 @@ func (c *Checker) SynthImportRef(expr *tree.ImportRef) tree.Type {
 func (c *Checker) SynthPackageNameExpr(expr *tree.PackageNameExpr) tree.Type {
 	pkg, ok := c.PackageSymbols[expr.Path]
 	if !ok {
-		panic(fmt.Sprintf("package not loaded: %v", expr.Path))
+		panic(fmt.Errorf("package not loaded: %v", expr.Path))
 	}
 
 	ty, ok := pkg.Lookup(expr.Name)
 	if !ok {
-		panic(fmt.Sprintf("package %v has no symbol %v", expr.Path, expr.Name))
+		panic(fmt.Errorf("package %v has no symbol %v", expr.Path, expr.Name))
 	}
 
 	return ty
@@ -117,7 +117,7 @@ func (c *Checker) SynthUnaryExpr(expr *tree.UnaryExpr) tree.Type {
 			return &tree.TypeOfType{Type: &tree.PointerType{ElemType: ty.Type}}
 		default:
 			spew.Dump(expr)
-			panic(fmt.Sprintf("cannot dereference type %v", ty))
+			panic(fmt.Errorf("cannot dereference type %v", ty))
 		}
 	case tree.UnaryOpBitNot:
 		// TODO check integral type
@@ -127,7 +127,7 @@ func (c *Checker) SynthUnaryExpr(expr *tree.UnaryExpr) tree.Type {
 		case *tree.ChannelType:
 			return c.ResolveType(ty.ElemType)
 		}
-		panic(fmt.Sprintf("receive on non-chan type %v", ty))
+		panic(fmt.Errorf("receive on non-chan type %v", ty))
 	default:
 		spew.Dump(expr)
 		panic("unreachable")
@@ -261,7 +261,7 @@ func (c *Checker) SynthIndexExpr(expr *tree.IndexExpr) tree.Type {
 
 	if resultTy == nil || indexTy == nil {
 		spew.Dump(reflect.TypeOf(exprTy))
-		panic(fmt.Sprintf("cannot index type %v", exprTy))
+		panic(fmt.Errorf("cannot index type %v", exprTy))
 	}
 
 	c.CheckAssignableTo(c.Synth(index), indexTy)
@@ -330,7 +330,7 @@ func (c *Checker) SynthSliceExpr(expr *tree.SliceExpr) tree.Type {
 		})
 		if !ok {
 			spew.Dump(exprTy)
-			panic(fmt.Sprintf("cannot slice type %v", exprTy))
+			panic(fmt.Errorf("cannot slice type %v", exprTy))
 		}
 		common.Assert(resultTy != nil, "BUG")
 	}
@@ -535,7 +535,7 @@ func (c *Checker) SynthBuiltinConversion(expr tree.Expr, targetTy *tree.BuiltinT
 		}
 	}
 
-	panic(fmt.Sprintf("cannot convert %v to %v", exprTy, targetTy))
+	panic(fmt.Errorf("cannot convert %v to %v", exprTy, targetTy))
 }
 
 func (c *Checker) SynthNamedConversion(expr tree.Expr, targetTy *tree.NamedType) tree.Type {
@@ -662,7 +662,7 @@ func (c *Checker) CheckCompositeLitStruct(expr *tree.CompositeLitExpr, structTy 
 					continue elems
 				}
 			}
-			panic(fmt.Sprintf("type %v has no field %v", structTy, elem.Key))
+			panic(fmt.Errorf("type %v has no field %v", structTy, elem.Key))
 		}
 	}
 }
