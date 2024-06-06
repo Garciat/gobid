@@ -25,9 +25,9 @@ func (c *Checker) Identical(ty1, ty2 tree.Type) bool {
 			return true
 		}
 		return false
-	case *tree.TypeBuiltin:
-		if ty2, ok := ty2.(*tree.TypeBuiltin); ok {
-			return ty1.Name == ty2.Name
+	case *tree.BuiltinType:
+		if ty2, ok := ty2.(*tree.BuiltinType); ok {
+			return ty1.Tag == ty2.Tag
 		}
 		return false
 	case *tree.TypeParam:

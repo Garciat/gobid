@@ -103,10 +103,10 @@ func (c *Checker) SynthBuiltinLenCall(expr *tree.CallExpr) tree.Type {
 		case *tree.ArrayType:
 		case *tree.MapType:
 		case *tree.ChannelType:
-		case *tree.TypeBuiltin:
-			return ty.Name.Value == "string"
+		case *tree.BuiltinType:
+			return ty.IsString()
 		case *tree.UntypedConstantType:
-			return ty.IsCompatible("string")
+			return ty.IsString()
 		default:
 			return false
 		}
@@ -234,10 +234,10 @@ func (c *Checker) SynthBuiltinRealCall(expr *tree.CallExpr) tree.Type {
 
 	ok := c.IsLike(argTy, func(ty tree.Type) bool {
 		switch ty := ty.(type) {
-		case *tree.TypeBuiltin:
-			return ty.Name.Value == "complex64" || ty.Name.Value == "complex128"
+		case *tree.BuiltinType:
+			return ty.IsComplex()
 		case *tree.UntypedConstantType:
-			return ty.Kind == tree.UntypedConstantComplex
+			return ty.IsComplex()
 		default:
 			return false
 		}
@@ -258,10 +258,10 @@ func (c *Checker) SynthBuiltinImagCall(expr *tree.CallExpr) tree.Type {
 
 	ok := c.IsLike(argTy, func(ty tree.Type) bool {
 		switch ty := ty.(type) {
-		case *tree.TypeBuiltin:
-			return ty.Name.Value == "complex64" || ty.Name.Value == "complex128"
+		case *tree.BuiltinType:
+			return ty.IsComplex()
 		case *tree.UntypedConstantType:
-			return ty.Kind == tree.UntypedConstantComplex
+			return ty.IsComplex()
 		default:
 			return false
 		}

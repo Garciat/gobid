@@ -2,7 +2,6 @@ package tree
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	. "github.com/garciat/gobid/common"
@@ -73,6 +72,16 @@ func (*NilType) String() string {
 	return "type(nil)"
 }
 
+type ConstValueType struct {
+	TypeBase
+	Value ConstExpr
+	Type  Type
+}
+
+func (t *ConstValueType) String() string {
+	return fmt.Sprintf("const(%v)", t.Value)
+}
+
 type UntypedConstantKind int
 
 const (
@@ -103,17 +112,22 @@ func (k UntypedConstantKind) String() string {
 	}
 }
 
+var (
+	UntypedConstantIntType     = &UntypedConstantType{Kind: UntypedConstantInt}
+	UntypedConstantFloatType   = &UntypedConstantType{Kind: UntypedConstantFloat}
+	UntypedConstantComplexType = &UntypedConstantType{Kind: UntypedConstantComplex}
+	UntypedConstantRuneType    = &UntypedConstantType{Kind: UntypedConstantRune}
+	UntypedConstantStringType  = &UntypedConstantType{Kind: UntypedConstantString}
+	UntypedConstantBoolType    = &UntypedConstantType{Kind: UntypedConstantBool}
+)
+
 type UntypedConstantType struct {
 	TypeBase
 	Kind UntypedConstantKind
 }
 
-func UntypedInt() *UntypedConstantType {
-	return &UntypedConstantType{Kind: UntypedConstantInt}
-}
-
-func UntypedString() *UntypedConstantType {
-	return &UntypedConstantType{Kind: UntypedConstantString}
+func (t *UntypedConstantType) IsString() bool {
+	return t.Kind == UntypedConstantString
 }
 
 func (t *UntypedConstantType) IsNumeric() bool {
@@ -125,20 +139,32 @@ func (t *UntypedConstantType) IsNumeric() bool {
 	}
 }
 
-func (t *UntypedConstantType) IsCompatible(builtin string) bool {
+func (t *UntypedConstantType) IsInteger() bool {
+	return t.Kind == UntypedConstantInt || t.Kind == UntypedConstantRune
+}
+
+func (t *UntypedConstantType) IsFloat() bool {
+	return t.Kind == UntypedConstantFloat
+}
+
+func (t *UntypedConstantType) IsComplex() bool {
+	return t.Kind == UntypedConstantComplex
+}
+
+func (t *UntypedConstantType) IsAssignableTo(ty *BuiltinType) bool {
 	switch t.Kind {
 	case UntypedConstantInt:
-		return slices.Contains([]string{"int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr"}, builtin)
+		return ty.IsInteger()
 	case UntypedConstantFloat:
-		return slices.Contains([]string{"float32", "float64"}, builtin)
+		return ty.IsFloat()
 	case UntypedConstantComplex:
-		return slices.Contains([]string{"complex64", "complex128"}, builtin)
+		return ty.IsComplex()
 	case UntypedConstantRune:
-		return slices.Contains([]string{"rune"}, builtin)
+		return ty.IsInteger()
 	case UntypedConstantString:
-		return slices.Contains([]string{"string"}, builtin)
+		return ty.IsString()
 	case UntypedConstantBool:
-		return slices.Contains([]string{"bool"}, builtin)
+		return ty.IsBoolean()
 	default:
 		panic("unreachable")
 	}
@@ -170,22 +196,137 @@ func (t *ImportType) String() string {
 	return fmt.Sprintf("import(%v)", t.ImportPath)
 }
 
-type TypeBuiltin struct {
+type BuiltinTypeTag string
+
+const (
+	BuiltinTypeTagBool          BuiltinTypeTag = "bool"
+	BuiltinTypeTagUint8         BuiltinTypeTag = "uint8"
+	BuiltinTypeTagUint16        BuiltinTypeTag = "uint16"
+	BuiltinTypeTagUint32        BuiltinTypeTag = "uint32"
+	BuiltinTypeTagUint64        BuiltinTypeTag = "uint64"
+	BuiltinTypeTagInt8          BuiltinTypeTag = "int8"
+	BuiltinTypeTagInt16         BuiltinTypeTag = "int16"
+	BuiltinTypeTagInt32         BuiltinTypeTag = "int32"
+	BuiltinTypeTagInt64         BuiltinTypeTag = "int64"
+	BuiltinTypeTagFloat32       BuiltinTypeTag = "float32"
+	BuiltinTypeTagFloat64       BuiltinTypeTag = "float64"
+	BuiltinTypeTagComplex64     BuiltinTypeTag = "complex64"
+	BuiltinTypeTagComplex128    BuiltinTypeTag = "complex128"
+	BuiltinTypeTagString        BuiltinTypeTag = "string"
+	BuiltinTypeTagInt           BuiltinTypeTag = "int"
+	BuiltinTypeTagUint          BuiltinTypeTag = "uint"
+	BuiltinTypeTagUintptr       BuiltinTypeTag = "uintptr"
+	BuiltinTypeTagByte          BuiltinTypeTag = "byte"
+	BuiltinTypeTagRune          BuiltinTypeTag = "rune"
+	BuiltinTypeTagComparable    BuiltinTypeTag = "comparable"
+	BuiltinTypeTagUnsafePointer BuiltinTypeTag = "unsafe.Pointer"
+)
+
+var (
+	BuiltinTypeBool          = &BuiltinType{Tag: BuiltinTypeTagBool}
+	BuiltinTypeUint8         = &BuiltinType{Tag: BuiltinTypeTagUint8}
+	BuiltinTypeUint16        = &BuiltinType{Tag: BuiltinTypeTagUint16}
+	BuiltinTypeUint32        = &BuiltinType{Tag: BuiltinTypeTagUint32}
+	BuiltinTypeUint64        = &BuiltinType{Tag: BuiltinTypeTagUint64}
+	BuiltinTypeInt8          = &BuiltinType{Tag: BuiltinTypeTagInt8}
+	BuiltinTypeInt16         = &BuiltinType{Tag: BuiltinTypeTagInt16}
+	BuiltinTypeInt32         = &BuiltinType{Tag: BuiltinTypeTagInt32}
+	BuiltinTypeInt64         = &BuiltinType{Tag: BuiltinTypeTagInt64}
+	BuiltinTypeFloat32       = &BuiltinType{Tag: BuiltinTypeTagFloat32}
+	BuiltinTypeFloat64       = &BuiltinType{Tag: BuiltinTypeTagFloat64}
+	BuiltinTypeComplex64     = &BuiltinType{Tag: BuiltinTypeTagComplex64}
+	BuiltinTypeComplex128    = &BuiltinType{Tag: BuiltinTypeTagComplex128}
+	BuiltinTypeString        = &BuiltinType{Tag: BuiltinTypeTagString}
+	BuiltinTypeInt           = &BuiltinType{Tag: BuiltinTypeTagInt}
+	BuiltinTypeUint          = &BuiltinType{Tag: BuiltinTypeTagUint}
+	BuiltinTypeUintptr       = &BuiltinType{Tag: BuiltinTypeTagUintptr}
+	BuiltinTypeByte          = &BuiltinType{Tag: BuiltinTypeTagByte}
+	BuiltinTypeRune          = &BuiltinType{Tag: BuiltinTypeTagRune}
+	BuiltinTypeComparable    = &BuiltinType{Tag: BuiltinTypeTagComparable}
+	BuiltinTypeUnsafePointer = &BuiltinType{Tag: BuiltinTypeTagUnsafePointer}
+)
+
+type BuiltinType struct {
 	TypeBase
-	Name      Identifier
-	IsNumeric bool
+	Tag BuiltinTypeTag
 }
 
-func NewBuiltinType(name string) *TypeBuiltin {
-	return &TypeBuiltin{Name: Identifier{Value: name}}
+func (t *BuiltinType) String() string {
+	return fmt.Sprintf("%sᵢ", t.Tag)
 }
 
-func NewBuiltinNumericType(name string) *TypeBuiltin {
-	return &TypeBuiltin{Name: Identifier{Value: name}, IsNumeric: true}
+func (t *BuiltinType) IsBoolean() bool {
+	return t.Tag == BuiltinTypeTagBool
 }
 
-func (t *TypeBuiltin) String() string {
-	return fmt.Sprintf("%sᵢ", t.Name.Value)
+func (t *BuiltinType) IsString() bool {
+	return t.Tag == BuiltinTypeTagString
+}
+
+func (t *BuiltinType) IsNumeric() bool {
+	switch t.Tag {
+	case BuiltinTypeTagUint8, BuiltinTypeTagUint16, BuiltinTypeTagUint32, BuiltinTypeTagUint64,
+		BuiltinTypeTagInt8, BuiltinTypeTagInt16, BuiltinTypeTagInt32, BuiltinTypeTagInt64,
+		BuiltinTypeTagFloat32, BuiltinTypeTagFloat64, BuiltinTypeTagComplex64, BuiltinTypeTagComplex128,
+		BuiltinTypeTagInt, BuiltinTypeTagUint, BuiltinTypeTagUintptr, BuiltinTypeTagByte, BuiltinTypeTagRune:
+		return true
+	default:
+		return false
+	}
+}
+
+func (t *BuiltinType) IsInteger() bool {
+	switch t.Tag {
+	case BuiltinTypeTagUint8, BuiltinTypeTagUint16, BuiltinTypeTagUint32, BuiltinTypeTagUint64,
+		BuiltinTypeTagInt8, BuiltinTypeTagInt16, BuiltinTypeTagInt32, BuiltinTypeTagInt64,
+		BuiltinTypeTagInt, BuiltinTypeTagUint, BuiltinTypeTagUintptr, BuiltinTypeTagByte, BuiltinTypeTagRune:
+		return true
+	default:
+		return false
+	}
+}
+
+func (t *BuiltinType) IsFloat() bool {
+	switch t.Tag {
+	case BuiltinTypeTagFloat32, BuiltinTypeTagFloat64:
+		return true
+	default:
+		return false
+	}
+}
+
+func (t *BuiltinType) IsComplex() bool {
+	switch t.Tag {
+	case BuiltinTypeTagComplex64, BuiltinTypeTagComplex128:
+		return true
+	default:
+		return false
+	}
+}
+
+func (from *BuiltinType) IsConversibleTo(target *BuiltinType) bool {
+	switch {
+	case from.IsString() && target.IsString():
+		return true
+	case from.IsBoolean() && target.IsBoolean():
+		return true
+	case from.IsInteger() && target.IsInteger():
+		return true
+	case from.IsFloat() && target.IsFloat():
+		return true
+	case from.IsComplex() || target.IsComplex():
+		return false
+	case from.IsInteger() && target.IsFloat():
+		return true
+	case from.IsFloat() && target.IsInteger():
+		return true
+	case from.IsInteger() && target.IsString():
+		return true
+	case from.Tag == BuiltinTypeTagUnsafePointer && target.Tag == BuiltinTypeTagUintptr:
+		return true
+	default:
+		return false
+	}
 }
 
 type NamedType struct {

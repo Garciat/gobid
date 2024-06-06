@@ -100,7 +100,7 @@ func MakeBuiltinNames() common.Map[common.Identifier, *NameInfo] {
 			switch ty.Type.(type) {
 			case *tree.NamedType:
 				kind = common.DeclKindType
-			case *tree.TypeBuiltin:
+			case *tree.BuiltinType:
 				kind = common.DeclKindType
 			default:
 				kind = common.DeclKindAlias

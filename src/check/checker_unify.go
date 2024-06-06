@@ -141,8 +141,8 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 			return
 		case *tree.SliceType:
 			return
-		case *tree.TypeBuiltin:
-			if left.Name.Value == "Pointer" {
+		case *tree.BuiltinType:
+			if left.Tag == tree.BuiltinTypeTagUnsafePointer {
 				return
 			}
 			panic(fmt.Sprintf("cannot assign nil to type %v", left))
@@ -152,8 +152,8 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 	}
 
 	switch left := left.(type) {
-	case *tree.TypeBuiltin:
-		if right, ok := right.(*tree.TypeBuiltin); ok {
+	case *tree.BuiltinType:
+		if right, ok := right.(*tree.BuiltinType); ok {
 			if c.IsNumeric(left) && c.IsNumeric(right) {
 				return // TODO ok?
 			}
@@ -222,8 +222,8 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 	case *tree.NamedType:
 		c.UnifyEq(c.Under(left), c.Under(right), subst)
 	case *tree.UntypedConstantType:
-		if right, ok := right.(*tree.TypeBuiltin); ok {
-			if left.IsCompatible(right.Name.Value) {
+		if right, ok := right.(*tree.BuiltinType); ok {
+			if left.IsAssignableTo(right) {
 				return
 			}
 		}
@@ -295,8 +295,8 @@ func (c *Checker) UnifySubtype(sub, super tree.Type, subst Subst) {
 			return
 		case *tree.SliceType:
 			return
-		case *tree.TypeBuiltin:
-			if super.Name.Value == "Pointer" {
+		case *tree.BuiltinType:
+			if super.Tag == tree.BuiltinTypeTagUnsafePointer {
 				return
 			}
 			panic(fmt.Sprintf("cannot assign nil to type %v", super))

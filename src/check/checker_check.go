@@ -86,7 +86,7 @@ func (c *Checker) CheckTypeDeclType(ty tree.Type) {
 	switch ty := ty.(type) {
 	case *tree.TypeName:
 		// nothing to do
-	case *tree.TypeBuiltin:
+	case *tree.BuiltinType:
 		// nothing to do
 	case *tree.TypeParam:
 		// nothing to do
@@ -386,8 +386,8 @@ func (c *Checker) CheckRangeStmt(stmt *tree.RangeStmt) {
 	var keyTy, valueTy tree.Type
 
 	switch targetTy := scope.Under(targetTy).(type) {
-	case *tree.TypeBuiltin:
-		if targetTy.Name.Value == "string" {
+	case *tree.BuiltinType:
+		if targetTy == tree.BuiltinTypeString {
 			keyTy = scope.BuiltinType("int")
 			valueTy = scope.BuiltinType("rune")
 		}

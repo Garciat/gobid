@@ -3,6 +3,7 @@ package check
 import (
 	"fmt"
 	"github.com/davecgh/go-spew/spew"
+	"github.com/garciat/gobid/common"
 	"github.com/garciat/gobid/tree"
 	"sync"
 )
@@ -50,16 +51,37 @@ func (c *Checker) DefineImportDecl(decl *tree.ImportDecl) {
 }
 
 func (c *Checker) DefineConstDecl(decl *tree.ConstDecl) {
-	//spew.Dump(decl)
-	var exprTy tree.Type = c.Synth(decl.Value)
-	var declTy tree.Type
-	if decl.Type != nil {
-		declTy = c.ResolveType(decl.Type)
-		c.CheckAssignableTo(exprTy, declTy)
+	fmt.Printf("DEFINING CONSTANT %v\n", decl.Name)
+
+	if c.VarCtx.ScopeKind == ScopeKindFile {
+		common.Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
+
+		// Only evaluate constants in package scope
+		value := c.EvaluateConstantExpr(decl, decl.Value)
+		fmt.Printf("EVALUATED %v = %v\n", decl.Name, value)
+
+		valueTy := value.Type()
+
+		var declTy tree.Type
+		if decl.Type != nil {
+			declTy = c.ResolveType(decl.Type)
+			c.CheckAssignableTo(valueTy, declTy)
+		} else {
+			declTy = valueTy
+		}
+
+		c.VarCtx.Parent.DefConst(decl.Name, declTy, value)
 	} else {
-		declTy = exprTy
+		valueTy := c.Synth(decl.Value)
+		var declTy tree.Type
+		if decl.Type != nil {
+			declTy = c.ResolveType(decl.Type)
+			c.CheckAssignableTo(valueTy, declTy)
+		} else {
+			declTy = valueTy
+		}
+		c.VarCtx.Def(decl.Name, declTy) // TODO mark as constant? (cannot reassign)
 	}
-	c.DefineConstant(decl.Name, declTy, decl)
 }
 
 func (c *Checker) DefineTypeDecl(decl *tree.TypeDecl) {

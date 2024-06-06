@@ -70,24 +70,6 @@ func (c *Checker) DefineValue(name Identifier, ty tree.Type) {
 	}
 }
 
-func (c *Checker) DefineConstant(name Identifier, ty tree.Type, decl *tree.ConstDecl) {
-	fmt.Printf("DEFINING %v = %v\n", name, ty)
-
-	var target *VarContext
-	if c.VarCtx.ScopeKind == ScopeKindFile {
-		Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
-		target = c.VarCtx.Parent
-
-		// Only evaluate constants in package scope
-		value := c.EvaluateConstant(c.ResolveType(ty), decl)
-		fmt.Printf("EVALUATED %v = %v\n", name, value)
-		target.DefConst(name, ty, value)
-	} else {
-		target = c.VarCtx
-		target.Def(name, ty) // TODO mark as constant? (cannot reassign)
-	}
-}
-
 func (c *Checker) DefineType(name Identifier, ty tree.Type) {
 	fmt.Printf("DEFINING TYPE %v = %v\n", name, ty)
 

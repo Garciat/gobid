@@ -12,8 +12,8 @@ import (
 
 func (c *Checker) EvaluateConstant(ty tree.Type, decl *tree.ConstDecl) tree.Expr {
 	switch ty := c.ResolveType(c.Under(ty)).(type) {
-	case *tree.TypeBuiltin:
-		switch ty.Name.Value {
+	case *tree.BuiltinType:
+		switch ty.Tag {
 		case "int", "int8", "int16", "int32", "int64":
 			return &tree.ConstIntExpr{Value: c.EvaluateConstantIntExpr(decl, decl.Value)}
 		case "uintptr", "uint", "uint8", "uint16", "uint32", "uint64":
@@ -50,7 +50,7 @@ func (c *Checker) EvaluateConstant(ty tree.Type, decl *tree.ConstDecl) tree.Expr
 	}
 }
 
-func (c *Checker) EvaluateConstantExpr(decl *tree.ConstDecl, expr tree.Expr) tree.Expr {
+func (c *Checker) EvaluateConstantExpr(decl *tree.ConstDecl, expr tree.Expr) tree.ConstExpr {
 	switch expr := expr.(type) {
 	case *tree.NameExpr:
 		switch expr.Name.Value {
@@ -398,7 +398,7 @@ func (c *Checker) EvaluateConstantRuneExpr(decl *tree.ConstDecl, expr tree.Expr)
 	}
 }
 
-func EvaluateBinaryOpInt(op tree.BinaryOp, left int64, right int64) tree.Expr {
+func EvaluateBinaryOpInt(op tree.BinaryOp, left int64, right int64) tree.ConstExpr {
 	if v, err := EvaluateBinaryOpNumericCompare(op, left, right); err == nil {
 		return &tree.ConstBoolExpr{Value: v}
 	}
@@ -408,7 +408,7 @@ func EvaluateBinaryOpInt(op tree.BinaryOp, left int64, right int64) tree.Expr {
 	panic(fmt.Sprintf("unsupported int binary op %v", op))
 }
 
-func EvaluateBinaryOpUint(op tree.BinaryOp, left, right uint64) tree.Expr {
+func EvaluateBinaryOpUint(op tree.BinaryOp, left, right uint64) tree.ConstExpr {
 	if v, err := EvaluateBinaryOpNumericCompare(op, left, right); err == nil {
 		return &tree.ConstBoolExpr{Value: v}
 	}
@@ -418,7 +418,7 @@ func EvaluateBinaryOpUint(op tree.BinaryOp, left, right uint64) tree.Expr {
 	panic(fmt.Sprintf("unsupported uint binary op %v", op))
 }
 
-func EvaluateBinaryOpFloat(op tree.BinaryOp, left, right float64) tree.Expr {
+func EvaluateBinaryOpFloat(op tree.BinaryOp, left, right float64) tree.ConstExpr {
 	if v, err := EvaluateBinaryOpNumericCompare(op, left, right); err == nil {
 		return &tree.ConstBoolExpr{Value: v}
 	}
@@ -428,7 +428,7 @@ func EvaluateBinaryOpFloat(op tree.BinaryOp, left, right float64) tree.Expr {
 	panic(fmt.Sprintf("unsupported float binary op %v", op))
 }
 
-func EvaluateBinaryOpRune(op tree.BinaryOp, left rune, right rune) tree.Expr {
+func EvaluateBinaryOpRune(op tree.BinaryOp, left rune, right rune) tree.ConstExpr {
 	if v, err := EvaluateBinaryOpNumericCompare(op, left, right); err == nil {
 		return &tree.ConstBoolExpr{Value: v}
 	}
@@ -501,7 +501,7 @@ func EvaluateBinaryOpFloatArithmetic[T float64](op tree.BinaryOp, left, right T)
 	}
 }
 
-func EvaluateBinaryOpBool(op tree.BinaryOp, left, right bool) tree.Expr {
+func EvaluateBinaryOpBool(op tree.BinaryOp, left, right bool) tree.ConstExpr {
 	switch op {
 	case tree.BinaryOpLAnd:
 		return &tree.ConstBoolExpr{Value: left && right}
@@ -512,7 +512,7 @@ func EvaluateBinaryOpBool(op tree.BinaryOp, left, right bool) tree.Expr {
 	}
 }
 
-func EvaluateBinaryOpString(op tree.BinaryOp, left, right string) tree.Expr {
+func EvaluateBinaryOpString(op tree.BinaryOp, left, right string) tree.ConstExpr {
 	switch op {
 	case tree.BinaryOpAdd:
 		return &tree.ConstStringExpr{Value: left + right}

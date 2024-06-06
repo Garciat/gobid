@@ -9,40 +9,40 @@ import (
 func MakeBuiltins() *VarContext {
 	scope := NewVarContext()
 
-	scope.DefBuiltinType("bool")
-	scope.Def(NewIdentifier("true"), &tree.UntypedConstantType{Kind: tree.UntypedConstantBool})
-	scope.Def(NewIdentifier("false"), &tree.UntypedConstantType{Kind: tree.UntypedConstantBool})
+	scope.DefBuiltinType(tree.BuiltinTypeBool)
+	scope.Def(NewIdentifier("true"), tree.UntypedConstantBoolType)
+	scope.Def(NewIdentifier("false"), tree.UntypedConstantBoolType)
 
-	uint8Ty := scope.DefBuiltinNumericType("uint8")
-	scope.DefBuiltinNumericType("uint16")
-	scope.DefBuiltinNumericType("uint32")
-	scope.DefBuiltinNumericType("uint64")
+	scope.DefBuiltinType(tree.BuiltinTypeUint8)
+	scope.DefBuiltinType(tree.BuiltinTypeUint16)
+	scope.DefBuiltinType(tree.BuiltinTypeUint32)
+	scope.DefBuiltinType(tree.BuiltinTypeUint64)
 
-	scope.DefBuiltinNumericType("int8")
-	scope.DefBuiltinNumericType("int16")
-	int32Ty := scope.DefBuiltinNumericType("int32")
-	scope.DefBuiltinNumericType("int64")
+	scope.DefBuiltinType(tree.BuiltinTypeInt8)
+	scope.DefBuiltinType(tree.BuiltinTypeInt16)
+	scope.DefBuiltinType(tree.BuiltinTypeInt32)
+	scope.DefBuiltinType(tree.BuiltinTypeInt64)
 
-	scope.DefBuiltinNumericType("float32")
-	scope.DefBuiltinNumericType("float64")
+	scope.DefBuiltinType(tree.BuiltinTypeFloat32)
+	scope.DefBuiltinType(tree.BuiltinTypeFloat64)
 
-	scope.DefBuiltinNumericType("complex64")
-	scope.DefBuiltinNumericType("complex128")
+	scope.DefBuiltinType(tree.BuiltinTypeComplex64)
+	scope.DefBuiltinType(tree.BuiltinTypeComplex128)
 
-	scope.DefBuiltinType("string")
+	scope.DefBuiltinType(tree.BuiltinTypeString)
 
-	scope.DefBuiltinNumericType("int")
-	scope.DefBuiltinNumericType("uint")
-	scope.DefBuiltinNumericType("uintptr")
+	scope.DefBuiltinType(tree.BuiltinTypeInt)
+	scope.DefBuiltinType(tree.BuiltinTypeUint)
+	scope.DefBuiltinType(tree.BuiltinTypeUintptr)
 
-	scope.Def(NewIdentifier("byte"), uint8Ty) // already tree.TypeOfType
-	scope.Def(NewIdentifier("rune"), int32Ty) // already tree.TypeOfType
+	scope.DefType(NewIdentifier("byte"), tree.BuiltinTypeUint8)
+	scope.DefType(NewIdentifier("rune"), tree.BuiltinTypeInt32)
 
 	scope.DefType(NewIdentifier("any"), tree.EmptyInterface())
 
-	// TODO comparable constraint
+	scope.DefBuiltinType(tree.BuiltinTypeComparable)
 
-	scope.Def(NewIdentifier("iota"), tree.UntypedInt())
+	scope.Def(NewIdentifier("iota"), tree.UntypedConstantIntType)
 
 	scope.Def(NewIdentifier("nil"), &tree.NilType{})
 

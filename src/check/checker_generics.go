@@ -74,7 +74,7 @@ func (c *Checker) ContainsTypeParam(ty tree.Type, tyParam *tree.TypeParam) bool 
 		return false
 	case *tree.SliceType:
 		return c.ContainsTypeParam(ty.ElemType, tyParam)
-	case *tree.TypeBuiltin:
+	case *tree.BuiltinType:
 		return false
 	case *tree.ArrayType:
 		return c.ContainsTypeParam(ty.ElemType, tyParam)

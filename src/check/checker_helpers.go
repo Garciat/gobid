@@ -29,7 +29,7 @@ func (c *Checker) IsConcreteType(ty tree.Type) bool {
 		return c.IsConcreteType(c.ResolveType(ty.Type))
 	case *tree.TypeOfType:
 		return c.IsConcreteType(ty.Type)
-	case *tree.TypeBuiltin:
+	case *tree.BuiltinType:
 		return true
 	case *tree.InterfaceType:
 		return false
@@ -59,8 +59,8 @@ func (c *Checker) IsConcreteType(ty tree.Type) bool {
 
 func (c *Checker) IsNumeric(ty tree.Type) bool {
 	switch ty := c.Under(ty).(type) {
-	case *tree.TypeBuiltin:
-		return ty.IsNumeric
+	case *tree.BuiltinType:
+		return ty.IsNumeric()
 	case *tree.UntypedConstantType:
 		return ty.IsNumeric()
 	default:
@@ -110,10 +110,10 @@ func (c *Checker) IsByteArray(ty tree.Type) bool {
 func (c *Checker) IsStringLike(ty tree.Type) bool {
 	return c.IsLike(ty, func(ty tree.Type) bool {
 		switch ty := ty.(type) {
-		case *tree.TypeBuiltin:
-			return ty.Name.Value == "string"
+		case *tree.BuiltinType:
+			return ty.IsString()
 		case *tree.UntypedConstantType:
-			return ty.IsCompatible("string")
+			return ty.IsString()
 		default:
 			return false
 		}

@@ -121,12 +121,8 @@ func (c *VarContext) DefNamedType(name Identifier, under tree.Type) tree.Type {
 	return c.DefType(name, &tree.NamedType{Name: name, Type: under})
 }
 
-func (c *VarContext) DefBuiltinType(name string) tree.Type {
-	return c.DefType(NewIdentifier(name), tree.NewBuiltinType(name))
-}
-
-func (c *VarContext) DefBuiltinNumericType(name string) tree.Type {
-	return c.DefType(NewIdentifier(name), tree.NewBuiltinNumericType(name))
+func (c *VarContext) DefBuiltinType(ty *tree.BuiltinType) tree.Type {
+	return c.DefType(NewIdentifier(string(ty.Tag)), ty)
 }
 
 func (c *VarContext) Iter(f func(Identifier, tree.Type)) {

@@ -209,23 +209,23 @@ func (c *Checker) SynthIndexExpr(expr *tree.IndexExpr) tree.Type {
 	case *tree.FunctionType:
 		panic("unexpected function type (should be handled by CallExpr)")
 	case *tree.SliceType:
-		indexTy = tree.UntypedInt()
+		indexTy = tree.UntypedConstantIntType
 		resultTy = c.ResolveType(exprTy.ElemType)
 	case *tree.MapType:
 		indexTy = c.ResolveType(exprTy.KeyType)
 		resultTy = c.ResolveType(exprTy.ValueType)
 	case *tree.ArrayType:
-		indexTy = tree.UntypedInt()
+		indexTy = tree.UntypedConstantIntType
 		resultTy = c.ResolveType(exprTy.ElemType)
-	case *tree.TypeBuiltin:
-		if exprTy.Name.Value == "string" {
-			indexTy = tree.UntypedInt()
-			resultTy = c.BuiltinType("byte")
+	case *tree.BuiltinType:
+		if exprTy.IsString() {
+			indexTy = tree.UntypedConstantIntType
+			resultTy = tree.BuiltinTypeByte
 		}
 	case *tree.UntypedConstantType:
-		if exprTy.IsCompatible("string") {
-			indexTy = tree.UntypedInt()
-			resultTy = c.BuiltinType("byte")
+		if exprTy.IsAssignableTo(tree.BuiltinTypeString) {
+			indexTy = tree.UntypedConstantIntType
+			resultTy = tree.BuiltinTypeByte
 		}
 	}
 
@@ -266,15 +266,15 @@ func (c *Checker) SynthSliceExpr(expr *tree.SliceExpr) tree.Type {
 	switch exprTy := c.Under(exprTy).(type) {
 	case *tree.SliceType:
 		resultTy = exprTy
-	case *tree.TypeBuiltin:
-		if exprTy.Name.Value == "string" {
-			resultTy = c.BuiltinType("string")
+	case *tree.BuiltinType:
+		if exprTy.IsString() {
+			resultTy = tree.BuiltinTypeString
 		}
 	case *tree.ArrayType:
-		resultTy = &tree.SliceType{ElemType: exprTy.ElemType}
+		resultTy = &tree.SliceType{ElemType: c.ResolveType(exprTy.ElemType)}
 	case *tree.UntypedConstantType:
-		if exprTy.IsCompatible("string") {
-			resultTy = c.BuiltinType("string")
+		if exprTy.IsString() {
+			resultTy = tree.BuiltinTypeString
 		}
 	}
 
@@ -284,13 +284,13 @@ func (c *Checker) SynthSliceExpr(expr *tree.SliceExpr) tree.Type {
 	}
 
 	if expr.Low != nil {
-		c.CheckExpr(expr.Low, tree.UntypedInt())
+		c.CheckExpr(expr.Low, tree.UntypedConstantIntType)
 	}
 	if expr.High != nil {
-		c.CheckExpr(expr.High, tree.UntypedInt())
+		c.CheckExpr(expr.High, tree.UntypedConstantIntType)
 	}
 	if expr.Max != nil {
-		c.CheckExpr(expr.Max, tree.UntypedInt())
+		c.CheckExpr(expr.Max, tree.UntypedConstantIntType)
 	}
 
 	return resultTy
@@ -318,14 +318,14 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 				panic("conversion without exactly one argument")
 			}
 			switch elemType := c.Under(ty.ElemType).(type) {
-			case *tree.TypeBuiltin:
-				if elemType.Name.Value == "byte" {
-					c.CheckAssignableTo(c.Synth(expr.Args[0]), c.BuiltinType("string"))
+			case *tree.BuiltinType:
+				if elemType.Tag == tree.BuiltinTypeTagByte {
+					c.CheckAssignableTo(c.Synth(expr.Args[0]), tree.BuiltinTypeString)
 					return ty
 				}
 			}
 			panic("TODO")
-		case *tree.TypeBuiltin:
+		case *tree.BuiltinType:
 			if len(expr.Args) != 1 {
 				panic("conversion without exactly one argument")
 			}
@@ -407,18 +407,16 @@ func (c *Checker) SynthConversionExpr(expr *tree.ConversionExpr) tree.Type {
 	return expr.Type
 }
 
-func (c *Checker) SynthBuiltinConversion(expr tree.Expr, targetTy *tree.TypeBuiltin) tree.Type {
+func (c *Checker) SynthBuiltinConversion(expr tree.Expr, targetTy *tree.BuiltinType) tree.Type {
 	exprTy := c.Synth(expr)
 	switch exprTy := exprTy.(type) {
 	case *tree.UntypedConstantType:
-		if exprTy.IsCompatible(targetTy.Name.Value) {
+		if exprTy.IsAssignableTo(targetTy) {
 			return targetTy
 		}
-	case *tree.TypeBuiltin:
-		if exprTy.Name.Value == "Pointer" {
-			if targetTy.Name.Value == "uintptr" {
-				return targetTy
-			}
+	case *tree.BuiltinType:
+		if exprTy.IsConversibleTo(targetTy) {
+			return targetTy
 		}
 	}
 	panic(fmt.Sprintf("cannot convert %v to %v", exprTy, targetTy))

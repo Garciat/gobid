@@ -60,7 +60,7 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 		return ty
 	case *tree.PackageTypeName:
 		return ty
-	case *tree.TypeBuiltin:
+	case *tree.BuiltinType:
 		return ty
 	case *tree.TypeApplication:
 		args := make([]tree.Type, len(ty.Args))

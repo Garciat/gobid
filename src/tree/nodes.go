@@ -148,9 +148,22 @@ func (e CallEllipsisExpr) String() string {
 	return fmt.Sprintf("...%v", e.Element)
 }
 
-type ConstIntExpr struct {
+type ConstExpr interface {
+	Expr
+	Type() Type
+}
+
+type ConstExprBase struct {
 	ExprBase
+}
+
+type ConstIntExpr struct {
+	ConstExprBase
 	Value int64
+}
+
+func (*ConstIntExpr) Type() Type {
+	return UntypedConstantIntType
 }
 
 func (e *ConstIntExpr) String() string {
@@ -158,8 +171,12 @@ func (e *ConstIntExpr) String() string {
 }
 
 type ConstUintExpr struct {
-	ExprBase
+	ConstExprBase
 	Value uint64
+}
+
+func (*ConstUintExpr) Type() Type {
+	return UntypedConstantIntType
 }
 
 func (e *ConstUintExpr) String() string {
@@ -167,8 +184,12 @@ func (e *ConstUintExpr) String() string {
 }
 
 type ConstBoolExpr struct {
-	ExprBase
+	ConstExprBase
 	Value bool
+}
+
+func (*ConstBoolExpr) Type() Type {
+	return UntypedConstantBoolType
 }
 
 func (e *ConstBoolExpr) String() string {
@@ -176,8 +197,12 @@ func (e *ConstBoolExpr) String() string {
 }
 
 type ConstStringExpr struct {
-	ExprBase
+	ConstExprBase
 	Value string
+}
+
+func (*ConstStringExpr) Type() Type {
+	return UntypedConstantStringType
 }
 
 func (e *ConstStringExpr) String() string {
@@ -185,8 +210,12 @@ func (e *ConstStringExpr) String() string {
 }
 
 type ConstFloatExpr struct {
-	ExprBase
+	ConstExprBase
 	Value float64
+}
+
+func (e *ConstFloatExpr) Type() Type {
+	return UntypedConstantFloatType
 }
 
 func (e *ConstFloatExpr) String() string {
@@ -194,8 +223,12 @@ func (e *ConstFloatExpr) String() string {
 }
 
 type ConstRuneExpr struct {
-	ExprBase
+	ConstExprBase
 	Value rune
+}
+
+func (*ConstRuneExpr) Type() Type {
+	return UntypedConstantRuneType
 }
 
 func (e *ConstRuneExpr) String() string {
@@ -203,8 +236,12 @@ func (e *ConstRuneExpr) String() string {
 }
 
 type ConstImagExpr struct {
-	ExprBase
+	ConstExprBase
 	Value complex128
+}
+
+func (*ConstImagExpr) Type() Type {
+	return BuiltinTypeComplex128
 }
 
 func (e *ConstImagExpr) String() string {
