@@ -26,7 +26,7 @@ func (c *Checker) IsTypeParam(ty tree.Type) bool {
 func (c *Checker) IsConcreteType(ty tree.Type) bool {
 	switch ty := ty.(type) {
 	case *tree.NamedType:
-		return c.IsConcreteType(c.ResolveType(ty.Type))
+		return c.IsConcreteType(c.ResolveType(ty.Definition))
 	case *tree.TypeOfType:
 		return c.IsConcreteType(ty.Type)
 	case *tree.BuiltinType:
@@ -114,6 +114,29 @@ func (c *Checker) IsStringLike(ty tree.Type) bool {
 			return ty.IsString()
 		case *tree.UntypedConstantType:
 			return ty.IsString()
+		default:
+			return false
+		}
+	})
+}
+
+func (c *Checker) AcceptsNil(ty tree.Type) bool {
+	return c.IsLike(ty, func(ty tree.Type) bool {
+		switch ty := ty.(type) {
+		case *tree.PointerType:
+			return true
+		case *tree.ChannelType:
+			return true
+		case *tree.FunctionType:
+			return true
+		case *tree.InterfaceType:
+			return true
+		case *tree.MapType:
+			return true
+		case *tree.SliceType:
+			return true
+		case *tree.BuiltinType:
+			return ty.Tag == tree.BuiltinTypeTagUnsafePointer
 		default:
 			return false
 		}

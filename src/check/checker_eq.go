@@ -11,7 +11,7 @@ func (c *Checker) Identical(ty1, ty2 tree.Type) bool {
 	switch ty1 := ty1.(type) {
 	case *tree.NamedType:
 		if ty2, ok := ty2.(*tree.NamedType); ok {
-			return ty1.Name == ty2.Name
+			return ty1.SameType(ty2)
 		}
 		return false
 	case *tree.ImportTypeName:

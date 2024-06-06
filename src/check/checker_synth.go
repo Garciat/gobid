@@ -47,7 +47,7 @@ func (c *Checker) Synth(expr tree.Expr) tree.Type {
 }
 
 func (c *Checker) SynthNameExpr(expr *tree.NameExpr) tree.Type {
-	return c.ResolveType(c.Lookup(expr.Name))
+	return c.Lookup(expr.Name)
 }
 
 func (c *Checker) SynthImportRef(expr *tree.ImportRef) tree.Type {
@@ -117,7 +117,7 @@ func (c *Checker) SynthUnaryExpr(expr *tree.UnaryExpr) tree.Type {
 			return &tree.TypeOfType{Type: &tree.PointerType{ElemType: ty.Type}}
 		default:
 			spew.Dump(expr)
-			panic(fmt.Sprintf("cannot dereference %v of type %v", expr, ty))
+			panic(fmt.Sprintf("cannot dereference type %v", ty))
 		}
 	case tree.UnaryOpBitNot:
 		// TODO check integral type
@@ -330,8 +330,16 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 				panic("conversion without exactly one argument")
 			}
 			return c.SynthBuiltinConversion(expr.Args[0], ty)
+		case *tree.NamedType:
+			if len(expr.Args) != 1 {
+				panic("conversion without exactly one argument")
+			}
+			return c.SynthConversionExpr(&tree.ConversionExpr{Expr: expr.Args[0], Type: c.ResolveType(ty)})
 		case *tree.TypeOfType:
-			return c.SynthConversionExpr(&tree.ConversionExpr{Expr: expr.Func, Type: ty.Type})
+			if len(expr.Args) != 1 {
+				panic("conversion without exactly one argument")
+			}
+			return c.SynthConversionExpr(&tree.ConversionExpr{Expr: expr.Args[0], Type: c.ResolveType(ty.Type)})
 		default:
 			spew.Dump(ty)
 			panic("not a function")
@@ -402,14 +410,36 @@ func (c *Checker) SynthFuncLitExpr(expr *tree.FuncLitExpr) tree.Type {
 	return &tree.FunctionType{Signature: expr.Signature}
 }
 
-func (c *Checker) SynthConversionExpr(expr *tree.ConversionExpr) tree.Type {
-	// TODO check conversion
-	return expr.Type
+func (c *Checker) SynthConversionExpr(conv *tree.ConversionExpr) tree.Type {
+	exprTy := c.Synth(conv.Expr)
+	targetTy := c.ResolveType(conv.Type)
+
+	switch exprTy.(type) {
+	case *tree.NilType:
+		if c.AcceptsNil(targetTy) {
+			return targetTy
+		}
+	}
+
+	if c.IsStringLike(exprTy) && c.IsByteArray(targetTy) {
+		return targetTy
+	}
+
+	switch targetTy := targetTy.(type) {
+	case *tree.BuiltinType:
+		return c.SynthBuiltinConversion(conv.Expr, targetTy)
+	case *tree.NamedType:
+		return c.SynthNamedConversion(conv.Expr, targetTy)
+	default:
+		spew.Dump(conv)
+		panic("unreachable")
+	}
 }
 
 func (c *Checker) SynthBuiltinConversion(expr tree.Expr, targetTy *tree.BuiltinType) tree.Type {
 	exprTy := c.Synth(expr)
-	switch exprTy := exprTy.(type) {
+
+	switch exprTy := c.Under(exprTy).(type) {
 	case *tree.UntypedConstantType:
 		if exprTy.IsAssignableTo(targetTy) {
 			return targetTy
@@ -419,7 +449,20 @@ func (c *Checker) SynthBuiltinConversion(expr tree.Expr, targetTy *tree.BuiltinT
 			return targetTy
 		}
 	}
+
 	panic(fmt.Sprintf("cannot convert %v to %v", exprTy, targetTy))
+}
+
+func (c *Checker) SynthNamedConversion(expr tree.Expr, targetTy *tree.NamedType) tree.Type {
+	exprTy := c.Synth(expr)
+	switch exprTy := exprTy.(type) {
+	case *tree.NamedType:
+		if exprTy.SameType(targetTy) {
+			return targetTy
+		}
+	}
+	c.CheckAssignableTo(exprTy, targetTy.Definition)
+	return targetTy
 }
 
 func (c *Checker) SynthLiteralExpr(expr *tree.LiteralExpr) tree.Type {

@@ -122,8 +122,8 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 		return &tree.TupleType{Elems: elems}
 	case *tree.NamedType:
 		return &tree.NamedType{
-			Name: ty.Name,
-			Type: c.ApplySubst(ty.Type, subst),
+			Name:       ty.Name,
+			Definition: c.ApplySubst(ty.Definition, subst),
 			// Methods: c.ApplySubstMethodList(ty.Methods, subst),
 		}
 	case *tree.NilType:

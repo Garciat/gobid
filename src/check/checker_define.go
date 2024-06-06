@@ -87,9 +87,16 @@ func (c *Checker) DefineConstDecl(decl *tree.ConstDecl) {
 func (c *Checker) DefineTypeDecl(decl *tree.TypeDecl) {
 	var ty tree.Type
 	if len(decl.TypeParams.Params) > 0 {
-		ty = &tree.NamedType{Name: decl.Name, Type: &tree.GenericType{TypeParams: decl.TypeParams, Type: decl.Type}}
+		ty = &tree.NamedType{
+			Package:    c.CurPkg.ImportPath,
+			Name:       decl.Name,
+			Definition: &tree.GenericType{TypeParams: decl.TypeParams, Type: decl.Type},
+		}
 	} else {
-		ty = &tree.NamedType{Name: decl.Name, Type: decl.Type}
+		ty = &tree.NamedType{
+			Name:       decl.Name,
+			Definition: decl.Type,
+		}
 	}
 	c.DefineType(decl.Name, ty)
 }

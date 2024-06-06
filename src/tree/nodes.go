@@ -173,8 +173,8 @@ type AddressExpr struct {
 
 type ConversionExpr struct {
 	ExprBase
-	Type Type
 	Expr Expr
+	Type Type
 }
 
 // TODO: MethodExpr

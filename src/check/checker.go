@@ -17,8 +17,10 @@ type Checker struct {
 	VarCtx   *VarContext
 	Builtins *VarContext
 
-	CurFn *tree.Signature
-	CurTy *tree.TypeDecl
+	CurPkg  *source.Package
+	CurFile *source.FileDef
+	CurFn   *tree.Signature
+	CurTy   *tree.TypeDecl
 }
 
 func NewChecker(packages map[ImportPath]*source.Package) *Checker {
@@ -42,6 +44,8 @@ func (c *Checker) Copy() *Checker {
 		TyCtx:          c.TyCtx,
 		VarCtx:         c.VarCtx,
 		Builtins:       c.Builtins,
+		CurPkg:         c.CurPkg,
+		CurFile:        c.CurFile,
 		CurFn:          c.CurFn,
 		CurTy:          c.CurTy,
 	}
@@ -58,9 +62,9 @@ func (c *Checker) Run() {
 			continue // TODO should not be here
 		}
 
-		packageScopes[pkg] = c.BeginScope(ScopeKindPackage)
+		packageScopes[pkg] = c.BeginPackageScope(pkg)
 		for _, file := range pkg.Files {
-			fileScopes[file] = packageScopes[pkg].BeginScope(ScopeKindFile)
+			fileScopes[file] = packageScopes[pkg].BeginFileScope(file)
 
 			for _, decl := range file.Decls {
 				switch decl := decl.(type) {

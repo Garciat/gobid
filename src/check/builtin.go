@@ -67,7 +67,7 @@ func MakeBuiltins() *VarContext {
 	scope.Def(NewIdentifier("max"), parse.ParseFuncType("func(...T) T").WithTypeParams("T"))
 	scope.Def(NewIdentifier("min"), parse.ParseFuncType("func(...T) T").WithTypeParams("T"))
 
-	scope.DefNamedType(NewIdentifier("error"), parse.ParseType("interface{Error() string}"))
+	scope.DefNamedType("builtin", NewIdentifier("error"), parse.ParseType("interface{Error() string}"))
 
 	return scope
 }

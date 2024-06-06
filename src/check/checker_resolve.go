@@ -57,7 +57,7 @@ func (c *Checker) ResolveType(ty tree.Type) tree.Type {
 func (c *Checker) Under(ty tree.Type) tree.Type {
 	switch ty := ty.(type) {
 	case *tree.NamedType:
-		return c.Under(ty.Type)
+		return c.Under(c.ResolveType(ty.Definition))
 	case *tree.TypeApplication:
 		// TODO: pre apply?
 		return c.TypeApplication(ty) // TODO crazy?

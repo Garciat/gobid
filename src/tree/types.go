@@ -350,13 +350,18 @@ func (from *BuiltinType) IsConversibleTo(target *BuiltinType) bool {
 
 type NamedType struct {
 	TypeBase
-	Name    Identifier
-	Type    Type
-	Methods Map[Identifier, *MethodElem]
+	Package    ImportPath
+	Name       Identifier
+	Definition Type
+	Methods    Map[Identifier, *MethodElem]
+}
+
+func (t *NamedType) SameType(other *NamedType) bool {
+	return t.Package == other.Package && t.Name == other.Name
 }
 
 func (t *NamedType) String() string {
-	return fmt.Sprintf("type %s %v", t.Name.Value, t.Type)
+	return fmt.Sprintf("type %s %v", t.Name.Value, t.Definition)
 }
 
 type TypeParam struct {

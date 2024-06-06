@@ -8,7 +8,7 @@ func (c *Checker) TypeApplication(app *tree.TypeApplication) tree.Type {
 
 func (c *Checker) TypeApplicationFunc(app *tree.TypeApplication, argF func(tyParam *tree.TypeParamDecl, tyArg tree.Type)) tree.Type {
 	named, subst := c.InstantiateTypeFunc(app, argF)
-	gen := c.ResolveType(named.Type).(*tree.GenericType)
+	gen := c.ResolveType(named.Definition).(*tree.GenericType)
 	return c.ApplySubst(gen.Type, subst)
 }
 
@@ -21,7 +21,7 @@ func (c *Checker) InstantiateTypeFunc(app *tree.TypeApplication, argF func(tyPar
 	if !ok {
 		panic("can only instantiate named types?")
 	}
-	gen, ok := c.ResolveType(named.Type).(*tree.GenericType)
+	gen, ok := c.ResolveType(named.Definition).(*tree.GenericType)
 	if !ok {
 		panic("not a generic type")
 	}

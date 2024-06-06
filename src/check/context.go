@@ -119,8 +119,8 @@ func (c *VarContext) DefType(name Identifier, ty tree.Type) tree.Type {
 	return c.Def(name, &tree.TypeOfType{Type: ty})
 }
 
-func (c *VarContext) DefNamedType(name Identifier, under tree.Type) tree.Type {
-	return c.DefType(name, &tree.NamedType{Name: name, Type: under})
+func (c *VarContext) DefNamedType(ip ImportPath, name Identifier, under tree.Type) tree.Type {
+	return c.DefType(name, &tree.NamedType{Package: ip, Name: name, Definition: under})
 }
 
 func (c *VarContext) DefBuiltinType(ty *tree.BuiltinType) tree.Type {

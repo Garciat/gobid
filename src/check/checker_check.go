@@ -116,7 +116,7 @@ func (c *Checker) CheckTypeDeclType(ty tree.Type) {
 	case *tree.SliceType:
 		c.CheckTypeDeclType(ty.ElemType)
 	case *tree.NamedType:
-		c.CheckTypeDeclType(ty.Type)
+		c.CheckTypeDeclType(ty.Definition)
 	case *tree.PointerType:
 		c.CheckTypeDeclType(ty.ElemType)
 	case *tree.ArrayType:
@@ -177,7 +177,7 @@ func (c *Checker) CheckMethodDecl(decl *tree.MethodDecl) {
 		if !ok {
 			panic("method on non-named type")
 		}
-		gen, ok := named.Type.(*tree.GenericType)
+		gen, ok := named.Definition.(*tree.GenericType)
 		if !ok {
 			panic("not a generic type")
 		}
@@ -349,7 +349,7 @@ func (c *Checker) CheckReturnStmt(stmt *tree.ReturnStmt) {
 }
 
 func (c *Checker) CheckIfStmt(stmt *tree.IfStmt) {
-	ifScope := c.BeginScope(ScopeKindBlock)
+	ifScope := c.BeginBlockScope()
 	if stmt.Init != nil {
 		ifScope.CheckStatement(stmt.Init)
 	}
@@ -374,7 +374,7 @@ func (c *Checker) CheckIncDecStmt(stmt *tree.IncDecStmt) {
 }
 
 func (c *Checker) CheckRangeStmt(stmt *tree.RangeStmt) {
-	scope := c.BeginScope(ScopeKindBlock)
+	scope := c.BeginBlockScope()
 
 	targetTy := scope.Synth(stmt.X)
 
@@ -425,7 +425,7 @@ func (c *Checker) CheckRangeStmt(stmt *tree.RangeStmt) {
 }
 
 func (c *Checker) CheckForStmt(stmt *tree.ForStmt) {
-	scope := c.BeginScope(ScopeKindBlock)
+	scope := c.BeginBlockScope()
 	if stmt.Init != nil {
 		scope.CheckStatement(stmt.Init)
 	}
@@ -439,7 +439,7 @@ func (c *Checker) CheckForStmt(stmt *tree.ForStmt) {
 }
 
 func (c *Checker) CheckSwitchStmt(stmt *tree.SwitchStmt) {
-	switchScope := c.BeginScope(ScopeKindBlock)
+	switchScope := c.BeginBlockScope()
 	var tagTy tree.Type
 	if stmt.Init != nil {
 		switchScope.CheckStatement(stmt.Init)
@@ -448,7 +448,7 @@ func (c *Checker) CheckSwitchStmt(stmt *tree.SwitchStmt) {
 		tagTy = switchScope.Synth(stmt.Tag)
 	}
 	for _, caseStmt := range stmt.Cases {
-		caseScope := switchScope.BeginScope(ScopeKindBlock)
+		caseScope := switchScope.BeginBlockScope()
 		for _, expr := range caseStmt.Exprs {
 			if tagTy != nil {
 				caseScope.CheckExpr(expr, tagTy)
@@ -469,7 +469,7 @@ func (c *Checker) CheckGoStmt(stmt *tree.GoStmt) {
 }
 
 func (c *Checker) CheckBlockStmt(stmt *tree.BlockStmt) {
-	scope := c.BeginScope(ScopeKindBlock)
+	scope := c.BeginBlockScope()
 	scope.CheckStatementList(stmt.Body)
 }
 

@@ -322,7 +322,7 @@ func (c *Checker) UnifySubtype(sub, super tree.Type, subst Subst) {
 		c.UnifySubtype(sub, c.Under(super), subst) // TODO: adding more constraints?
 	case *tree.NamedType:
 		if subTy, ok := sub.(*tree.NamedType); ok {
-			if subTy.Name == super.Name {
+			if subTy.SameType(super) {
 				return
 			}
 		}
