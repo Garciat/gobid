@@ -360,7 +360,16 @@ type ParameterDecl struct {
 type StructType struct {
 	TypeBase
 	Fields []*FieldDecl
-	Embeds []Type
+}
+
+func (t *StructType) Embeds() []Type {
+	var embeds []Type
+	for _, field := range t.Fields {
+		if field.Name.Value == "" {
+			embeds = append(embeds, field.Type)
+		}
+	}
+	return embeds
 }
 
 func (t *StructType) String() string {
@@ -372,7 +381,7 @@ func (t *StructType) String() string {
 }
 
 type FieldDecl struct {
-	Name Identifier
+	Name Identifier // empty for embedded types
 	Type Type
 }
 

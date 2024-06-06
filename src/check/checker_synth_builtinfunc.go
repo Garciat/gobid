@@ -26,6 +26,8 @@ func (c *Checker) SynthBuiltinFunctionCall(f *tree.BuiltinFunctionType, expr *tr
 		return c.SynthBuiltinPrintlnCall(expr)
 	case "copy":
 		return c.SynthBuiltinCopyCall(expr)
+	case "clear":
+		return c.SynthBuiltinClearCall(expr)
 	case "real":
 		return c.SynthBuiltinRealCall(expr)
 	case "imag":
@@ -198,6 +200,29 @@ func (c *Checker) SynthBuiltinCopyCall(expr *tree.CallExpr) tree.Type {
 	c.CheckEqualTypes(elemTy1, elemTy2)
 
 	return c.BuiltinType("int")
+}
+
+func (c *Checker) SynthBuiltinClearCall(expr *tree.CallExpr) tree.Type {
+	if len(expr.Args) != 1 {
+		panic("builtin clear() takes exactly one argument")
+	}
+
+	ty := c.Synth(expr.Args[0])
+
+	ok := c.IsLike(ty, func(ty tree.Type) bool {
+		switch ty.(type) {
+		case *tree.SliceType:
+		case *tree.MapType:
+		default:
+			return false
+		}
+		return true
+	})
+	if !ok {
+		panic(fmt.Sprintf("clear() on incompatible type %v", ty))
+	}
+
+	return &tree.VoidType{}
 }
 
 func (c *Checker) SynthBuiltinRealCall(expr *tree.CallExpr) tree.Type {

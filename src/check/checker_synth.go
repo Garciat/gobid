@@ -189,6 +189,18 @@ func (c *Checker) SynthIndexExpr(expr *tree.IndexExpr) tree.Type {
 	exprTy := c.Synth(expr.Expr)
 
 	switch ty := exprTy.(type) {
+	case *tree.TypeOfType:
+		var tyArgs []tree.Type
+		for _, arg := range expr.Indices {
+			tyArgs = append(tyArgs, c.Synth(arg))
+		}
+		return c.TypeApplication(&tree.TypeApplication{
+			Type: ty.Type,
+			Args: tyArgs,
+		})
+	}
+
+	switch ty := exprTy.(type) {
 	case *tree.PointerType:
 		exprTy = c.ResolveType(ty.ElemType)
 	}
@@ -227,7 +239,7 @@ func (c *Checker) SynthIndexExpr(expr *tree.IndexExpr) tree.Type {
 }
 
 func (c *Checker) SynthSliceExpr(expr *tree.SliceExpr) tree.Type {
-	exprTy := c.Synth(expr.Expr)
+	exprTy := c.ResolveType(c.Synth(expr.Expr))
 
 	switch ty := c.Under(exprTy).(type) {
 	case *tree.PointerType:

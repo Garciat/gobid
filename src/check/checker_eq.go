@@ -43,6 +43,9 @@ func (c *Checker) Identical(ty1, ty2 tree.Type) bool {
 			if len(ty1.Constraints) != len(ty2.Constraints) {
 				return false
 			}
+			if len(ty1.Methods) == 0 && len(ty1.Constraints) == 0 {
+				return true
+			}
 			panic("TODO")
 		}
 		return false

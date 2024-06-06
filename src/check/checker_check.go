@@ -256,9 +256,13 @@ func (c *Checker) CheckStatement(stmt tree.Statement) {
 	case *tree.SwitchStmt:
 		c.CheckSwitchStmt(stmt)
 	case *tree.DeferStmt:
-		c.CheckExpr(stmt.Call, c.BuiltinType("any"))
+		c.CheckDeferStmt(stmt)
 	case *tree.GoStmt:
-		c.CheckExpr(stmt.Call, c.BuiltinType("any"))
+		c.CheckGoStmt(stmt)
+	case *tree.BlockStmt:
+		c.CheckBlockStmt(stmt)
+	case *tree.SendStmt:
+		c.CheckSendStmt(stmt)
 	default:
 		spew.Dump(stmt)
 		panic("unreachable")
@@ -453,6 +457,39 @@ func (c *Checker) CheckSwitchStmt(stmt *tree.SwitchStmt) {
 			}
 		}
 		caseScope.CheckStatementList(caseStmt.Body)
+	}
+}
+
+func (c *Checker) CheckDeferStmt(stmt *tree.DeferStmt) {
+	c.CheckExpr(stmt.Call, c.BuiltinType("any"))
+}
+
+func (c *Checker) CheckGoStmt(stmt *tree.GoStmt) {
+	c.CheckExpr(stmt.Call, c.BuiltinType("any"))
+}
+
+func (c *Checker) CheckBlockStmt(stmt *tree.BlockStmt) {
+	scope := c.BeginScope(ScopeKindBlock)
+	scope.CheckStatementList(stmt.Body)
+}
+
+func (c *Checker) CheckSendStmt(stmt *tree.SendStmt) {
+	chanTy := c.Synth(stmt.Chan)
+
+	switch chanTy := c.Under(chanTy).(type) {
+	case *tree.ChannelType:
+		switch chanTy.Dir {
+		case tree.ChannelDirSend, tree.ChannelDirBoth:
+		// ok
+		case tree.ChannelDirRecv:
+			panic("send on receive-only channel")
+		default:
+			panic("unreachable")
+		}
+
+		c.CheckAssignableTo(c.Synth(stmt.Value), c.ResolveType(chanTy.ElemType))
+	default:
+		panic(fmt.Errorf("send on non-channel type %v", chanTy))
 	}
 }
 

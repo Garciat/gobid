@@ -9,13 +9,21 @@ import (
 
 type MemberSet = common.Map[common.Identifier, []TypeMember]
 
-type TypeMember interface{}
+type TypeMember interface {
+	_TypeMember()
+}
+
+type TypeMemberBase struct{}
+
+func (*TypeMemberBase) _TypeMember() {}
 
 type FieldMember struct {
+	TypeMemberBase
 	Field *tree.FieldDecl
 }
 
 type MethodMember struct {
+	TypeMemberBase
 	Method *tree.MethodElem
 }
 
@@ -51,7 +59,7 @@ func (c *Checker) Members(ty tree.Type) MemberSet {
 
 	switch underTy := c.Under(ty).(type) {
 	case *tree.StructType:
-		for _, embedTy := range underTy.Embeds {
+		for _, embedTy := range underTy.Embeds() {
 			for name, member := range c.Members(embedTy) {
 				embedded[name] = append(embedded[name], member...)
 			}
@@ -87,7 +95,7 @@ func (c *Checker) Members(ty tree.Type) MemberSet {
 		named, subst := c.InstantiateType(ty)
 		for _, method := range named.Methods {
 			members[method.Name] = []TypeMember{
-				MethodMember{
+				&MethodMember{
 					Method: &tree.MethodElem{
 						Name: method.Name,
 						Type: c.ApplySubst(method.Type, subst).(*tree.FunctionType),

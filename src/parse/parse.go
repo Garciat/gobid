@@ -1088,11 +1088,13 @@ func ReadType(expr ast.Expr) tree.Type {
 }
 
 func ReadStructType(ty *ast.StructType) tree.Type {
-	var embeds []tree.Type
 	fields := make([]*tree.FieldDecl, 0, len(ty.Fields.List))
 	for _, field := range ty.Fields.List {
 		if len(field.Names) == 0 {
-			embeds = append(embeds, ReadType(field.Type))
+			fields = append(fields, &tree.FieldDecl{
+				Name: NewIdentifier(""),
+				Type: ReadType(field.Type),
+			})
 		}
 		for _, name := range field.Names {
 			fields = append(fields, &tree.FieldDecl{
@@ -1103,7 +1105,6 @@ func ReadStructType(ty *ast.StructType) tree.Type {
 	}
 	return &tree.StructType{
 		Fields: fields,
-		Embeds: embeds,
 	}
 }
 
