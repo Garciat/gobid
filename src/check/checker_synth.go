@@ -460,7 +460,7 @@ func (c *Checker) CheckCompositeLitStruct(expr *tree.CompositeLitExpr, structTy 
 				panic("composite literal with ordered fields")
 			}
 			field := structTy.Fields[i]
-			c.CheckExpr(elem.Value, field.Type)
+			c.CheckExpr(elem.Value, c.ResolveType(field.Type))
 		}
 	} else {
 	elems:
@@ -497,7 +497,7 @@ func (c *Checker) CheckCompositeLitStruct(expr *tree.CompositeLitExpr, structTy 
 				}
 
 				if field.Name == targetFieldName {
-					c.CheckExpr(elem.Value, field.Type)
+					c.CheckExpr(elem.Value, c.ResolveType(field.Type))
 					continue elems
 				}
 			}

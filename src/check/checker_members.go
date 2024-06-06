@@ -34,6 +34,7 @@ func (c *Checker) GetMemberType(ty tree.Type, name common.Identifier) (tree.Type
 	case *MethodMember:
 		return member.Method.Type, nil
 	default:
+		spew.Dump(member)
 		panic("unreachable")
 	}
 }

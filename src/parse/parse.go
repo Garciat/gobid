@@ -850,7 +850,11 @@ func ReadExpr(expr ast.Expr) tree.Expr {
 	case *ast.FuncLit:
 		return ReadFuncLit(expr)
 	case *ast.Ellipsis:
-		return &tree.EllipsisExpr{}
+		if expr.Elt != nil {
+			return &tree.CallEllipsisExpr{Element: ReadExpr(expr.Elt)}
+		} else {
+			return &tree.EllipsisExpr{}
+		}
 	default:
 		ty, err := Try(func() tree.Expr {
 			return &tree.TypeExpr{Type: ReadType(expr)}

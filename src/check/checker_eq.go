@@ -14,6 +14,17 @@ func (c *Checker) Identical(ty1, ty2 tree.Type) bool {
 			return ty1.Name == ty2.Name
 		}
 		return false
+	case *tree.ImportTypeName:
+		if ty2, ok := ty2.(*tree.ImportTypeName); ok {
+			if ty1.Import != ty2.Import {
+				return false
+			}
+			if ty1.Name != ty2.Name {
+				return false
+			}
+			return true
+		}
+		return false
 	case *tree.TypeBuiltin:
 		if ty2, ok := ty2.(*tree.TypeBuiltin); ok {
 			return ty1.Name == ty2.Name

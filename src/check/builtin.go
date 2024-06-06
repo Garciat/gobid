@@ -52,8 +52,6 @@ func MakeBuiltins() *VarContext {
 	scope.DefBuiltinFunction("len")
 	scope.DefBuiltinFunction("cap")
 	scope.DefBuiltinFunction("make")
-	scope.DefBuiltinFunction("max")
-	scope.DefBuiltinFunction("min")
 	scope.DefBuiltinFunction("new")
 	scope.DefBuiltinFunction("complex")
 	scope.DefBuiltinFunction("real")
@@ -64,6 +62,10 @@ func MakeBuiltins() *VarContext {
 	scope.DefBuiltinFunction("recover")
 	scope.DefBuiltinFunction("print")
 	scope.DefBuiltinFunction("println")
+
+	// TODO Ordered constraint for these
+	scope.Def(NewIdentifier("max"), parse.ParseFuncType("func(...T) T").WithTypeParams("T"))
+	scope.Def(NewIdentifier("min"), parse.ParseFuncType("func(...T) T").WithTypeParams("T"))
 
 	scope.DefNamedType(NewIdentifier("error"), parse.ParseType("interface{Error() string}"))
 

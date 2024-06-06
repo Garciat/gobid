@@ -139,6 +139,15 @@ func (EllipsisExpr) String() string {
 	return "..."
 }
 
+type CallEllipsisExpr struct {
+	ExprBase
+	Element Expr
+}
+
+func (e CallEllipsisExpr) String() string {
+	return fmt.Sprintf("...%v", e.Element)
+}
+
 type ConstIntExpr struct {
 	ExprBase
 	Value int64

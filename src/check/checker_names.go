@@ -8,7 +8,7 @@ import (
 
 func (c *Checker) FreshTypeName() Identifier {
 	*c.Fresh = *c.Fresh + 1
-	return Identifier{Value: fmt.Sprintf("@T%d", *c.Fresh)}
+	return NewIdentifier(fmt.Sprintf("@T%d", *c.Fresh))
 }
 
 func (c *Checker) Lookup(name Identifier) tree.Type {

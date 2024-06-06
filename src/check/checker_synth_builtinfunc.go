@@ -91,7 +91,7 @@ func (c *Checker) SynthBuiltinLenCall(expr *tree.CallExpr) tree.Type {
 
 	argTy := c.Synth(expr.Args[0])
 
-	if c.IsPointerToArrayType(argTy) {
+	if c.IsPointerToArrayType(c.ResolveType(argTy)) {
 		return c.BuiltinType("int")
 	}
 

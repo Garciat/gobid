@@ -65,7 +65,7 @@ func (c *Checker) Run() {
 			for _, decl := range file.Decls {
 				switch decl := decl.(type) {
 				case *tree.ImportDecl:
-					fileScopes[file].DefineImport(decl)
+					fileScopes[file].DefineImportDecl(decl)
 				}
 			}
 		}
