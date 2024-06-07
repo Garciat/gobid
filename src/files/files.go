@@ -27,10 +27,12 @@ type finder struct {
 func (f *finder) FindImport(ip ImportPath) (string, error) {
 	path := ip.String()
 
-	candidates := []string{
-		filepath.Join(f.GOROOT, "src", path),
-		filepath.Join(f.GOROOT, "src", "vendor", path),
+	var candidates []string
+	if f.GOROOT != "" {
+		candidates = append(candidates, filepath.Join(f.GOROOT, "src", path))
+		candidates = append(candidates, filepath.Join(f.GOROOT, "src", "vendor", path))
 	}
+
 	for _, p := range f.paths {
 		candidates = append(candidates, filepath.Join(p, path))
 	}
