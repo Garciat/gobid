@@ -113,9 +113,14 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) error {
 
 	switch left := left.(type) {
 	case *tree.BuiltinType:
-		if right, ok := right.(*tree.BuiltinType); ok {
-			if c.IsNumeric(left) && c.IsNumeric(right) {
-				return nil // TODO ok?
+		switch right := right.(type) {
+		case *tree.BuiltinType:
+			if left.Tag == right.Tag {
+				return nil
+			}
+		case *tree.UntypedConstantType:
+			if right.IsAssignableTo(left) {
+				return nil
 			}
 		}
 	case *tree.TypeParam:
@@ -334,11 +339,20 @@ func (c *Checker) UnifySubtype(sub, super tree.Type, subst Subst) error {
 			if subTy.Name == super.Name {
 				return nil
 			}
+			if subTy.Bound != nil {
+				if subTy, ok := IsSingleTypeUnion(subTy.Bound); ok {
+					if err := c.UnifySubtype(subTy, super, subst); err != nil {
+						return fmt.Errorf("when unifying %v <: %v:\n%w", sub, super, err)
+					}
+					return nil
+				}
+			}
 		}
 		if super.Bound != nil {
 			if err := c.UnifySubtype(sub, super.Bound, subst); err != nil {
 				return fmt.Errorf("when unifying %v <: %v:\n%w", sub, super, err)
 			}
+			return nil
 		}
 	default:
 		spew.Dump(sub, super)
