@@ -8,6 +8,7 @@ import (
 
 type GoParser interface {
 	ParseFile(path string) (*ast.File, error)
+	ParseSource(src []byte) (*ast.File, error)
 	ParseDir(path string) (map[string]*ast.Package, error)
 }
 
@@ -23,6 +24,10 @@ type goParser struct {
 
 func (p *goParser) ParseFile(path string) (*ast.File, error) {
 	return goparser.ParseFile(p.fileSet, path, nil, goparser.ParseComments)
+}
+
+func (p *goParser) ParseSource(src []byte) (*ast.File, error) {
+	return goparser.ParseFile(p.fileSet, "", src, goparser.ParseComments)
 }
 
 func (p *goParser) ParseDir(path string) (map[string]*ast.Package, error) {

@@ -2,10 +2,10 @@ package main
 
 import (
 	"fmt"
+	"github.com/garciat/gobid/common"
 	"github.com/garciat/gobid/compile"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 )
 
@@ -43,7 +43,7 @@ func testDir(parent, name string) {
 		}
 	}
 
-	_, err, stack := Try(func() int {
+	_, err, stack := common.Try(func() int {
 		unit := compile.NewCompilationUnit("tests", path)
 		for _, file := range files {
 			unit.AddFile(file)
@@ -69,7 +69,7 @@ func testDir(parent, name string) {
 func testSingleFile(parent, name string) {
 	path := filepath.Join(parent, name)
 
-	_, err, stack := Try(func() int {
+	_, err, stack := common.Try(func() int {
 		unit := compile.NewCompilationUnit("tests")
 		unit.AddFile(path)
 		unit.Compile()
@@ -104,19 +104,4 @@ func failExpectedPass(name string, err error, stack string) {
 
 func dropStacks(stack string, n int) string {
 	return strings.Join(strings.Split(stack, "\n")[1+n*2:], "\n")
-}
-
-func Try[T any](f func() T) (result T, err error, stack string) {
-	defer func() {
-		if r := recover(); r != nil {
-			switch r := r.(type) {
-			case error:
-				err = r
-			default:
-				err = fmt.Errorf("%v", r)
-			}
-			stack = string(debug.Stack())
-		}
-	}()
-	return f(), nil, ""
 }

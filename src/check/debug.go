@@ -3,6 +3,8 @@ package check
 import (
 	"flag"
 	"fmt"
+	"io"
+	"os"
 )
 
 var (
@@ -10,6 +12,8 @@ var (
 	DebugUnify   = flag.Bool("debug-unify", false, "debug unify")
 	DebugGeneral = flag.Bool("debug-general", false, "debug general")
 	DebugChecker = flag.Bool("debug-checker", false, "debug checker")
+
+	DebugWriter io.Writer = os.Stdout
 )
 
 func init() {
@@ -18,18 +22,27 @@ func init() {
 
 func UnifyPrintf(format string, args ...interface{}) {
 	if *DebugAll || *DebugUnify {
-		fmt.Printf(format, args...)
+		_, err := fmt.Fprintf(DebugWriter, format, args...)
+		if err != nil {
+			panic(err)
+		}
 	}
 }
 
 func GeneralPrintf(format string, args ...interface{}) {
 	if *DebugAll || *DebugGeneral {
-		fmt.Printf(format, args...)
+		_, err := fmt.Fprintf(DebugWriter, format, args...)
+		if err != nil {
+			panic(err)
+		}
 	}
 }
 
 func CheckerPrintf(format string, args ...interface{}) {
 	if *DebugAll || *DebugChecker {
-		fmt.Printf(format, args...)
+		_, err := fmt.Fprintf(DebugWriter, format, args...)
+		if err != nil {
+			panic(err)
+		}
 	}
 }

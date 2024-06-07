@@ -45,6 +45,10 @@ func (u *CompilationUnit) AddFile(path string) {
 	u.LoadFile(u.Root, u.parser.ParseFile(path))
 }
 
+func (u *CompilationUnit) AddSource(path string, src []byte) {
+	u.LoadFile(u.Root, u.parser.ParseSource(path, src))
+}
+
 func (u *CompilationUnit) LoadFile(target ImportPath, file *source.FileDef) {
 	pkg, ok := u.Packages[target]
 	if !ok {

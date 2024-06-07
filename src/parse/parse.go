@@ -16,6 +16,7 @@ import (
 
 type Parser interface {
 	ParseFile(path string) *source.FileDef
+	ParseSource(path string, src []byte) *source.FileDef
 	ParsePackage(path string) []*source.FileDef
 }
 
@@ -31,6 +32,14 @@ type parser struct {
 
 func (p *parser) ParseFile(path string) *source.FileDef {
 	fast, err := p.gop.ParseFile(path)
+	if err != nil {
+		panic(err)
+	}
+	return p.readAST(path, fast)
+}
+
+func (p *parser) ParseSource(path string, src []byte) *source.FileDef {
+	fast, err := p.gop.ParseSource(src)
 	if err != nil {
 		panic(err)
 	}
@@ -858,7 +867,7 @@ func ReadExpr(expr ast.Expr) tree.Expr {
 			return &tree.EllipsisExpr{}
 		}
 	default:
-		ty, err := Try(func() tree.Expr {
+		ty, err, _ := Try(func() tree.Expr {
 			return &tree.TypeExpr{Type: ReadType(expr)}
 		})
 		if err == nil {
