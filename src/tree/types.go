@@ -348,12 +348,14 @@ func (from *BuiltinType) IsConversibleTo(target *BuiltinType) bool {
 	}
 }
 
+type MethodsByName = Map[Identifier, *MethodElem]
+
 type NamedType struct {
 	TypeBase
 	Package    ImportPath
 	Name       Identifier
 	Definition Type
-	Methods    Map[Identifier, *MethodElem]
+	Methods    MethodsByName
 }
 
 func (t *NamedType) SameType(other *NamedType) bool {
@@ -561,7 +563,7 @@ func (t *PointerType) String() string {
 
 type InterfaceType struct {
 	TypeBase
-	Methods     []*MethodElem
+	Methods     MethodsByName
 	Constraints []*TypeConstraint
 }
 

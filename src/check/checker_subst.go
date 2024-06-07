@@ -99,7 +99,7 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 			constraints[i] = &tree.TypeConstraint{TypeElem: c.ApplySubstTypeElem(constraint.TypeElem, subst)}
 		}
 		return &tree.InterfaceType{
-			Methods:     c.ApplySubstMethodList(ty.Methods, subst),
+			Methods:     c.ApplySubstMethods(ty.Methods, subst),
 			Constraints: constraints,
 		}
 	case *tree.SliceType:
@@ -124,7 +124,7 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 		return &tree.NamedType{
 			Name:       ty.Name,
 			Definition: c.ApplySubst(ty.Definition, subst),
-			// Methods: c.ApplySubstMethodList(ty.Methods, subst),
+			Methods:    c.ApplySubstMethods(ty.Methods, subst),
 		}
 	case *tree.NilType:
 		return ty
@@ -139,12 +139,13 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 	}
 }
 
-func (c *Checker) ApplySubstMethodList(methods []*tree.MethodElem, subst Subst) []*tree.MethodElem {
-	out := make([]*tree.MethodElem, len(methods))
-	for i, method := range methods {
-		out[i] = &tree.MethodElem{
-			Name: method.Name,
-			Type: c.ApplySubst(method.Type, subst).(*tree.FunctionType),
+func (c *Checker) ApplySubstMethods(methods tree.MethodsByName, subst Subst) tree.MethodsByName {
+	out := make(tree.MethodsByName, len(methods))
+	for k, method := range methods {
+		out[k] = &tree.MethodElem{
+			Name:            method.Name,
+			PointerReceiver: method.PointerReceiver,
+			Type:            c.ApplySubst(method.Type, subst).(*tree.FunctionType),
 		}
 	}
 	return out

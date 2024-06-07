@@ -1,6 +1,7 @@
 package parse
 
 import (
+	"fmt"
 	"github.com/garciat/gobid/source"
 	"go/ast"
 	goparser "go/parser"
@@ -1147,7 +1148,7 @@ func ReadChanDir(dir ast.ChanDir) tree.ChannelDir {
 }
 
 func ReadInterfaceType(expr *ast.InterfaceType) *tree.InterfaceType {
-	var methods []*tree.MethodElem
+	var methods = tree.MethodsByName{}
 	var constraints []*tree.TypeConstraint
 	for _, field := range expr.Methods.List {
 		switch len(field.Names) {
@@ -1165,10 +1166,14 @@ func ReadInterfaceType(expr *ast.InterfaceType) *tree.InterfaceType {
 		case 1:
 			switch ty := ReadType(field.Type).(type) {
 			case *tree.FunctionType:
-				methods = append(methods, &tree.MethodElem{
-					Name: NewIdentifier(field.Names[0].Name),
+				name := NewIdentifier(field.Names[0].Name)
+				if methods.Contains(name) {
+					panic(fmt.Errorf("duplicate method %s", name))
+				}
+				methods[name] = &tree.MethodElem{
+					Name: name,
 					Type: ty,
-				})
+				}
 			default:
 				panic("unreachable")
 			}

@@ -135,7 +135,7 @@ func (c *Checker) GetStructEmbedFieldName(ty tree.Type) common.Identifier {
 	}
 }
 
-func (c *Checker) CheckMethodsSatisfy(ty tree.Type, target []*tree.MethodElem) error {
+func (c *Checker) CheckMethodsSatisfy(ty tree.Type, target tree.MethodsByName) error {
 	pointerReceiver := c.IsPointerType(ty) // TODO should check IsAddressable instead
 	members := c.Members(ty)
 

@@ -115,6 +115,14 @@ func (c *Checker) Identical(ty1, ty2 tree.Type) bool {
 			return c.IdenticalFunctionTypes(ty1, ty2)
 		}
 		return false
+	case *tree.ChannelType:
+		if ty2, ok := ty2.(*tree.ChannelType); ok {
+			if ty1.Dir != ty2.Dir {
+				return false
+			}
+			return c.Identical(c.ResolveType(ty1.ElemType), c.ResolveType(ty2.ElemType))
+		}
+		return false
 	case *tree.UntypedConstantType:
 		return false // TODO ???
 	case *tree.NilType:

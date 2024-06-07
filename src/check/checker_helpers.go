@@ -51,6 +51,8 @@ func (c *Checker) IsConcreteType(ty tree.Type) bool {
 		return true
 	case *tree.FunctionType:
 		return true
+	case *tree.ChannelType:
+		return true
 	default:
 		spew.Dump(ty)
 		panic("unreachable")

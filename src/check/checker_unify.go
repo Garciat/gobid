@@ -92,15 +92,6 @@ func (c *Checker) Unify(rels []Relation, subst Subst) {
 	}
 }
 
-func IntersectInterfaces(elems ...tree.InterfaceType) *tree.InterfaceType {
-	inter := &tree.InterfaceType{Methods: nil, Constraints: nil}
-	for _, elem := range elems {
-		inter.Methods = append(inter.Methods, elem.Methods...)
-		inter.Constraints = append(inter.Constraints, elem.Constraints...)
-	}
-	return inter
-}
-
 func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 	left = c.ResolveType(left)
 	right = c.ResolveType(right)
@@ -151,7 +142,6 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 			}
 			panic(fmt.Errorf("cannot unify: %v = %v", left, right))
 		}
-		c.UnifyEq(right, left, subst)
 	case *tree.TypeParam:
 		if right, ok := right.(*tree.UntypedConstantType); ok {
 			c.UnifyEq(left, right.DefaultType(), subst)
@@ -161,15 +151,16 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 			if !c.Identical(s, right) {
 				c.UnifyEq(s, right, subst)
 			}
+			return
 		} else {
 			subst[left.Name] = right
+			return
 		}
 	case *tree.SliceType:
 		if right, ok := right.(*tree.SliceType); ok {
 			c.UnifyEq(left.ElemType, right.ElemType, subst)
 			return
 		}
-		panic(fmt.Errorf("cannot unify: %v = %v", left, right))
 	case *tree.ArrayType:
 		if right, ok := right.(*tree.ArrayType); ok {
 			leftLen := c.EvaluateConstantIntExpr(nil, left.Len)
@@ -204,13 +195,11 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 			}
 			return
 		}
-		panic(fmt.Errorf("cannot unify: %v = %v", left, right))
 	case *tree.PointerType:
 		if right, ok := right.(*tree.PointerType); ok {
 			c.UnifyEq(c.ResolveType(left.ElemType), c.ResolveType(right.ElemType), subst)
 			return
 		}
-		panic(fmt.Errorf("cannot unify: %v = %v", left, right))
 	case *tree.NamedType:
 		c.UnifyEq(c.Under(left), c.Under(right), subst)
 	case *tree.UntypedConstantType:
@@ -220,6 +209,7 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 			}
 		}
 		c.UnifyEq(left.DefaultType(), right, subst)
+		return
 	case *tree.FunctionType:
 		if right, ok := right.(*tree.FunctionType); ok {
 			if len(left.Signature.TypeParams.Params) != 0 {
@@ -242,18 +232,26 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) {
 			}
 			return // OK
 		}
-		panic(fmt.Errorf("cannot unify: %v = %v", left, right))
 	case *tree.StructType:
 		if right, ok := c.Under(right).(*tree.StructType); ok {
 			if c.Identical(left, right) {
 				return
 			}
 		}
-		panic(fmt.Errorf("cannot unify: %v = %v", left, right))
+	case *tree.ChannelType:
+		if right, ok := right.(*tree.ChannelType); ok {
+			if left.Dir != right.Dir {
+				panic(fmt.Errorf("cannot unify: %v = %v", left, right))
+			}
+			c.UnifyEq(c.ResolveValue(left.ElemType), c.ResolveType(right.ElemType), subst)
+			return
+		}
 	default:
 		spew.Dump(left, right)
 		panic("unreachable")
 	}
+
+	panic(fmt.Errorf("cannot unify: %v = %v", left, right))
 }
 
 func (c *Checker) UnifySubtype(sub, super tree.Type, subst Subst) {

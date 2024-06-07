@@ -390,6 +390,7 @@ func (c *Checker) CheckRangeStmt(stmt *tree.RangeStmt) {
 		targetTy = c.ResolveType(ty.ElemType)
 	}
 
+	var ok bool
 	var keyTy, valueTy tree.Type
 
 	switch targetTy := scope.Under(targetTy).(type) {
@@ -397,23 +398,33 @@ func (c *Checker) CheckRangeStmt(stmt *tree.RangeStmt) {
 		if targetTy == tree.BuiltinTypeString {
 			keyTy = scope.BuiltinType("int")
 			valueTy = scope.BuiltinType("rune")
+			ok = true
 		}
 	case *tree.SliceType:
 		keyTy = scope.BuiltinType("int")
 		valueTy = scope.ResolveType(targetTy.ElemType)
+		ok = true
 	case *tree.MapType:
 		keyTy = scope.ResolveType(targetTy.KeyType)
 		valueTy = scope.ResolveType(targetTy.ValueType)
+		ok = true
 	case *tree.ArrayType:
 		keyTy = scope.BuiltinType("int")
 		valueTy = scope.ResolveType(targetTy.ElemType)
+		ok = true
+	case *tree.ChannelType:
+		keyTy = scope.ResolveType(targetTy.ElemType)
+		ok = true
 	}
 
-	if keyTy == nil || valueTy == nil {
+	if !ok {
 		panic(fmt.Errorf("cannot range over %v", targetTy))
 	}
 
 	if stmt.Key != nil {
+		if keyTy == nil {
+			panic("BUG")
+		}
 		if stmt.Assign {
 			scope.DefineValue(stmt.Key.(*tree.NameExpr).Name, keyTy)
 		} else {
@@ -421,6 +432,9 @@ func (c *Checker) CheckRangeStmt(stmt *tree.RangeStmt) {
 		}
 	}
 	if stmt.Value != nil {
+		if valueTy == nil {
+			panic(fmt.Errorf("range over %v must have at most 1 variable", targetTy))
+		}
 		if stmt.Assign {
 			scope.DefineValue(stmt.Value.(*tree.NameExpr).Name, valueTy)
 		} else {

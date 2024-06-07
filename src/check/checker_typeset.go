@@ -6,7 +6,7 @@ import (
 )
 
 type TypeSet struct {
-	Methods  []*tree.MethodElem
+	Methods  tree.MethodsByName
 	Terms    []TypeSetTerm
 	Universe bool
 }
@@ -26,24 +26,23 @@ type TypeSetTerm struct {
 
 func (c *Checker) Combine(lhs, rhs TypeSet) TypeSet {
 	result := TypeSet{
-		Methods:  []*tree.MethodElem{},
+		Methods:  tree.MethodsByName{},
 		Terms:    []TypeSetTerm{},
 		Universe: lhs.Universe && rhs.Universe,
 	}
 
 	// combine
-	copy(result.Methods, lhs.Methods)
+	result.Methods.MergeStrict(lhs.Methods)
 
-	for _, m := range rhs.Methods {
-		for _, n := range lhs.Methods {
-			if m.Name == n.Name {
-				if !c.Identical(m.Type, n.Type) {
-					panic("method clash")
-				}
-				continue
+	for name, m := range rhs.Methods {
+		switch {
+		case result.Methods.Contains(name):
+			if !c.Identical(m.Type, result.Methods[name].Type) {
+				panic("method clash")
 			}
+		default:
+			result.Methods[name] = m
 		}
-		result.Methods = append(result.Methods, m)
 	}
 
 	if lhs.Universe && rhs.Universe {
