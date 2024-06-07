@@ -43,6 +43,34 @@ func (c *TypeContext) Fork(scope ScopeKind) *TypeContext {
 
 }
 
+func (c *Checker) ApplySubstRelations(relations []Relation, learned Subst) []Relation {
+	next := make([]Relation, 0, len(relations))
+
+	for _, rel := range relations {
+		switch rel := rel.(type) {
+		case RelationEq:
+			next = append(next, RelationEq{
+				Left:  c.ApplySubst(rel.Left, learned),
+				Right: c.ApplySubst(rel.Right, learned),
+			})
+		case RelationSubtype:
+			next = append(next, RelationSubtype{
+				Sub:   c.ApplySubst(rel.Sub, learned),
+				Super: c.ApplySubst(rel.Super, learned),
+			})
+		case RelationSatisfies:
+			next = append(next, RelationSatisfies{
+				Type:       c.ApplySubst(rel.Type, learned),
+				Constraint: c.ApplySubst(rel.Constraint, learned).(*tree.InterfaceType),
+			})
+		default:
+			panic("unreachable")
+		}
+	}
+
+	return next
+}
+
 // ========================
 
 type VarContext struct {

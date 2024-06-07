@@ -92,13 +92,13 @@ func testSingleFile(entry os.DirEntry) {
 }
 
 func failExpectedPass(name string, err error, stack string) {
-	fmt.Printf("unexpected error for %s: %v\n", name, err)
+	fmt.Printf("unexpected error for %s:\n%v\n", name, err)
 	fmt.Printf("%s\n", dropStacks(stack, 3))
 	os.Exit(1)
 }
 
 func dropStacks(stack string, n int) string {
-	return strings.Join(strings.Split(stack, "\n")[n*2:], "\n")
+	return strings.Join(strings.Split(stack, "\n")[1+n*2:], "\n")
 }
 
 func Try[T any](f func() T) (result T, err error, stack string) {
