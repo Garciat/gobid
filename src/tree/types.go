@@ -18,6 +18,8 @@ type TypeBase struct {
 
 func (*TypeBase) _Type() {}
 
+var TheVoidType = &VoidType{}
+
 type VoidType struct {
 	TypeBase
 }
@@ -173,7 +175,7 @@ func (t *UntypedConstantType) IsComplex() bool {
 func (t *UntypedConstantType) IsAssignableTo(ty *BuiltinType) bool {
 	switch t.Kind {
 	case UntypedConstantInt:
-		return ty.IsInteger()
+		return ty.IsInteger() || ty.IsFloat() || ty.IsComplex()
 	case UntypedConstantFloat:
 		return ty.IsFloat()
 	case UntypedConstantComplex:
@@ -500,6 +502,10 @@ func (l TypeParamList) String() string {
 type TypeParamDecl struct {
 	Name       Identifier
 	Constraint *InterfaceType
+}
+
+func (p *TypeParamDecl) AsTypeParam() *TypeParam {
+	return &TypeParam{Name: p.Name, Bound: p.Constraint}
 }
 
 type ParameterList struct {

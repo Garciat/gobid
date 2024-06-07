@@ -83,9 +83,7 @@ func (c *Checker) CheckTypeDecl(decl *tree.TypeDecl) {
 
 	scope.CheckTypeDeclType(decl.Type)
 
-	subst := scope.Verify()
-
-	scope.CheckSubst(decl.TypeParams, subst)
+	scope.Verify()
 }
 
 // CheckTypeDeclType xplores the type declaration, checking if any type applications are valid
@@ -223,8 +221,7 @@ func (c *Checker) DoFunctionDecl(sig *tree.Signature, stmts *tree.StatementList)
 
 	c.CheckStatementList(stmts)
 
-	subst := c.Verify()
-	c.CheckSubst(sig.TypeParams, subst)
+	c.Verify()
 }
 
 func (c *Checker) CheckStatementList(list *tree.StatementList) {

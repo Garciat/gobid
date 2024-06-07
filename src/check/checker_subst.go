@@ -51,7 +51,6 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 		}
 		return ty
 	case *tree.TypeName:
-		// TODO kinda sus
 		if substTy, ok := subst[ty.Name]; ok {
 			return substTy
 		}

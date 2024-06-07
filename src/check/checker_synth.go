@@ -409,20 +409,22 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 
 	subst := Subst{}
 	for _, tyParam := range funcTy.Signature.TypeParams.Params {
-		subst[tyParam.Name] = &tree.TypeParam{Name: c.FreshTypeName(), Bound: tyParam.Constraint}
+		inst := c.NewTypeInstantiation(tyParam.Constraint)
+		subst[tyParam.Name] = inst
 	}
 	funcTy = c.ApplySubst(funcTy, subst).(*tree.FunctionType)
 	CheckerPrintf("subst FunctionType: %v\n", funcTy)
 
+	for _, tyParamDecl := range funcTy.Signature.TypeParams.Params {
+		tyParam := tyParamDecl.AsTypeParam()
+		c.CheckSatisfies(tyParam, tyParam.Bound)
+	}
+
 	for i, tyArg := range typeArgs {
-		tyParam := funcTy.Signature.TypeParams.Params[i]
-		c.CheckSatisfies(tyArg, tyParam.Constraint)
-		c.CheckEqualTypes(tyArg, subst[tyParam.Name])
+		tyParam := funcTy.Signature.TypeParams.Params[i].AsTypeParam()
+		c.CheckEqualTypes(tyArg, tyParam)
 	}
-	for _, tyParam := range funcTy.Signature.TypeParams.Params {
-		ty := &tree.TypeParam{Name: tyParam.Name, Bound: tyParam.Constraint}
-		c.CheckSatisfies(ty, tyParam.Constraint)
-	}
+
 	for i, arg := range expr.Args {
 		var param *tree.ParameterDecl
 		if variadicIndex != -1 && i >= variadicIndex {
@@ -453,7 +455,7 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 
 	switch len(returns) {
 	case 0:
-		return &tree.TupleType{Elems: []tree.Type{}}
+		return tree.TheVoidType
 	case 1:
 		return returns[0]
 	default:

@@ -80,7 +80,7 @@ func testSingleFile(entry os.DirEntry) {
 	switch {
 	case strings.HasPrefix(name, "fail_"):
 		if err == nil {
-			panic(fmt.Errorf("expected error for %s", name))
+			failExpectedError(name)
 		}
 	case strings.HasPrefix(name, "pass_"):
 		if err != nil {
@@ -91,8 +91,13 @@ func testSingleFile(entry os.DirEntry) {
 	}
 }
 
+func failExpectedError(name string) {
+	fmt.Printf("FAIL %s: expected error\n", name)
+	os.Exit(1)
+}
+
 func failExpectedPass(name string, err error, stack string) {
-	fmt.Printf("unexpected error for %s:\n%v\n", name, err)
+	fmt.Printf("FAIL %s: unexpected error:\n%v\n", name, err)
 	fmt.Printf("%s\n", dropStacks(stack, 3))
 	os.Exit(1)
 }

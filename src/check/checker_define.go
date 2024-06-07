@@ -109,8 +109,11 @@ func (c *Checker) DefineVarDecl(decl *tree.VarDecl) {
 	if len(decl.Names) == 1 && decl.Expr != nil {
 		for _, name := range decl.Names {
 			ty := c.Synth(decl.Expr)
-			if _, ok := ty.(*tree.TupleType); ok {
-				panic("cannot use tuple as value")
+			switch ty.(type) {
+			case *tree.VoidType:
+				panic(fmt.Errorf("cannot use void as value"))
+			case *tree.TupleType:
+				panic(fmt.Errorf("multiple-value return in single-value context"))
 			}
 			if decl.Type != nil {
 				declTy := c.ResolveType(decl.Type)
@@ -123,9 +126,14 @@ func (c *Checker) DefineVarDecl(decl *tree.VarDecl) {
 	} else if len(decl.Names) > 1 && decl.Expr != nil {
 		tupleTy := sync.OnceValue(func() *tree.TupleType {
 			exprTy := c.Synth(decl.Expr)
-			tupleTy, ok := exprTy.(*tree.TupleType)
-			if !ok {
-				panic("multiple-value return in single-value context")
+			var tupleTy *tree.TupleType
+			switch ty := exprTy.(type) {
+			case *tree.VoidType:
+				panic(fmt.Errorf("cannot use void as value"))
+			case *tree.TupleType:
+				tupleTy = ty
+			default:
+				panic(fmt.Errorf("expected tuple type, got %v", ty))
 			}
 			if len(tupleTy.Elems) != len(decl.Names) {
 				panic(fmt.Errorf("assignment mismatch: %v variables but RHS returns %v values", len(decl.Names), len(tupleTy.Elems)))

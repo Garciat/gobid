@@ -46,7 +46,20 @@ func (c *Checker) Identical(ty1, ty2 tree.Type) bool {
 			if len(ty1.Methods) == 0 && len(ty1.Constraints) == 0 {
 				return true
 			}
-			panic("TODO")
+			for name := range ty1.Methods {
+				if !ty2.Methods.Contains(name) {
+					return false
+				}
+				m1 := ty1.Methods[name]
+				m2 := ty2.Methods[name]
+				if !c.Identical(c.ResolveType(m1.Type), c.ResolveType(m2.Type)) {
+					return false
+				}
+			}
+			if len(ty1.Constraints) != 0 {
+				return false // TODO P0 compare constraints?
+			}
+			return true
 		}
 		return false
 	case *tree.PointerType:

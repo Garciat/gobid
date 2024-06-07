@@ -4,12 +4,33 @@ import (
 	"fmt"
 	. "github.com/garciat/gobid/common"
 	"github.com/garciat/gobid/tree"
+	"strings"
 )
 
-func (c *Checker) FreshTypeName() Identifier {
-	// TODO save the name in the scope
+func (c *Checker) FreshTypeName(prefix string) Identifier {
 	*c.Fresh = *c.Fresh + 1
-	return NewIdentifier(fmt.Sprintf("@T%d", *c.Fresh))
+	return NewIdentifier(fmt.Sprintf("%s%d", prefix, *c.Fresh))
+}
+
+const instancePrefix = "@T"
+
+func (c *Checker) NewTypeInstantiation(bound *tree.InterfaceType) *tree.TypeParam {
+	name := c.FreshTypeName(instancePrefix)
+	ty := &tree.TypeParam{Name: name, Bound: bound}
+	c.DefineType(name, ty)
+	return ty
+}
+
+func (c *Checker) GetCurrentScopeTypeInstantiations() []*tree.TypeParam {
+	var result []*tree.TypeParam
+	for _, ty := range c.VarCtx.Types {
+		if typeParam, ok := ty.(*tree.TypeParam); ok {
+			if strings.HasPrefix(typeParam.Name.Value, instancePrefix) {
+				result = append(result, typeParam)
+			}
+		}
+	}
+	return result
 }
 
 func (c *Checker) Lookup(name Identifier) tree.Type {

@@ -6,21 +6,6 @@ import (
 	"github.com/garciat/gobid/tree"
 )
 
-func (c *Checker) CheckSubst(tyParams *tree.TypeParamList, subst Subst) {
-	for _, tyParam := range tyParams.Params {
-		tySub, ok := subst[tyParam.Name]
-		if !ok {
-			continue // TODO: is this ok?
-		}
-		if single, ok := IsSingleTypeUnion(tyParam.Constraint); ok {
-			if c.Identical(tySub, c.ResolveType(single)) {
-				continue
-			}
-		}
-		panic(fmt.Errorf("type param %v with constraint %v cannot be %v", tyParam.Name, tyParam.Constraint, tySub))
-	}
-}
-
 func (c *Checker) Verify() Subst {
 	subst := Subst{}
 
@@ -52,6 +37,12 @@ func (c *Checker) Verify() Subst {
 	UnifyPrintf("=== DONE ===\n")
 	UnifyPrintf("%v\n", subst)
 
+	for _, ty := range c.GetCurrentScopeTypeInstantiations() {
+		if _, ok := subst[ty.Name]; !ok {
+			panic(fmt.Errorf("type instantiation %v not resolved", ty))
+		}
+	}
+
 	return subst
 }
 
@@ -80,12 +71,6 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) error {
 	left = c.ResolveType(left)
 	right = c.ResolveType(right)
 
-	UnifyPrintf("? %v = %v %v\n", left, right, subst)
-
-	if c.Identical(left, right) {
-		return nil
-	}
-
 	if _, ok := right.(*tree.TypeParam); ok {
 		left, right = right, left
 	}
@@ -94,8 +79,16 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) error {
 		left, right = right, left
 	}
 
+	UnifyPrintf("? %v = %v %v\n", left, right, subst)
+
+	if c.Identical(left, right) {
+		return nil
+	}
+
 	if _, ok := right.(*tree.NilType); ok {
 		switch left := c.Under(left).(type) {
+		case *tree.TypeParam:
+			return nil // TODO for future iterations?
 		case *tree.PointerType:
 			return nil
 		case *tree.ChannelType:
@@ -357,6 +350,11 @@ func (c *Checker) UnifySubtype(sub, super tree.Type, subst Subst) error {
 
 func (c *Checker) UnifySatisfies(sub tree.Type, inter *tree.InterfaceType, subst Subst) error {
 	sub = c.ResolveType(sub)
+
+	switch sub.(type) {
+	case *tree.TypeParam:
+		return nil // TODO for future iterations?
+	}
 
 	var typeset *TypeSet
 	err := c.BasicSatisfy(sub, inter, subst, &typeset)
