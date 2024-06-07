@@ -170,7 +170,7 @@ func (c *Checker) CheckMethodDecl(decl *tree.MethodDecl) {
 
 	scope := c.BeginFunctionScope(decl.Signature)
 
-	var receiverTy tree.Type = scope.ResolveType(decl.Receiver.Type)
+	var receiverTy = scope.ResolveType(decl.Receiver.Type)
 
 	if pointerTy, ok := receiverTy.(*tree.PointerType); ok {
 		receiverTy = scope.ResolveType(pointerTy.ElemType)

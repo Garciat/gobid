@@ -6,18 +6,10 @@ import (
 	"strings"
 )
 
-func GetGOROOT() string {
-	out, err := exec.Command("go", "env", "GOROOT").Output()
+func ReadGoEnv(name string) string {
+	out, err := exec.Command("go", "env", name).Output()
 	if err != nil {
-		panic(fmt.Errorf("failed to get GOROOT: %w", err))
-	}
-	return strings.TrimSpace(string(out))
-}
-
-func GetGOPATH() string {
-	out, err := exec.Command("go", "env", "GOPATH").Output()
-	if err != nil {
-		panic(fmt.Errorf("failed to get GOPATH: %w", err))
+		panic(fmt.Errorf("failed to read go env: %w", err))
 	}
 	return strings.TrimSpace(string(out))
 }

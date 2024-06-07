@@ -175,6 +175,8 @@ func (c *Checker) EvaluateConstantExpr(decl *tree.ConstDecl, expr tree.Expr) tre
 			return &tree.ConstBoolExpr{Value: left == right}
 		case tree.BinaryOpNeq:
 			return &tree.ConstBoolExpr{Value: left != right}
+		default:
+			break // continue below
 		}
 
 		switch right := right.(type) {

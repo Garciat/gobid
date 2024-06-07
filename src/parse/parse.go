@@ -139,7 +139,7 @@ func ReadImportDecl(decl *ast.GenDecl) []tree.Decl {
 func ReadConstDecl(decl *ast.GenDecl) []tree.Decl {
 	var decls []tree.Decl
 
-	var carryIndex int = -1
+	var carryIndex = -1
 	var carryValue tree.Expr
 
 	for i, spec := range decl.Specs {
@@ -833,7 +833,7 @@ func ReadExpr(expr ast.Expr) tree.Expr {
 			Type: ReadType(expr.Type),
 		}
 	case *ast.SliceExpr:
-		var low, high, max tree.Expr
+		var low, high, maxE tree.Expr
 		if expr.Low != nil {
 			low = ReadExpr(expr.Low)
 		}
@@ -841,13 +841,13 @@ func ReadExpr(expr ast.Expr) tree.Expr {
 			high = ReadExpr(expr.High)
 		}
 		if expr.Max != nil {
-			max = ReadExpr(expr.Max)
+			maxE = ReadExpr(expr.Max)
 		}
 		return &tree.SliceExpr{
 			Expr: ReadExpr(expr.X),
 			Low:  low,
 			High: high,
-			Max:  max,
+			Max:  maxE,
 		}
 	case *ast.FuncLit:
 		return ReadFuncLit(expr)
@@ -1186,7 +1186,7 @@ func ReadInterfaceType(expr *ast.InterfaceType) *tree.InterfaceType {
 
 // ========================
 
-func ParseExpr(src string) tree.Expr {
+func ExprOf(src string) tree.Expr {
 	expr, err := goparser.ParseExpr(src)
 	if err != nil {
 		panic(err)
@@ -1194,7 +1194,7 @@ func ParseExpr(src string) tree.Expr {
 	return ReadExpr(expr)
 }
 
-func ParseType(src string) tree.Type {
+func TypeOf(src string) tree.Type {
 	expr, err := goparser.ParseExpr(src)
 	if err != nil {
 		panic(err)
@@ -1202,7 +1202,7 @@ func ParseType(src string) tree.Type {
 	return ReadType(expr)
 }
 
-func ParseFuncType(src string) *tree.FunctionType {
+func FuncTypeOf(src string) *tree.FunctionType {
 	expr, err := goparser.ParseExpr(src)
 	if err != nil {
 		panic(err)

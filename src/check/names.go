@@ -207,14 +207,10 @@ func ResolvePackageNames(pkg *source.Package) NameResolutionResult {
 		panic(fmt.Errorf("unresolved references:\nexpr=%v\ntype=%v", packageExprRefs, packageTypeRefs))
 	}
 
-	dependencies := make(NameDependencies)
-	for _, name := range packageNames {
-		dependencies[name.Name] = name.Deps
-	}
-	VerifyNameCycles(packageNames, dependencies)
+	VerifyNameCycles(packageNames)
 
 	sortedNames := TopologicalSort2(packageNames, func(name *NameInfo) common.Set[common.Identifier] {
-		return dependencies[name.Name]
+		return name.Deps
 	})
 
 	sortedDecls := make([]tree.Decl, 0, len(packageNames))
@@ -654,7 +650,7 @@ func (gw *GraphWalker) GraphWalkExprs(exprs []tree.Expr) WalkResult {
 
 // ====================
 
-func VerifyNameCycles(names common.Map[common.Identifier, *NameInfo], dependencies NameDependencies) {
+func VerifyNameCycles(names common.Map[common.Identifier, *NameInfo]) {
 	// only top-level VarDecls & ConstDecls can have cycles
 	// all other declarations are part of an implicit LET REC
 	var checking = make(map[common.Identifier]*NameInfo)

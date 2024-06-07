@@ -31,8 +31,8 @@ func (c *Checker) Combine(lhs, rhs TypeSet) TypeSet {
 		Universe: lhs.Universe && rhs.Universe,
 	}
 
-	// combine
-	result.Methods.MergeStrict(lhs.Methods)
+	// combine methods
+	result.Methods.Merge(lhs.Methods)
 
 	for name, m := range rhs.Methods {
 		switch {
@@ -57,7 +57,7 @@ func (c *Checker) Combine(lhs, rhs TypeSet) TypeSet {
 	} else if !lhs.Universe && rhs.Universe {
 		result.Terms = append(result.Terms, lhs.Terms...)
 	} else {
-		// intersect
+		// intersect types
 		for _, t := range rhs.Terms {
 			for _, u := range lhs.Terms {
 				if t.Tilde == u.Tilde && c.Identical(t.Type, u.Type) {

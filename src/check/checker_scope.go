@@ -33,34 +33,34 @@ func (k ScopeKind) String() string {
 }
 
 func (c *Checker) _BeginScope(kind ScopeKind) *Checker {
-	copy := c.Copy()
-	copy.TyCtx = c.TyCtx.Fork(kind)
-	copy.VarCtx = c.VarCtx.Fork(kind)
-	return copy
+	scope := c.Copy()
+	scope.TyCtx = c.TyCtx.Fork(kind)
+	scope.VarCtx = c.VarCtx.Fork(kind)
+	return scope
 }
 
 func (c *Checker) BeginPackageScope(pkg *source.Package) *Checker {
-	copy := c._BeginScope(ScopeKindPackage)
-	copy.CurPkg = pkg
-	return copy
+	scope := c._BeginScope(ScopeKindPackage)
+	scope.CurPkg = pkg
+	return scope
 }
 
 func (c *Checker) BeginFileScope(file *source.FileDef) *Checker {
-	copy := c._BeginScope(ScopeKindFile)
-	copy.CurFile = file
-	return copy
+	scope := c._BeginScope(ScopeKindFile)
+	scope.CurFile = file
+	return scope
 }
 
 func (c *Checker) BeginTypeScope(decl *tree.TypeDecl) *Checker {
-	copy := c._BeginScope(ScopeKindType)
-	copy.CurTy = decl
-	return copy
+	scope := c._BeginScope(ScopeKindType)
+	scope.CurTy = decl
+	return scope
 }
 
 func (c *Checker) BeginFunctionScope(fn *tree.Signature) *Checker {
-	copy := c._BeginScope(ScopeKindFunction)
-	copy.CurFn = fn
-	return copy
+	scope := c._BeginScope(ScopeKindFunction)
+	scope.CurFn = fn
+	return scope
 }
 
 func (c *Checker) BeginBlockScope() *Checker {

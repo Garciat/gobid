@@ -20,7 +20,7 @@ func (c *TypeContext) String() string {
 	if c.Parent != nil {
 		parent = fmt.Sprintf("%v || ", c.Parent)
 	}
-	parts := []string{}
+	parts := make([]string, 0, len(c.Relations))
 	for _, rel := range c.Relations {
 		parts = append(parts, fmt.Sprintf("%v", rel))
 	}
@@ -122,16 +122,6 @@ func (c *VarContext) LookupConst(name Identifier) (tree.Expr, bool) {
 }
 
 func (c *VarContext) Def(name Identifier, ty tree.Type) tree.Type {
-	if name != IgnoreIdent {
-		if _, ok := c.Types[name]; ok {
-			panic(fmt.Errorf("redefined: %v", name))
-		}
-		c.Types[name] = ty
-	}
-	return ty
-}
-
-func (c *VarContext) DefConst(name Identifier, ty tree.Type, value tree.Expr) tree.Type {
 	if name != IgnoreIdent {
 		if _, ok := c.Types[name]; ok {
 			panic(fmt.Errorf("redefined: %v", name))

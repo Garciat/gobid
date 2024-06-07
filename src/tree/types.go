@@ -126,8 +126,8 @@ type UntypedConstantType struct {
 	Kind UntypedConstantKind
 }
 
-func (d *UntypedConstantType) DefaultType() *BuiltinType {
-	switch d.Kind {
+func (t *UntypedConstantType) DefaultType() *BuiltinType {
+	switch t.Kind {
 	case UntypedConstantInt:
 		return BuiltinTypeInt
 	case UntypedConstantFloat:
@@ -323,25 +323,25 @@ func (t *BuiltinType) IsComplex() bool {
 	}
 }
 
-func (from *BuiltinType) IsConversibleTo(target *BuiltinType) bool {
+func (t *BuiltinType) IsConversibleTo(target *BuiltinType) bool {
 	switch {
-	case from.IsString() && target.IsString():
+	case t.IsString() && target.IsString():
 		return true
-	case from.IsBoolean() && target.IsBoolean():
+	case t.IsBoolean() && target.IsBoolean():
 		return true
-	case from.IsInteger() && target.IsInteger():
+	case t.IsInteger() && target.IsInteger():
 		return true
-	case from.IsFloat() && target.IsFloat():
+	case t.IsFloat() && target.IsFloat():
 		return true
-	case from.IsComplex() || target.IsComplex():
+	case t.IsComplex() || target.IsComplex():
 		return false
-	case from.IsInteger() && target.IsFloat():
+	case t.IsInteger() && target.IsFloat():
 		return true
-	case from.IsFloat() && target.IsInteger():
+	case t.IsFloat() && target.IsInteger():
 		return true
-	case from.IsInteger() && target.IsString():
+	case t.IsInteger() && target.IsString():
 		return true
-	case from.Tag == BuiltinTypeTagUnsafePointer && target.Tag == BuiltinTypeTagUintptr:
+	case t.Tag == BuiltinTypeTagUnsafePointer && target.Tag == BuiltinTypeTagUintptr:
 		return true
 	default:
 		return false
@@ -383,7 +383,7 @@ type TypeApplication struct {
 }
 
 func (t *TypeApplication) String() string {
-	parts := []string{}
+	parts := make([]string, 0, len(t.Args))
 	for _, arg := range t.Args {
 		parts = append(parts, fmt.Sprintf("%v", arg))
 	}
@@ -414,9 +414,9 @@ type FunctionType struct {
 	Signature *Signature
 }
 
-func (s *FunctionType) WithTypeParams(names ...string) *FunctionType {
+func (t *FunctionType) WithTypeParams(names ...string) *FunctionType {
 	return &FunctionType{
-		Signature: s.Signature.WithTypeParams(names...),
+		Signature: t.Signature.WithTypeParams(names...),
 	}
 }
 
@@ -424,14 +424,14 @@ func (t *FunctionType) String() string {
 	return fmt.Sprintf("func%v", t.Signature)
 }
 
-// special for function return types
+// TupleType represents the type of multiple results.
 type TupleType struct {
 	TypeBase
 	Elems []Type
 }
 
 func (t *TupleType) String() string {
-	parts := []string{}
+	parts := make([]string, 0, len(t.Elems))
 	for _, elem := range t.Elems {
 		parts = append(parts, fmt.Sprintf("%v", elem))
 	}
@@ -458,7 +458,7 @@ func (s *Signature) WithTypeParams(names ...string) *Signature {
 	return &Signature{TypeParams: typeParams, Params: s.Params, Results: s.Results}
 }
 
-func (s Signature) GetVariadicParam() (*ParameterDecl, int) {
+func (s *Signature) GetVariadicParam() (*ParameterDecl, int) {
 	for i, param := range s.Params.Params {
 		if param.Variadic {
 			return param, i
@@ -467,7 +467,7 @@ func (s Signature) GetVariadicParam() (*ParameterDecl, int) {
 	return nil, -1
 }
 
-func (s Signature) HasNamedResults() bool {
+func (s *Signature) HasNamedResults() bool {
 	// TODO all should be named?
 	for _, param := range s.Results.Params {
 		if param.Name != IgnoreIdent {
@@ -477,7 +477,7 @@ func (s Signature) HasNamedResults() bool {
 	return false
 }
 
-func (s Signature) String() string {
+func (s *Signature) String() string {
 	if len(s.TypeParams.Params) == 0 {
 		return fmt.Sprintf("(%v) (%v)", s.Params, s.Results)
 	} else {
@@ -490,7 +490,7 @@ type TypeParamList struct {
 }
 
 func (l TypeParamList) String() string {
-	parts := []string{}
+	parts := make([]string, 0, len(l.Params))
 	for _, param := range l.Params {
 		parts = append(parts, fmt.Sprintf("%v %v", param.Name, param.Constraint))
 	}
@@ -507,7 +507,7 @@ type ParameterList struct {
 }
 
 func (p ParameterList) String() string {
-	parts := []string{}
+	parts := make([]string, 0, len(p.Params))
 	for _, param := range p.Params {
 		if param.Variadic {
 			parts = append(parts, fmt.Sprintf("%v ...%v", param.Name, param.Type))
@@ -540,7 +540,7 @@ func (t *StructType) Embeds() []Type {
 }
 
 func (t *StructType) String() string {
-	parts := []string{}
+	parts := make([]string, 0, len(t.Fields))
 	for _, field := range t.Fields {
 		parts = append(parts, fmt.Sprintf("%v %v", field.Name, field.Type))
 	}
@@ -568,7 +568,7 @@ type InterfaceType struct {
 }
 
 func (t *InterfaceType) String() string {
-	parts := []string{}
+	parts := make([]string, 0, len(t.Methods)+len(t.Constraints))
 	for _, m := range t.Methods {
 		parts = append(parts, m.String())
 	}
@@ -668,11 +668,11 @@ type TypeElem struct {
 }
 
 func (e TypeElem) String() string {
-	parts := []string{}
+	parts := make([]string, 0, len(e.Union))
 	for _, term := range e.Union {
 		parts = append(parts, term.String())
 	}
-	return strings.Join(parts, "|")
+	return strings.Join(parts, " | ")
 }
 
 type TypeConstraint struct {

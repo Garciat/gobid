@@ -64,10 +64,10 @@ func MakeBuiltins() *VarContext {
 	scope.DefBuiltinFunction("println")
 
 	// TODO Ordered constraint for these
-	scope.Def(NewIdentifier("max"), parse.ParseFuncType("func(...T) T").WithTypeParams("T"))
-	scope.Def(NewIdentifier("min"), parse.ParseFuncType("func(...T) T").WithTypeParams("T"))
+	scope.Def(NewIdentifier("max"), parse.FuncTypeOf("func(...T) T").WithTypeParams("T"))
+	scope.Def(NewIdentifier("min"), parse.FuncTypeOf("func(...T) T").WithTypeParams("T"))
 
-	scope.DefNamedType("builtin", NewIdentifier("error"), parse.ParseType("interface{Error() string}"))
+	scope.DefNamedType("builtin", NewIdentifier("error"), parse.TypeOf("interface{Error() string}"))
 
 	return scope
 }

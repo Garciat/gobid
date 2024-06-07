@@ -174,7 +174,7 @@ type X struct{}
 
 func (x *X) M() int { return 42 }
 
-func CallX_M(x X) int {
+func CallXM(x X) int {
 	return x.M()
 }
 

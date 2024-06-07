@@ -14,7 +14,7 @@ type Finder interface {
 
 func NewFinder(paths []string) Finder {
 	return &finder{
-		GOROOT: GetGOROOT(),
+		GOROOT: ReadGoEnv("GOROOT"),
 		paths:  paths,
 	}
 }

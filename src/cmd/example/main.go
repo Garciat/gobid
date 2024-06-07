@@ -9,12 +9,3 @@ func main() {
 	unit.AddFile("../examples/example.go")
 	unit.Compile()
 }
-
-func Try[T any](f func() T) (result T, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = r.(error)
-		}
-	}()
-	return f(), nil
-}

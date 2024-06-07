@@ -2,7 +2,6 @@ package tree
 
 import (
 	"fmt"
-	"github.com/davecgh/go-spew/spew"
 	. "github.com/garciat/gobid/common"
 )
 
@@ -557,83 +556,3 @@ type MethodDecl struct {
 	Signature *Signature
 	Body      *StatementList
 }
-
-// ========================
-
-type ExprVisitor interface {
-	Visit(expr Expr) (w ExprVisitor)
-}
-
-type ExprVisitorFunc func(expr Expr)
-
-func (f ExprVisitorFunc) Visit(expr Expr) ExprVisitor {
-	f(expr)
-	return f
-}
-
-func WalkExpr(v ExprVisitor, expr Expr) {
-	if expr == nil {
-		return
-	}
-	if v = v.Visit(expr); v == nil {
-		return
-	}
-
-	switch n := expr.(type) {
-	case *EllipsisExpr:
-	case *ConstIntExpr:
-	case *BinaryExpr:
-		WalkExpr(v, n.Left)
-		WalkExpr(v, n.Right)
-	case *UnaryExpr:
-		WalkExpr(v, n.Expr)
-	case *StarExpr:
-		WalkExpr(v, n.Expr)
-	case *AddressExpr:
-		WalkExpr(v, n.Expr)
-	case *ConversionExpr:
-		WalkExpr(v, n.Expr)
-	case *SelectorExpr:
-		WalkExpr(v, n.Expr)
-	case *IndexExpr:
-		WalkExpr(v, n.Expr)
-		for _, e := range n.Indices {
-			WalkExpr(v, e)
-		}
-	case *SliceExpr:
-		WalkExpr(v, n.Expr)
-		WalkExpr(v, n.Low)
-		WalkExpr(v, n.High)
-		WalkExpr(v, n.Max)
-	case *TypeSwitchAssertionExpr:
-		WalkExpr(v, n.Expr)
-	case *TypeAssertionExpr:
-		WalkExpr(v, n.Expr)
-	case *CallExpr:
-		WalkExpr(v, n.Func)
-		for _, e := range n.Args {
-			WalkExpr(v, e)
-		}
-	case *NameExpr:
-	case *LiteralExpr:
-	case *FuncLitExpr:
-	case *CompositeLitExpr:
-		// TODO hacky special case...
-		switch t := n.Type.(type) {
-		case *ArrayType:
-			WalkExpr(v, t.Len)
-		}
-		for _, e := range n.Elems {
-			WalkExpr(v, e.Key)
-			WalkExpr(v, e.Value)
-		}
-	case *TypeExpr:
-	case *ImportRef:
-	case *PackageNameExpr:
-	default:
-		spew.Dump(expr)
-		panic("unreachable")
-	}
-}
-
-// ========================
