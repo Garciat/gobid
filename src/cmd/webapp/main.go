@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/garciat/gobid/check"
 	"github.com/garciat/gobid/common"
 	"github.com/garciat/gobid/compile"
@@ -30,10 +31,25 @@ func init() {
 }
 
 func main() {
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", indexHandler)
 	mux.HandleFunc("POST /compile", compileHandler)
-	log.Fatal(http.ListenAndServe(":8080", mux))
+
+	port := getPort()
+	addr := fmt.Sprintf("0.0.0.0:%s", port)
+
+	log.Println("Listening on " + addr)
+	log.Fatal(http.ListenAndServe(addr, logRequest(mux)))
+}
+
+func getPort() string {
+	port, ok := os.LookupEnv("PORT")
+	if !ok {
+		return "8080"
+	}
+	return port
 }
 
 func indexHandler(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +65,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func compileHandler(w http.ResponseWriter, r *http.Request) {
-	err := r.ParseMultipartForm(1 << 20)
+	err := r.ParseMultipartForm(500 * 1024)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -77,4 +93,11 @@ func compileHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func logRequest(handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s %s\n", r.RemoteAddr, r.Method, r.URL)
+		handler.ServeHTTP(w, r)
+	})
 }
