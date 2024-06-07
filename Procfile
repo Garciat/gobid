@@ -1,1 +1,0 @@
-web: cd src && go run "github.com/garciat/gobid/cmd/webapp"

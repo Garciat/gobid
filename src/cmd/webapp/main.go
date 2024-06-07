@@ -18,7 +18,7 @@ var (
 )
 
 func init() {
-	data, err := os.ReadFile("../examples/vec.go")
+	data, err := os.ReadFile("cmd/webapp/resources/default.go")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 		DefaultContent string
 	}
 
-	t, _ := template.ParseFiles("../webapp/index.html")
+	t, _ := template.ParseFiles("cmd/webapp/resources/index.html")
 	err := t.Execute(w, Page{DefaultContent: defaultContent})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

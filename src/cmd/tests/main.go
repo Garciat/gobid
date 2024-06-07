@@ -25,7 +25,7 @@ func main() {
 		}
 	}
 
-	testSingleFile("../examples", "vec.go")
+	testSingleFile("../examples", "default.go")
 }
 
 func testDir(parent, name string) {
