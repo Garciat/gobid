@@ -9,9 +9,8 @@ import (
 	"strings"
 )
 
-var testsPath = "../tests"
-
 func main() {
+	var testsPath = "../tests"
 	entries, err := os.ReadDir(testsPath)
 	if err != nil {
 		panic(err)
@@ -20,16 +19,17 @@ func main() {
 	for _, entry := range entries {
 		switch {
 		case entry.IsDir():
-			testDir(entry)
+			testDir(testsPath, entry.Name())
 		default:
-			testSingleFile(entry)
+			testSingleFile(testsPath, entry.Name())
 		}
 	}
+
+	testSingleFile("../examples", "vec.go")
 }
 
-func testDir(entry os.DirEntry) {
-	name := entry.Name()
-	path := filepath.Join(testsPath, entry.Name())
+func testDir(parent, name string) {
+	path := filepath.Join(parent, name)
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
@@ -66,9 +66,8 @@ func testDir(entry os.DirEntry) {
 	}
 }
 
-func testSingleFile(entry os.DirEntry) {
-	name := entry.Name()
-	path := filepath.Join(testsPath, entry.Name())
+func testSingleFile(parent, name string) {
+	path := filepath.Join(parent, name)
 
 	_, err, stack := Try(func() int {
 		unit := compile.NewCompilationUnit("tests")
@@ -83,11 +82,12 @@ func testSingleFile(entry os.DirEntry) {
 			failExpectedError(name)
 		}
 	case strings.HasPrefix(name, "pass_"):
+		fallthrough
+	default:
+		// eh, for the example files
 		if err != nil {
 			failExpectedPass(name, err, stack)
 		}
-	default:
-		panic(fmt.Errorf("unexpected file %s", name))
 	}
 }
 

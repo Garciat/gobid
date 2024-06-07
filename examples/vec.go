@@ -19,8 +19,12 @@ func MakeVec[T any]() Vec[T] {
 
 func Append[T any](v Vec[T], x T) {}
 
+func ReadVec[T any](v Vec[T]) T {
+	return Nil()
+}
+
 // Example inspired by https://rustc-dev-guide.rust-lang.org/type-inference.html
-func main() {
+func exampleAppend() {
 	v := MakeVec()
 	// T is not provided to MakeVec; the checker instantiates a fresh type variable @T0
 	// so we effectively have: v := MakeVec[@T0]()
@@ -48,4 +52,10 @@ func main() {
 	// @T2 = *int
 	// @T3 = int
 	// @T4 = *int
+}
+
+func exampleRead() int {
+	v := MakeVec()
+	Append(v, Nil())
+	return ReadVec(v)
 }

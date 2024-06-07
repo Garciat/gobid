@@ -56,36 +56,12 @@ type TwoHello[T string] struct {
 	Value2 Hello[int]
 }
 
-type Vec[T any] struct{}
-
-func MakeVec[T any]() Vec[T] {}
-
-func Append[T any](v Vec[T], x T) {}
-
-func ReadVec[T any](v Vec[T]) T {}
-
-func Ptr[T any](x T) *T {
-	return &x
-}
-
-func useVec() {
-	v := MakeVec()
-	Append(v, Nil())
-	Append(v, Ptr(32))
-}
-
 func alloc[T any]() *T {
 	return new(T)
 }
 
 func hello[T int]() []int {
 	return make([]T)
-}
-
-func inferStructField() int {
-	v := MakeVec()
-	Append(v, Nil())
-	return ReadVec(v)
 }
 
 type F = interface{ F() []int }
