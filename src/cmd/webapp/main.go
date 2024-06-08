@@ -31,7 +31,7 @@ func init() {
 }
 
 func main() {
-	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+	log.SetFlags(0)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", indexHandler)

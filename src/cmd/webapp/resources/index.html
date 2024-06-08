@@ -42,12 +42,18 @@
         async function main() {
             monaco.editor.setTheme('vs-dark')
 
-            let editorInput = monaco.editor.create(document.querySelector('#input'));
-            monaco.editor.setModelLanguage(editorInput.getModel(), 'go');
-            editorInput.getModel().setValue(getDefaultContent());
+            let editorInput = monaco.editor.create(document.querySelector('#input'), {
+                value: getDefaultContent(),
+                language: 'go',
+                automaticLayout: true
+            });
 
-            let editorOutput = monaco.editor.create(document.querySelector('#output'));
-            monaco.editor.setModelLanguage(editorOutput.getModel(), 'text');
+            let editorOutput = monaco.editor.create(document.querySelector('#output'), {
+                value: '',
+                language: 'text',
+                automaticLayout: true,
+                readOnly: true
+            });
 
             async function refresh() {
                 let source = editorInput.getModel().getValue();
