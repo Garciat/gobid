@@ -29,6 +29,23 @@
             return decodeHtml(document.querySelector('#DefaultContent').textContent);
         }
 
+        const StorageKeyInput = 'gobid-input';
+
+        function loadInputContent() {
+            let content = window.localStorage.getItem(StorageKeyInput);
+            if (content === null || content === '') {
+                return getDefaultContent();
+            }
+            return content;
+        }
+
+        function saveInputContent(content) {
+            if (content === '') {
+                content = getDefaultContent();
+            }
+            window.localStorage.setItem(StorageKeyInput, content);
+        }
+
         function debounce(wait, callback)  {
             let timeoutId = null;
             return (...args) => {
@@ -43,7 +60,7 @@
             monaco.editor.setTheme('vs-dark')
 
             let editorInput = monaco.editor.create(document.querySelector('#input'), {
-                value: getDefaultContent(),
+                value: loadInputContent(),
                 language: 'go',
                 automaticLayout: true
             });
@@ -61,8 +78,14 @@
                 editorOutput.getModel().setValue(output);
             }
 
+            function save() {
+                let source = editorInput.getModel().getValue();
+                saveInputContent(source);
+            }
+
             let debouncedRefresh = debounce(200, refresh);
 
+            editorInput.getModel().onDidChangeContent(() => save());
             editorInput.getModel().onDidChangeContent(() => debouncedRefresh());
 
             await refresh();
