@@ -91,7 +91,7 @@ func compileHandler(w http.ResponseWriter, r *http.Request) {
 	compilerMux.Unlock()
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("ERROR: %s", err.Error()), http.StatusInternalServerError)
 	}
 }
 

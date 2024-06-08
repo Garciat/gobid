@@ -378,6 +378,15 @@ func (t *TypeParam) String() string {
 	return fmt.Sprintf("%sₚ", t.Name.Value)
 }
 
+type FreeTypeVar struct {
+	TypeBase
+	Name Identifier
+}
+
+func (t *FreeTypeVar) String() string {
+	return fmt.Sprintf("%sᶠ", t.Name.Value)
+}
+
 type TypeApplication struct {
 	TypeBase
 	Type Type
@@ -416,6 +425,12 @@ type FunctionType struct {
 	Signature *Signature
 }
 
+func (t *FunctionType) WithoutTypeParams() *FunctionType {
+	return &FunctionType{
+		Signature: t.Signature.WithoutTypeParams(),
+	}
+}
+
 func (t *FunctionType) WithTypeParams(names ...string) *FunctionType {
 	return &FunctionType{
 		Signature: t.Signature.WithTypeParams(names...),
@@ -444,6 +459,17 @@ type Signature struct {
 	TypeParams *TypeParamList
 	Params     *ParameterList
 	Results    *ParameterList
+}
+
+func (s *Signature) WithoutTypeParams() *Signature {
+	if len(s.TypeParams.Params) == 0 {
+		return s
+	}
+	return &Signature{
+		TypeParams: &TypeParamList{},
+		Params:     s.Params,
+		Results:    s.Results,
+	}
 }
 
 func (s *Signature) WithTypeParams(names ...string) *Signature {

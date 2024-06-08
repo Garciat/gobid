@@ -33,6 +33,9 @@ func (c *Checker) CheckSatisfies(ty tree.Type, constraint *tree.InterfaceType) {
 	if ty == nil || constraint == nil {
 		panic("nil type")
 	}
+	if c.IsAny(constraint) {
+		return // reduces noise
+	}
 	c.TyCtxRedirect().AddRelation(RelationSatisfies{Type: ty, Constraint: constraint})
 }
 

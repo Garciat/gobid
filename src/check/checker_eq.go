@@ -35,6 +35,11 @@ func (c *Checker) Identical(ty1, ty2 tree.Type) bool {
 			return ty1.Name == ty2.Name
 		}
 		return false
+	case *tree.FreeTypeVar:
+		if ty2, ok := ty2.(*tree.FreeTypeVar); ok {
+			return ty1.Name == ty2.Name
+		}
+		return false
 	case *tree.InterfaceType:
 		if ty2, ok := ty2.(*tree.InterfaceType); ok {
 			if len(ty1.Methods) != len(ty2.Methods) {

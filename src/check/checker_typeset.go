@@ -88,12 +88,12 @@ func (c *Checker) InterfaceTypeSet(ty *tree.InterfaceType) TypeSet {
 			switch underTy := c.Under(termTy).(type) {
 			case *tree.InterfaceType:
 				next = c.InterfaceTypeSet(underTy)
-			case *tree.TypeParam:
-				if underTy.Bound != nil {
-					next = c.InterfaceTypeSet(underTy.Bound)
-				} else {
-					next = SingleTypeSet(termTy, term.Tilde)
-				}
+			//case *tree.TypeParam:
+			//	if underTy.Bound != nil {
+			//		next = c.InterfaceTypeSet(underTy.Bound)
+			//	} else {
+			//		next = SingleTypeSet(termTy, term.Tilde)
+			//	}
 			default:
 				next = SingleTypeSet(termTy, term.Tilde)
 			}

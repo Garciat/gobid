@@ -6,6 +6,6 @@ import (
 
 func main() {
 	unit := compile.NewCompilationUnit("main")
-	unit.AddFile("../examples/example.go")
+	unit.AddFile("../tests/pass_channels.go")
 	unit.Compile()
 }

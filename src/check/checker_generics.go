@@ -12,6 +12,38 @@ func (c *Checker) TypeApplicationFunc(app *tree.TypeApplication, argF func(tyPar
 	return c.ApplySubst(gen.Type, subst)
 }
 
+func (c *Checker) InstantiateFunctionType(funcTy *tree.FunctionType, givenTyArgs []tree.Type) *tree.FunctionType {
+	tyParams := funcTy.Signature.TypeParams.Params
+	tyArgs := make([]tree.Type, len(tyParams))
+	subst := Subst{}
+
+	for i, tyParam := range tyParams {
+		var tyArg tree.Type
+		switch {
+		case i < len(givenTyArgs):
+			tyArg = givenTyArgs[i]
+		default:
+			tyArg = c.NewFreeType()
+		}
+
+		subst[tyParam.Name] = tyArg
+		tyArgs[i] = tyArg
+	}
+
+	for i, tyParam := range tyParams {
+		tyArg := tyArgs[i]
+		constraint := c.ApplySubst(tyParam.Constraint, subst).(*tree.InterfaceType)
+		c.CheckSatisfies(tyArg, constraint)
+	}
+
+	// TODO maybe write FunctionType in GenericType earlier to make this less awkward
+	funcTy = funcTy.WithoutTypeParams()
+
+	funcTy = c.ApplySubst(funcTy, subst).(*tree.FunctionType)
+
+	return funcTy
+}
+
 func (c *Checker) InstantiateType(app *tree.TypeApplication) (*tree.NamedType, Subst) {
 	return c.InstantiateTypeFunc(app, func(*tree.TypeParamDecl, tree.Type) {})
 }

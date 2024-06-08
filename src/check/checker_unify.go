@@ -64,6 +64,10 @@ func (c *Checker) Unify(rels []Relation, subst Subst) {
 		default:
 			panic("unreachable")
 		}
+		if len(subst) != 0 {
+			// stop to apply the substitution first; and go into the next iteration
+			return
+		}
 	}
 }
 
@@ -71,7 +75,7 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) error {
 	left = c.ResolveType(left)
 	right = c.ResolveType(right)
 
-	if _, ok := right.(*tree.TypeParam); ok {
+	if _, ok := right.(*tree.FreeTypeVar); ok {
 		left, right = right, left
 	}
 
@@ -86,28 +90,8 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) error {
 	}
 
 	if _, ok := right.(*tree.NilType); ok {
-		switch left := c.Under(left).(type) {
-		case *tree.TypeParam:
-			return nil // TODO for future iterations?
-		case *tree.PointerType:
+		if c.AcceptsNil(left) {
 			return nil
-		case *tree.ChannelType:
-			return nil
-		case *tree.FunctionType:
-			return nil
-		case *tree.InterfaceType:
-			return nil
-		case *tree.MapType:
-			return nil
-		case *tree.SliceType:
-			return nil
-		case *tree.BuiltinType:
-			if left.Tag == tree.BuiltinTypeTagUnsafePointer {
-				return nil
-			}
-			return fmt.Errorf("cannot assign nil to type %v", left)
-		default:
-			return fmt.Errorf("cannot assign nil to type %v", left)
 		}
 	}
 
@@ -124,6 +108,15 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) error {
 			}
 		}
 	case *tree.TypeParam:
+		if left.Bound != nil {
+			if single, ok := c.IsSingleTypeUnion(left.Bound); ok {
+				if err := c.UnifyEq(single, right, subst); err != nil {
+					return fmt.Errorf("when unifying %v = %v:\n%w", left, right, err)
+				}
+				return nil
+			}
+		}
+	case *tree.FreeTypeVar:
 		if right, ok := right.(*tree.UntypedConstantType); ok {
 			if err := c.UnifyEq(left, right.DefaultType(), subst); err != nil {
 				return fmt.Errorf("when unifying %v = %v:\n%w", left, right, err)
@@ -163,7 +156,7 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) error {
 		}
 	case *tree.InterfaceType:
 		left = c.SimplifyInterface(left)
-		if single, ok := IsSingleTypeUnion(left); ok {
+		if single, ok := c.IsSingleTypeUnion(left); ok {
 			if err := c.UnifyEq(single, right, subst); err != nil {
 				return fmt.Errorf("when unifying %v = %v:\n%w", left, right, err)
 			}
@@ -279,26 +272,8 @@ func (c *Checker) UnifySubtype(sub, super tree.Type, subst Subst) error {
 	}
 
 	if _, ok := sub.(*tree.NilType); ok {
-		switch super := c.Under(super).(type) {
-		case *tree.PointerType:
+		if c.AcceptsNil(super) {
 			return nil
-		case *tree.ChannelType:
-			return nil
-		case *tree.FunctionType:
-			return nil
-		case *tree.InterfaceType:
-			return nil
-		case *tree.MapType:
-			return nil
-		case *tree.SliceType:
-			return nil
-		case *tree.BuiltinType:
-			if super.Tag == tree.BuiltinTypeTagUnsafePointer {
-				return nil
-			}
-			return fmt.Errorf("cannot assign nil to type %v", super)
-		default:
-			return fmt.Errorf("cannot assign nil to type %v", super)
 		}
 	}
 
@@ -336,25 +311,36 @@ func (c *Checker) UnifySubtype(sub, super tree.Type, subst Subst) error {
 		}
 		return nil
 	case *tree.TypeParam:
-		if subTy, ok := c.ResolveType(sub).(*tree.TypeParam); ok {
-			if subTy.Name == super.Name {
+		switch sub := c.ResolveType(sub).(type) {
+		case *tree.TypeParam:
+			if sub.Name == super.Name {
 				return nil
 			}
-			if subTy.Bound != nil {
-				if subTy, ok := IsSingleTypeUnion(subTy.Bound); ok {
+			if sub.Bound != nil {
+				if subTy, ok := c.IsSingleTypeUnion(sub.Bound); ok {
 					if err := c.UnifySubtype(subTy, super, subst); err != nil {
 						return fmt.Errorf("when unifying %v <: %v:\n%w", sub, super, err)
 					}
 					return nil
 				}
 			}
-		}
-		if super.Bound != nil {
-			if err := c.UnifySubtype(sub, super.Bound, subst); err != nil {
+		case *tree.FreeTypeVar:
+			if err := c.UnifyEq(sub, super, subst); err != nil {
 				return fmt.Errorf("when unifying %v <: %v:\n%w", sub, super, err)
 			}
 			return nil
+		default:
+			if super.Bound != nil {
+				tyset := c.InterfaceTypeSet(super.Bound)
+				if len(tyset.Terms) == 1 && !tyset.Terms[0].Tilde {
+					if err := c.UnifySubtype(sub, super.Bound, subst); err != nil {
+						return fmt.Errorf("when unifying %v <: %v:\n%w", sub, super, err)
+					}
+					return nil
+				}
+			}
 		}
+
 	default:
 		spew.Dump(sub, super)
 		panic("unreachable")
@@ -367,7 +353,7 @@ func (c *Checker) UnifySatisfies(sub tree.Type, inter *tree.InterfaceType, subst
 	sub = c.ResolveType(sub)
 
 	switch sub.(type) {
-	case *tree.TypeParam:
+	case *tree.FreeTypeVar:
 		return nil // TODO for future iterations?
 	}
 

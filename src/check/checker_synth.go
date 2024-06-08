@@ -407,23 +407,7 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 		panic("too many type arguments")
 	}
 
-	subst := Subst{}
-	for _, tyParam := range funcTy.Signature.TypeParams.Params {
-		inst := c.NewTypeInstantiation(tyParam.Constraint)
-		subst[tyParam.Name] = inst
-	}
-	funcTy = c.ApplySubst(funcTy, subst).(*tree.FunctionType)
-	CheckerPrintf("subst FunctionType: %v\n", funcTy)
-
-	for _, tyParamDecl := range funcTy.Signature.TypeParams.Params {
-		tyParam := tyParamDecl.AsTypeParam()
-		c.CheckSatisfies(tyParam, tyParam.Bound)
-	}
-
-	for i, tyArg := range typeArgs {
-		tyParam := funcTy.Signature.TypeParams.Params[i].AsTypeParam()
-		c.CheckEqualTypes(tyArg, tyParam)
-	}
+	funcTy = c.InstantiateFunctionType(funcTy, typeArgs)
 
 	for i, arg := range expr.Args {
 		var param *tree.ParameterDecl
@@ -441,7 +425,7 @@ func (c *Checker) SynthCallExpr(expr *tree.CallExpr) tree.Type {
 		}
 
 		switch param.Type.(type) {
-		case *tree.TypeParam:
+		case *tree.FreeTypeVar:
 			c.CheckEqualTypes(argTy, actualParamTy)
 		default:
 			c.CheckAssignableTo(argTy, actualParamTy)

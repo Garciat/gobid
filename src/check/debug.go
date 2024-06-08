@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	DebugAll     = flag.Bool("debug", false, "debug all")
+	DebugAll     = flag.Bool("debug", true, "debug all")
 	DebugUnify   = flag.Bool("debug-unify", false, "debug unify")
 	DebugGeneral = flag.Bool("debug-general", false, "debug general")
 	DebugChecker = flag.Bool("debug-checker", false, "debug checker")

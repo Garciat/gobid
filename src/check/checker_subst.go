@@ -55,6 +55,11 @@ func (c *Checker) ApplySubst(ty tree.Type, subst Subst) tree.Type {
 			return substTy
 		}
 		return ty
+	case *tree.FreeTypeVar:
+		if substTy, ok := subst[ty.Name]; ok {
+			return substTy
+		}
+		return ty
 	case *tree.ImportTypeName:
 		return ty
 	case *tree.PackageTypeName:

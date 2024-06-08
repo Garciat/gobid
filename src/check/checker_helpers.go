@@ -35,6 +35,8 @@ func (c *Checker) IsConcreteType(ty tree.Type) bool {
 		return false
 	case *tree.TypeParam:
 		return false
+	case *tree.FreeTypeVar:
+		return false
 	case *tree.PointerType:
 		return true
 	case *tree.SliceType:
@@ -143,4 +145,9 @@ func (c *Checker) AcceptsNil(ty tree.Type) bool {
 			return false
 		}
 	})
+}
+
+func (c *Checker) IsAny(inter *tree.InterfaceType) bool {
+	typeset := c.InterfaceTypeSet(inter)
+	return typeset.Universe && len(typeset.Terms) == 0 && len(typeset.Methods) == 0
 }

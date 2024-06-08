@@ -14,9 +14,9 @@ func (c *Checker) FreshTypeName(prefix string) Identifier {
 
 const instancePrefix = "@T"
 
-func (c *Checker) NewTypeInstantiation(bound *tree.InterfaceType) *tree.TypeParam {
+func (c *Checker) NewFreeType() *tree.FreeTypeVar {
 	name := c.FreshTypeName(instancePrefix)
-	ty := &tree.TypeParam{Name: name, Bound: bound}
+	ty := &tree.FreeTypeVar{Name: name}
 	c.DefineType(name, ty)
 	return ty
 }
