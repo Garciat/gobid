@@ -13,14 +13,13 @@ func (c *Checker) Verify() Subst {
 
 	for i := 0; i < 10; i++ {
 		UnifyPrintf("=== iteration %d ===\n", i)
-		UnifyPrintf("%v\n", c.TyCtx)
+		UnifyPrintf("Context:\n%v\n", c.TyCtx)
 
 		learned := Subst{}
 
+		UnifyPrintf("Steps:\n")
 		c.Unify(c.TyCtx.Relations, learned)
 		learned = c.Simplify(learned)
-
-		UnifyPrintf("learned: %v\n", learned)
 
 		// TODO weird to mutate this
 		c.TyCtx.Relations = c.ApplySubstRelations(c.TyCtx.Relations, learned)
@@ -47,6 +46,7 @@ func (c *Checker) Verify() Subst {
 }
 
 func (c *Checker) Unify(rels []Relation, subst Subst) {
+	// TODO consider popping relations off the stack; re-adding them if they are not resolved
 	for _, rel := range rels {
 		switch rel := rel.(type) {
 		case RelationEq:
@@ -138,6 +138,7 @@ func (c *Checker) UnifyEq(left, right tree.Type, subst Subst) error {
 			}
 			return nil
 		} else {
+			UnifyPrintf("learned: %v -> %v\n", left, right)
 			subst[left.Name] = right
 			return nil
 		}
