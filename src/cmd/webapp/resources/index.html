@@ -29,6 +29,16 @@
             return decodeHtml(document.querySelector('#DefaultContent').textContent);
         }
 
+        function debounce(wait, callback)  {
+            let timeoutId = null;
+            return (...args) => {
+                window.clearTimeout(timeoutId);
+                timeoutId = window.setTimeout(() => {
+                    callback(...args);
+                }, wait);
+            };
+        }
+
         async function main() {
             monaco.editor.setTheme('vs-dark')
 
@@ -45,7 +55,9 @@
                 editorOutput.getModel().setValue(output);
             }
 
-            editorInput.getModel().onDidChangeContent(async () => await refresh());
+            let debouncedRefresh = debounce(200, refresh);
+
+            editorInput.getModel().onDidChangeContent(() => debouncedRefresh());
 
             await refresh();
         }
