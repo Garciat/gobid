@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -71,6 +72,19 @@ func compileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	filename := r.FormValue("filename")
+	switch {
+	case filename == "":
+		fallthrough
+	case !strings.HasSuffix(filename, ".go"):
+		fallthrough
+	case strings.Contains(filename, "/"):
+		http.Error(w, "invalid filename", http.StatusBadRequest)
+		return
+	default:
+		// OK
+	}
+
 	code := r.FormValue("code")
 
 	w.Header().Set("Content-Type", "text/plain")
@@ -83,7 +97,7 @@ func compileHandler(w http.ResponseWriter, r *http.Request) {
 
 		_, err, _ = common.Try(func() int {
 			unit := compile.NewCompilationUnit("main")
-			unit.AddSource("main.go", []byte(code))
+			unit.AddSource(filename, []byte(code))
 			unit.Compile()
 			return 0
 		})
@@ -91,7 +105,7 @@ func compileHandler(w http.ResponseWriter, r *http.Request) {
 	compilerMux.Unlock()
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf("ERROR: %s", err.Error()), http.StatusInternalServerError)
+		fmt.Fprintf(w, "ERROR: %v", err)
 	}
 }
 

@@ -4,11 +4,14 @@
     <meta charset="UTF-8">
     <title>gobid</title>
 
+    <link href="https://cdn.jsdelivr.net/npm/vscode-codicons@0.0.17/dist/codicon.min.css" rel="stylesheet">
+
     <script type="module">
         import * as monaco from 'https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/+esm';
 
-        async function compile(source) {
+        async function compile(name, source) {
             let data = new FormData();
+            data.set('filename', name);
             data.set('code', source);
 
             let response = await fetch("/compile", {
@@ -29,21 +32,79 @@
             return decodeHtml(document.querySelector('#DefaultContent').textContent);
         }
 
-        const StorageKeyInput = 'gobid-input';
-
-        function loadInputContent() {
-            let content = window.localStorage.getItem(StorageKeyInput);
-            if (content === null || content === '') {
-                return getDefaultContent();
-            }
-            return content;
+        function getDefaultDocument() {
+            return {
+                id: crypto.randomUUID(),
+                name: 'main.go',
+                model: monaco.editor.createModel(getDefaultContent(), 'go')
+            };
         }
 
-        function saveInputContent(content) {
-            if (content === '') {
-                content = getDefaultContent();
+        const StorageKeyDocumentPrefix = 'gobid-document-';
+
+        function loadDocuments() {
+            let documents = [];
+
+            for (let i = 0; ; ++i) {
+                let key = localStorage.key(i);
+                if (key === null) {
+                    break;
+                }
+
+                if (!key.startsWith(StorageKeyDocumentPrefix)) {
+                    continue;
+                }
+
+                let data = localStorage.getItem(key);
+
+                try {
+                    let doc = JSON.parse(data);
+                    doc.model = monaco.editor.createModel(doc.content, 'go');
+                    documents.push(doc);
+                } catch (e) {
+                    console.error(e);
+                }
             }
-            window.localStorage.setItem(StorageKeyInput, content);
+
+            return documents;
+        }
+
+        function saveDocument(doc) {
+            let key = `${StorageKeyDocumentPrefix}${doc.id}`;
+            let data = JSON.stringify({
+                id: doc.id,
+                name: doc.name,
+                content: doc.model.getValue()
+            });
+            localStorage.setItem(key, data);
+            console.log('saved document:', doc.id, doc.name)
+        }
+
+        function deleteDocument(id) {
+            let key = `${StorageKeyDocumentPrefix}${id}`;
+            localStorage.removeItem(key);
+            console.log('deleted document:', id)
+        }
+
+        const StorageKeySelectedTab = 'gobid-selected-tab';
+
+        function saveSelectedTab(id) {
+            localStorage.setItem(StorageKeySelectedTab, id);
+        }
+
+        function loadSelectedTab() {
+            return localStorage.getItem(StorageKeySelectedTab);
+        }
+
+        const StorageKeyTabOrder = 'gobid-tab-order';
+
+        function saveTabOrder(ids) {
+            localStorage.setItem(StorageKeyTabOrder, JSON.stringify(ids));
+        }
+
+        function loadTabOrder() {
+            let data = localStorage.getItem(StorageKeyTabOrder);
+            return data === null ? [] : JSON.parse(data);
         }
 
         function debounce(wait, callback)  {
@@ -56,37 +117,357 @@
             };
         }
 
+        function parseFilename(input) {
+            if (input === null || input === undefined) {
+                return null;
+            }
+            if (input === '') {
+                return null;
+            }
+            if (input.indexOf('/') !== -1) {
+                return null;
+            }
+            if (!input.endsWith('.go')) {
+                input += '.go';
+            }
+            return input;
+        }
+
+        function createTab(id, name) {
+            let template = document.querySelector('#tab-template');
+            let container = template.content.cloneNode(true);
+            let tab = container.querySelector('.tab');
+            let input = tab.querySelector('input');
+            let label = tab.querySelector('label');
+            let tabName = label.querySelector('.tab-name');
+            let closeTab = label.querySelector('.close-tab');
+
+            let tabId = `tab-${id}`
+
+            tab.dataset.id = id;
+            input.id = tabId;
+            input.value = name;
+            label.setAttribute('for', tabId)
+            tabName.textContent = name;
+
+            return {tab, label, tabName, input, closeTab};
+        }
+
+        class Tabs {
+            constructor({onTabAddRequest, onTabAdded, onTabSelected, onTabClosed, onTabsReordered, onTabRenameRequest, onTabRenamed}) {
+                this.onTabAddRequest = onTabAddRequest;
+                this.onTabAdded = onTabAdded;
+                this.onTabSelected = onTabSelected;
+                this.onTabClosed = onTabClosed;
+                this.onTabsReordered = onTabsReordered;
+                this.onTabRenameRequest = onTabRenameRequest;
+                this.onTabRenamed = onTabRenamed;
+
+                this.tabs = document.querySelector('.tabs');
+                this.newtab = document.querySelector('#newtab');
+
+                this.dragSelectedTab = null;
+
+                this.newtab.addEventListener('click', () => {
+                    this.requestTabAdd();
+                });
+            }
+
+            createTab(id, name, autoselect = false) {
+                let {tab, label, tabName, input, closeTab} = createTab(id, name);
+
+                tab.addEventListener('dragstart', ev => {
+                    ev.dataTransfer.allowEffect = 'move';
+                    ev.dataTransfer.setData('text/plain', '');
+                    this.dragSelectedTab = tab;
+                });
+
+                tab.addEventListener('dragover', ev => {
+                    ev.preventDefault();
+                    let i = this.indexOfTab(this.dragSelectedTab);
+                    let j = this.indexOfTab(tab);
+                    if (i < j) {
+                        this.tabs.insertBefore(this.dragSelectedTab, tab.nextSibling);
+                    } else {
+                        this.tabs.insertBefore(this.dragSelectedTab, tab);
+                    }
+                    this.onTabsReordered(this.getTabOrder());
+                });
+
+                tab.addEventListener('dragend', ev => {
+                    this.dragSelectedTab = null;
+                });
+
+                label.addEventListener('contextmenu', ev => {
+                    ev.preventDefault();
+
+                    tabName.dataset.original = tabName.textContent.trim();
+                    tabName.contentEditable = true;
+                    tabName.focus();
+
+                    let selection = window.getSelection();
+                    let range = document.createRange();
+                    range.selectNodeContents(tabName);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                });
+
+                tabName.addEventListener('keydown', ev => {
+                    if (ev.key === 'Enter') {
+                        ev.preventDefault();
+                        tabName.blur();
+                    } else if (ev.key === 'Escape') {
+                        ev.preventDefault();
+                        tabName.textContent = tabName.dataset.original;
+                        tabName.blur();
+                    }
+                });
+
+                tabName.addEventListener('blur', ev => {
+                    tabName.contentEditable = false;
+
+                    let name = this.onTabRenameRequest(id, tabName.textContent.trim());
+                    if (name === null) {
+                        tabName.textContent = tabName.dataset.original;
+                    } else {
+                        tabName.textContent = name;
+                        this.onTabRenamed(tab.dataset.id, name);
+                    }
+                });
+
+                input.addEventListener('change', () => {
+                    this.onTabSelected(id);
+                });
+
+                closeTab.addEventListener('click', ev => {
+                    ev.stopPropagation();
+                    ev.preventDefault();
+                    this.requestTabClose(tab);
+                });
+
+                this.tabs.insertBefore(tab, this.newtab);
+
+                if (autoselect) {
+                    input.click();
+                }
+            }
+
+            loadTabsFromDocuments(documents) {
+                for (let i = 0; i < documents.length; i++) {
+                    let doc = documents[i];
+                    this.createTab(doc.id, doc.name);
+                }
+            }
+
+            selectTabId(id) {
+                let tabs = this.tabs.querySelectorAll('.tab');
+                for (let tab of tabs) {
+                    if (tab.dataset.id === id) {
+                        this.selectTab(tab);
+                        return;
+                    }
+                }
+            }
+
+            getSelectedTabId() {
+                let tab = this.tabs.querySelector('.tab:has(input:checked)');
+                return tab === null ? null : tab.dataset.id;
+            }
+
+            getTabOrder() {
+                let tabs = this.tabs.querySelectorAll('.tab');
+                return Array.from(tabs).map(tab => tab.dataset.id);
+            }
+
+            applyTabOrder(ids) {
+                let tabs = this.tabs.querySelectorAll('.tab');
+                let tabMap = new Map(Array.from(tabs).map(tab => [tab.dataset.id, tab]));
+                for (let id of ids) {
+                    let tab = tabMap.get(id);
+                    if (tab !== undefined) {
+                        this.tabs.insertBefore(tab, this.newtab);
+                    }
+                }
+            }
+
+            async requestTabAdd() {
+                let header = await this.onTabAddRequest();
+                if (header === null) {
+                    return;
+                }
+                let {id, name} = header;
+                this.createTab(id, name, true);
+                await this.onTabAdded(id);
+            }
+
+            async requestTabClose(tab) {
+                if (!window.confirm('Are you sure you want to close this tab?')) {
+                    return;
+                }
+
+                let index = this.indexOfTab(tab);
+
+                tab.parentElement.removeChild(tab);
+                this.onTabClosed(tab.dataset.id);
+
+                if (this.isTabSelected(tab)) {
+                    let next = this.getTabByIndexBounded(index);
+                    if (next !== undefined) {
+                       this.selectTab(next);
+                    }
+                }
+            }
+
+            isTabSelected(tab) {
+                return tab.querySelector('input:checked') !== null;
+            }
+
+            indexOfTab(tab) {
+                let tabs = Array.from(this.tabs.querySelectorAll('.tab'));
+                return tabs.indexOf(tab);
+            }
+
+            getTabByIndexBounded(index) {
+                let tabs = Array.from(this.tabs.querySelectorAll('.tab'));
+                return tabs[Math.max(0, Math.min(index, tabs.length - 1))];
+            }
+
+            selectTab(tab) {
+                let input = tab.querySelector('input');
+                input.click();
+            }
+        }
+
         async function main() {
+            const documents = loadDocuments();
+            {
+                if (documents.length === 0) {
+                    documents.push(getDefaultDocument());
+                    saveDocument(documents[0]);
+                }
+                for (let doc of documents) {
+                    console.log('loaded document:', doc.id, doc.name)
+                }
+            }
+
             monaco.editor.setTheme('vs-dark')
 
+            let emptyModel = monaco.editor.createModel('');
+
             let editorInput = monaco.editor.create(document.querySelector('#input'), {
-                value: loadInputContent(),
-                language: 'go',
                 automaticLayout: true
             });
 
             let editorOutput = monaco.editor.create(document.querySelector('#output'), {
-                value: '',
-                language: 'text',
+                language: 'plaintext',
                 automaticLayout: true,
                 readOnly: true
             });
 
+            async function onTabAddRequest() {
+                let name = window.prompt('Enter file name');
+                name = parseFilename(name);
+                if (name === null) {
+                    return null;
+                }
+
+                let id = crypto.randomUUID();
+
+                documents.push({
+                    id: id,
+                    name: name,
+                    model: monaco.editor.createModel('package main\n', 'go')
+                });
+
+                return {id, name};
+            }
+
+            async function onTabAdded(id) {
+                await save(id);
+            }
+
+            async function onTabSelected(id) {
+                let doc = documents.find(doc => doc.id === id);
+                if (doc === undefined) {
+                    editorInput.setModel(emptyModel);
+                    return;
+                }
+                editorInput.setModel(doc.model);
+                saveSelectedTab(id);
+                await refresh();
+            }
+
+            function onTabClosed(id) {
+                let index = documents.findIndex(doc => doc.id === id);
+                documents.splice(index, 1);
+                deleteDocument(id);
+
+                if (documents.length === 0) {
+                    editorInput.setModel(null);
+                    editorOutput.getModel().setValue('');
+                }
+            }
+
+            function onTabRenameRequest(id, name) {
+                return parseFilename(name);
+            }
+
+            async function onTabRenamed(id, name) {
+                let doc = documents.find(doc => doc.id === id);
+                if (doc === undefined) {
+                    return;
+                }
+                doc.name = name;
+                saveDocument(doc);
+                await refresh();
+            }
+
+            function onTabsReordered(ids) {
+                saveTabOrder(ids);
+            }
+
+            const tabs = new Tabs({
+                onTabAddRequest,
+                onTabAdded,
+                onTabSelected,
+                onTabClosed,
+                onTabsReordered,
+                onTabRenameRequest,
+                onTabRenamed,
+            });
+            tabs.loadTabsFromDocuments(documents);
+            tabs.applyTabOrder(loadTabOrder());
+            {
+                let id = loadSelectedTab();
+                if (id === null) {
+                    id = documents[0].id;
+                }
+                let doc = documents.find(doc => doc.id === id);
+                if (doc === undefined) {
+                    id = documents[0].id;
+                }
+                tabs.selectTabId(id);
+            }
+
             async function refresh() {
-                let source = editorInput.getModel().getValue();
-                let output = await compile(source);
+                let id = tabs.getSelectedTabId();
+                let doc = documents.find(doc => doc.id === id);
+                if (doc === undefined) {
+                    return;
+                }
+                let output = await compile(doc.name, doc.model.getValue());
                 editorOutput.getModel().setValue(output);
             }
 
-            function save() {
-                let source = editorInput.getModel().getValue();
-                saveInputContent(source);
+            async function save(id) {
+                let doc = documents.find(doc => doc.id === id);
+                saveDocument(doc);
+                saveTabOrder(tabs.getTabOrder());
             }
 
             let debouncedRefresh = debounce(200, refresh);
-
-            editorInput.getModel().onDidChangeContent(() => save());
-            editorInput.getModel().onDidChangeContent(() => debouncedRefresh());
+            editorInput.onDidChangeModelContent(() => save(tabs.getSelectedTabId()));
+            editorInput.onDidChangeModelContent(() => debouncedRefresh());
 
             await refresh();
         }
@@ -96,15 +477,19 @@
     <script type="text/plain" id="DefaultContent">{{ .DefaultContent }}</script>
 
     <style>
+        body {
+            font-family: 'Helvetica Nueve', 'Arial', sans-serif;
+            font-size: 0.9em;
+        }
         .container {
             position: fixed;
             top: 0;
             left: 0;
             right: 0;
             bottom: 0;
-            background-color: #999;
-            padding: 10px;
-            margin: 0px;
+            background-color: #000;
+            padding: 0.5em;
+            margin: 0;
             display: flex;
             flex-direction: row;
             flex-wrap: nowrap;
@@ -112,21 +497,119 @@
             align-items: stretch;
         }
 
-        .editor {
+        .pane {
             background-color: #efefef;
             flex-grow: 1;
             width: 50%;
+
+            display: flex;
+            flex-direction: column;
+            flex-wrap: nowrap;
+            justify-content: space-evenly;
+            align-items: stretch;
         }
 
-        .editor + .editor {
-            margin-left: 10px;
+        .pane + .pane {
+            margin-left: 0.5em;
+        }
+
+        .editor {
+            flex-grow: 1;
+            background: #111;
+        }
+
+        .tabs {
+            background: #111;
+            color: #FFF;
+
+            height: 3em;
+
+            display: flex;
+            flex-direction: row;
+            flex-wrap: nowrap;
+            align-items: center;
+        }
+
+        .tab {
+            cursor: pointer;
+            user-select: none;
+
+            height: 100%;
+
+            background: rgb(20, 20, 20);
+        }
+        .tab>input[type="radio"] {
+            display: none;
+        }
+        .tab>label {
+            cursor: pointer;
+
+            height: 100%;
+            padding-left: 1em;
+
+            display: flex;
+            flex-direction: row;
+            flex-wrap: nowrap;
+            align-items: center;
+            justify-content: space-evenly;
+        }
+        .tab .close-tab {
+            cursor: pointer;
+
+            display: block;
+            margin-left: 0.4em;
+            margin-right: 0.4em;
+            padding: 0.2em;
+            border-radius: 0.4em;
+        }
+        .tab .close-tab:hover {
+            backdrop-filter: brightness(2.5);
+        }
+        .tab:has(input[type="radio"]:checked) {
+            box-shadow: inset 0 1px 0 dodgerblue;
+            background: rgb(30, 30, 30);
+        }
+
+        .newtab {
+            cursor: pointer;
+
+            margin-left: 1em;
+            padding: 0.3em;
+            border-radius: 0.4em;
+
+            display: flex;
+            flex-direction: row;
+            flex-wrap: nowrap;
+            justify-content: space-evenly;
+            align-items: center;
+        }
+        .newtab:hover{
+            backdrop-filter: brightness(2.5);
         }
     </style>
 </head>
 <body>
 <div class="container">
-    <div class="editor" id="input"></div>
-    <div class="editor" id="output"></div>
+    <div class="pane">
+        <div class="tabs">
+            <template id="tab-template">
+                <div class="tab" draggable="true">
+                    <input type="radio" id="tab-n" name="tab" value="tab1">
+                    <label for="tab-n">
+                        <span class="tab-name"></span>
+                        <div class="close-tab codicon codicon-chrome-close"></div>
+                    </label>
+                </div>
+            </template>
+            <div class="newtab" id="newtab">
+                <div class="codicon codicon-add"></div>
+            </div>
+        </div>
+        <div class="editor" id="input"></div>
+    </div>
+    <div class="pane">
+        <div class="editor" id="output"></div>
+    </div>
 </div>
 </body>
 </html>

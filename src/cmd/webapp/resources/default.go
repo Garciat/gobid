@@ -1,3 +1,6 @@
+// This editor compiles your code on the fly and shows the output on the right pane.
+// If you close all tabs and refresh, the editor will reset to this default document.
+
 package main
 
 func Nil[T any]() T {
