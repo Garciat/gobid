@@ -34,7 +34,7 @@ func main() {
 	log.SetFlags(0)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", indexHandler)
+	mux.HandleFunc("GET /{$}", indexHandler)
 	mux.HandleFunc("POST /compile", compileHandler)
 
 	port := getPort()
