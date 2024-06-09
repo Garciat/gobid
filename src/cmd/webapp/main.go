@@ -6,12 +6,12 @@ import (
 	"github.com/garciat/gobid/common"
 	"github.com/garciat/gobid/compile"
 	"golang.org/x/text/encoding/unicode"
-	"html/template"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
+	"text/template"
 )
 
 var (
