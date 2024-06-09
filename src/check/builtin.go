@@ -6,8 +6,8 @@ import (
 	"github.com/garciat/gobid/tree"
 )
 
-func MakeBuiltins() *VarContext {
-	scope := NewVarContext()
+func MakeBuiltins() *TypeContext {
+	scope := NewTypeContext()
 
 	scope.DefBuiltinType(tree.BuiltinTypeBool)
 	scope.Def(NewIdentifier("true"), tree.UntypedConstantBoolType)

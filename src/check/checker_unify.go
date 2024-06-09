@@ -13,16 +13,16 @@ func (c *Checker) Verify() Subst {
 
 	for i := 0; i < 10; i++ {
 		UnifyPrintf("=== iteration %d ===\n", i)
-		UnifyPrintf("Context:\n%v\n", c.TyCtx)
+		UnifyPrintf("Context:\n%v\n", c.Ctx.FormatRelations())
 
 		learned := Subst{}
 
 		UnifyPrintf("Steps:\n")
-		c.Unify(c.TyCtx.Relations, learned)
+		c.Unify(c.Ctx.Relations, learned)
 		learned = c.Simplify(learned)
 
 		// TODO weird to mutate this
-		c.TyCtx.Relations = c.ApplySubstRelations(c.TyCtx.Relations, learned)
+		c.Ctx.Relations = c.ApplySubstRelations(c.Ctx.Relations, learned)
 
 		subst = c.Merge(subst, learned)
 

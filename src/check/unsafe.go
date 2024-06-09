@@ -6,8 +6,8 @@ import (
 	"github.com/garciat/gobid/tree"
 )
 
-func MakeUnsafePackage() *VarContext {
-	scope := NewVarContext()
+func MakeUnsafePackage() *TypeContext {
+	scope := NewTypeContext()
 	scope.DefType(NewIdentifier("Pointer"), tree.BuiltinTypeUnsafePointer)
 	scope.Def(NewIdentifier("Sizeof"), parse.TypeOf("func(interface{}) uintptr"))
 	scope.Def(NewIdentifier("Offsetof"), parse.TypeOf("func(interface{}) uintptr"))

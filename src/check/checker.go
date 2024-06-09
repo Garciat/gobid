@@ -11,11 +11,10 @@ type Checker struct {
 	Fresh *int
 
 	Packages       map[ImportPath]*source.Package
-	PackageSymbols map[ImportPath]*VarContext
+	PackageSymbols map[ImportPath]*TypeContext
 
-	TyCtx    *TypeContext
-	VarCtx   *VarContext
-	Builtins *VarContext
+	Ctx      *TypeContext
+	Builtins *TypeContext
 
 	CurPkg  *source.Package
 	CurFile *source.FileDef
@@ -27,11 +26,10 @@ func NewChecker(packages map[ImportPath]*source.Package) *Checker {
 	return &Checker{
 		Fresh:    Ptr(0),
 		Packages: packages,
-		PackageSymbols: map[ImportPath]*VarContext{
+		PackageSymbols: map[ImportPath]*TypeContext{
 			"unsafe": MakeUnsafePackage(),
 		},
-		TyCtx:    &TypeContext{},
-		VarCtx:   NewVarContext(),
+		Ctx:      NewTypeContext(),
 		Builtins: MakeBuiltins(),
 	}
 }
@@ -41,8 +39,7 @@ func (c *Checker) Copy() *Checker {
 		Fresh:          c.Fresh,
 		Packages:       c.Packages,
 		PackageSymbols: c.PackageSymbols,
-		TyCtx:          c.TyCtx,
-		VarCtx:         c.VarCtx,
+		Ctx:            c.Ctx,
 		Builtins:       c.Builtins,
 		CurPkg:         c.CurPkg,
 		CurFile:        c.CurFile,
@@ -70,7 +67,7 @@ func (c *Checker) Run() {
 			}
 		}
 
-		c.PackageSymbols[pkg.ImportPath] = packageScopes[pkg].VarCtx // TODO seems unprincipled
+		c.PackageSymbols[pkg.ImportPath] = packageScopes[pkg].Ctx
 	}
 
 	for _, pkg := range packages {

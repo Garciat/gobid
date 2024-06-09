@@ -8,11 +8,11 @@ import (
 )
 
 func (c *Checker) TyCtxRedirect() *TypeContext {
-	if c.TyCtx.ScopeKind == ScopeKindFile {
+	if c.Ctx.ScopeKind == ScopeKindFile {
 		// Define relations in package scope
-		return c.TyCtx.Parent
+		return c.Ctx.Parent
 	}
-	return c.TyCtx
+	return c.Ctx
 }
 
 func (c *Checker) CheckAssignableTo(sub, super tree.Type) {
@@ -361,8 +361,7 @@ func (c *Checker) CheckIfStmt(stmt *tree.IfStmt) {
 		ifScope.CheckStatement(stmt.Init)
 	}
 	if stmt.Cond != nil {
-		// TODO only allowed for else
-		ifScope.CheckExpr(stmt.Cond, c.BuiltinType("bool"))
+		ifScope.CheckAssignableTo(c.Synth(stmt.Cond), c.BuiltinType("bool"))
 	}
 	ifScope.CheckStatementList(stmt.Body)
 	if stmt.Else != nil {

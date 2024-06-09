@@ -23,7 +23,7 @@ func (c *Checker) NewFreeType() *tree.FreeTypeVar {
 
 func (c *Checker) GetCurrentScopeTypeInstantiations() []*tree.TypeParam {
 	var result []*tree.TypeParam
-	for _, ty := range c.VarCtx.Types {
+	for _, ty := range c.Ctx.Types {
 		if typeParam, ok := ty.(*tree.TypeParam); ok {
 			if strings.HasPrefix(typeParam.Name.Value, instancePrefix) {
 				result = append(result, typeParam)
@@ -34,7 +34,7 @@ func (c *Checker) GetCurrentScopeTypeInstantiations() []*tree.TypeParam {
 }
 
 func (c *Checker) Lookup(name Identifier) tree.Type {
-	ty, ok := c.VarCtx.Lookup(name)
+	ty, ok := c.Ctx.Lookup(name)
 	if ok {
 		return ty
 	}
@@ -46,7 +46,7 @@ func (c *Checker) Lookup(name Identifier) tree.Type {
 }
 
 func (c *Checker) LookupConst(name Identifier) tree.Expr {
-	expr, ok := c.VarCtx.LookupConst(name)
+	expr, ok := c.Ctx.LookupConst(name)
 	if ok {
 		return expr
 	}
@@ -79,28 +79,28 @@ func (c *Checker) PackageLookupConst(ip ImportPath, name Identifier) tree.Expr {
 
 func (c *Checker) DefineImport(decl *tree.ImportDecl) {
 	//fmt.Printf("DEFINING import %v\n", decl.ImportPath)
-	c.VarCtx.Def(NewIdentifier(decl.EffectiveName().Value), &tree.ImportType{ImportPath: decl.ImportPath})
+	c.Ctx.Def(NewIdentifier(decl.EffectiveName().Value), &tree.ImportType{ImportPath: decl.ImportPath})
 }
 
 func (c *Checker) DefineValue(name Identifier, ty tree.Type) {
 	CheckerPrintf("DEFINING %v = %v\n", name, ty)
-	if c.VarCtx.ScopeKind == ScopeKindFile {
-		Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
-		c.VarCtx.Parent.Def(name, ty)
+	if c.Ctx.ScopeKind == ScopeKindFile {
+		Assert(c.Ctx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
+		c.Ctx.Parent.Def(name, ty)
 	} else {
-		c.VarCtx.Def(name, ty)
+		c.Ctx.Def(name, ty)
 	}
 }
 
 func (c *Checker) DefineType(name Identifier, ty tree.Type) {
 	CheckerPrintf("DEFINING TYPE %v = %v\n", name, ty)
 
-	var target *VarContext
-	if c.VarCtx.ScopeKind == ScopeKindFile {
-		Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
-		target = c.VarCtx.Parent
+	var target *TypeContext
+	if c.Ctx.ScopeKind == ScopeKindFile {
+		Assert(c.Ctx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
+		target = c.Ctx.Parent
 	} else {
-		target = c.VarCtx
+		target = c.Ctx
 	}
 
 	target.DefType(name, ty)
@@ -114,8 +114,8 @@ func (c *Checker) DefineFunction(name Identifier, ty *tree.FunctionType) {
 		return
 	}
 	CheckerPrintf("DEFINING func %v%v\n", name, ty.Signature)
-	Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
-	c.VarCtx.Parent.Def(name, ty)
+	Assert(c.Ctx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
+	c.Ctx.Parent.Def(name, ty)
 }
 
 func (c *Checker) DefineMethod(holder, name Identifier, ty *tree.MethodType) {
@@ -125,8 +125,8 @@ func (c *Checker) DefineMethod(holder, name Identifier, ty *tree.MethodType) {
 	}
 	CheckerPrintf("DEFINING METHOD func (%s%v) %v%v\n", prefix, holder, name, ty.Type.Signature)
 	methodName := NewIdentifier(fmt.Sprintf("%s.%s", holder.Value, name.Value))
-	Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
-	c.VarCtx.Parent.Def(methodName, ty)
+	Assert(c.Ctx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
+	c.Ctx.Parent.Def(methodName, ty)
 }
 
 func (c *Checker) BuiltinValue(name string) tree.Type {

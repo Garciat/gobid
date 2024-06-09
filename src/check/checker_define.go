@@ -53,8 +53,8 @@ func (c *Checker) DefineImportDecl(decl *tree.ImportDecl) {
 func (c *Checker) DefineConstDecl(decl *tree.ConstDecl) {
 	CheckerPrintf("DEFINING CONSTANT %v\n", decl.Name)
 
-	if c.VarCtx.ScopeKind == ScopeKindFile {
-		common.Assert(c.VarCtx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
+	if c.Ctx.ScopeKind == ScopeKindFile {
+		common.Assert(c.Ctx.Parent.ScopeKind == ScopeKindPackage, "expected package scope")
 
 		// Only evaluate constants in package scope
 		value := c.EvaluateConstantExpr(decl, decl.Value)
@@ -70,7 +70,7 @@ func (c *Checker) DefineConstDecl(decl *tree.ConstDecl) {
 			declTy = value.Type().DefaultType()
 		}
 
-		c.VarCtx.Parent.Def(decl.Name, &tree.ConstValueType{Value: value, Type: declTy})
+		c.Ctx.Parent.Def(decl.Name, &tree.ConstValueType{Value: value, Type: declTy})
 	} else {
 		valueTy := c.Synth(decl.Value)
 		var declTy tree.Type
@@ -80,7 +80,7 @@ func (c *Checker) DefineConstDecl(decl *tree.ConstDecl) {
 		} else {
 			declTy = valueTy
 		}
-		c.VarCtx.Def(decl.Name, declTy) // TODO mark as constant? (cannot reassign)
+		c.Ctx.Def(decl.Name, declTy) // TODO mark as constant? (cannot reassign)
 	}
 }
 

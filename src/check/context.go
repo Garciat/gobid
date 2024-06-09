@@ -7,18 +7,23 @@ import (
 	"strings"
 )
 
-// ========================
-
 type TypeContext struct {
 	ScopeKind ScopeKind
 	Parent    *TypeContext
 	Relations []Relation
+	Types     map[Identifier]tree.Type
 }
 
-func (c *TypeContext) String() string {
+func NewTypeContext() *TypeContext {
+	return &TypeContext{
+		Types: map[Identifier]tree.Type{},
+	}
+}
+
+func (c *TypeContext) FormatRelations() string {
 	parent := ""
 	if c.Parent != nil {
-		parent = fmt.Sprintf("%v || ", c.Parent)
+		parent = fmt.Sprintf("%v || ", c.Parent.FormatRelations())
 	}
 	parts := make([]string, 0, len(c.Relations))
 	for _, rel := range c.Relations {
@@ -39,61 +44,12 @@ func (c *TypeContext) Fork(scope ScopeKind) *TypeContext {
 		ScopeKind: scope,
 		Parent:    c,
 		Relations: []Relation{},
-	}
-
-}
-
-func (c *Checker) ApplySubstRelations(relations []Relation, learned Subst) []Relation {
-	next := make([]Relation, 0, len(relations))
-
-	for _, rel := range relations {
-		switch rel := rel.(type) {
-		case RelationEq:
-			next = append(next, RelationEq{
-				Left:  c.ApplySubst(rel.Left, learned),
-				Right: c.ApplySubst(rel.Right, learned),
-			})
-		case RelationSubtype:
-			next = append(next, RelationSubtype{
-				Sub:   c.ApplySubst(rel.Sub, learned),
-				Super: c.ApplySubst(rel.Super, learned),
-			})
-		case RelationSatisfies:
-			next = append(next, RelationSatisfies{
-				Type:       c.ApplySubst(rel.Type, learned),
-				Constraint: c.ApplySubst(rel.Constraint, learned).(*tree.InterfaceType),
-			})
-		default:
-			panic("unreachable")
-		}
-	}
-
-	return next
-}
-
-// ========================
-
-type VarContext struct {
-	ScopeKind ScopeKind
-	Parent    *VarContext
-	Types     map[Identifier]tree.Type
-}
-
-func NewVarContext() *VarContext {
-	return &VarContext{
-		Types: map[Identifier]tree.Type{},
-	}
-}
-
-func (c *VarContext) Fork(scope ScopeKind) *VarContext {
-	return &VarContext{
-		ScopeKind: scope,
-		Parent:    c,
 		Types:     map[Identifier]tree.Type{},
 	}
+
 }
 
-func (c *VarContext) Lookup(name Identifier) (tree.Type, bool) {
+func (c *TypeContext) Lookup(name Identifier) (tree.Type, bool) {
 	ty, ok := c.Types[name]
 	if ok {
 		if ty, ok := ty.(*tree.ConstValueType); ok {
@@ -107,7 +63,7 @@ func (c *VarContext) Lookup(name Identifier) (tree.Type, bool) {
 	return nil, false
 }
 
-func (c *VarContext) LookupConst(name Identifier) (tree.Expr, bool) {
+func (c *TypeContext) LookupConst(name Identifier) (tree.Expr, bool) {
 	expr, ok := c.Types[name]
 	if ok {
 		if expr, ok := expr.(*tree.ConstValueType); ok {
@@ -121,7 +77,7 @@ func (c *VarContext) LookupConst(name Identifier) (tree.Expr, bool) {
 	return nil, false
 }
 
-func (c *VarContext) Def(name Identifier, ty tree.Type) tree.Type {
+func (c *TypeContext) Def(name Identifier, ty tree.Type) tree.Type {
 	if name != IgnoreIdent {
 		if _, ok := c.Types[name]; ok {
 			panic(fmt.Errorf("redefined: %v", name))
@@ -131,26 +87,26 @@ func (c *VarContext) Def(name Identifier, ty tree.Type) tree.Type {
 	return ty
 }
 
-func (c *VarContext) DefBuiltinFunction(name string) tree.Type {
+func (c *TypeContext) DefBuiltinFunction(name string) tree.Type {
 	return c.Def(NewIdentifier(name), &tree.BuiltinFunctionType{Name: name})
 }
 
-func (c *VarContext) DefType(name Identifier, ty tree.Type) tree.Type {
+func (c *TypeContext) DefType(name Identifier, ty tree.Type) tree.Type {
 	if _, ok := ty.(*tree.TypeOfType); ok {
 		panic("BUG")
 	}
 	return c.Def(name, &tree.TypeOfType{Type: ty})
 }
 
-func (c *VarContext) DefNamedType(ip ImportPath, name Identifier, under tree.Type) tree.Type {
+func (c *TypeContext) DefNamedType(ip ImportPath, name Identifier, under tree.Type) tree.Type {
 	return c.DefType(name, &tree.NamedType{Package: ip, Name: name, Definition: under})
 }
 
-func (c *VarContext) DefBuiltinType(ty *tree.BuiltinType) tree.Type {
+func (c *TypeContext) DefBuiltinType(ty *tree.BuiltinType) tree.Type {
 	return c.DefType(NewIdentifier(string(ty.Tag)), ty)
 }
 
-func (c *VarContext) Iter(f func(Identifier, tree.Type)) {
+func (c *TypeContext) Iter(f func(Identifier, tree.Type)) {
 	if c.Parent != nil {
 		c.Parent.Iter(f)
 	}
@@ -158,5 +114,3 @@ func (c *VarContext) Iter(f func(Identifier, tree.Type)) {
 		f(name, ty)
 	}
 }
-
-// ========================
