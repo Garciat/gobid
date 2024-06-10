@@ -19,9 +19,15 @@ func (s Subst) String() string {
 }
 
 func (c *Checker) Simplify(subst Subst) Subst {
+	prev := subst
 	next := Subst{}
-	for k, v := range subst {
-		next[k] = c.ApplySubst(v, subst)
+	// TODO proper algorithm instead of repeating 5 times
+	for i := 0; i < 5; i++ {
+		step := Subst{}
+		for k, v := range prev {
+			step[k] = c.ApplySubst(v, prev)
+		}
+		next, prev = step, next
 	}
 	return next
 }

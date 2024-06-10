@@ -120,6 +120,8 @@ func (c *Checker) DefineVarDecl(decl *tree.VarDecl) {
 				c.CheckAssignableTo(ty, declTy)
 				c.DefineValue(name, declTy)
 			} else {
+				t := c.NewFreeType()
+				c.CheckEqualTypes(t, ty)
 				c.DefineValue(name, ty)
 			}
 		}

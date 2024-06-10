@@ -156,10 +156,10 @@ func (c *Checker) CheckMethodsSatisfy(ty tree.Type, target tree.MethodsByName) e
 		if option.Method.PointerReceiver {
 			pointerReceiverMethods = append(pointerReceiverMethods, option.Method)
 		}
-		if !c.Identical(method.Type, option.Method.Type) {
-			return fmt.Errorf("type %v method %v has type mismatch", ty, method.Name)
-		}
-		// OK
+		//if !c.Identical(method.Type, option.Method.Type) {
+		//	return fmt.Errorf("type %v method %v has type mismatch", ty, method.Name)
+		//}
+		c.CheckEqualTypes(method.Type, option.Method.Type)
 	}
 
 	if !pointerReceiver {

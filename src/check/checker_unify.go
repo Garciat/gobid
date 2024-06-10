@@ -18,6 +18,9 @@ func (c *Checker) Verify() Subst {
 		learned := Subst{}
 
 		UnifyPrintf("Steps:\n")
+
+		countBefore := len(c.Ctx.Relations)
+
 		c.Unify(c.Ctx.Relations, learned)
 		learned = c.Simplify(learned)
 
@@ -26,7 +29,7 @@ func (c *Checker) Verify() Subst {
 
 		subst = c.Merge(subst, learned)
 
-		if len(learned) == 0 {
+		if len(learned) == 0 && countBefore == len(c.Ctx.Relations) {
 			break
 		}
 	}
@@ -286,15 +289,11 @@ func (c *Checker) UnifySubtype(sub, super tree.Type, subst Subst) error {
 
 	switch super := super.(type) {
 	case *tree.InterfaceType:
-		var typeset *TypeSet
-		err := c.BasicSatisfy(sub, super, subst, &typeset)
+		err := c.UnifySatisfies(sub, super, subst)
 		if err != nil {
 			return fmt.Errorf("when unifying %v <: %v:\n%w", sub, super, err)
 		}
-		if !(typeset != nil && !typeset.Universe) {
-			// TODO hacky???
-			return nil
-		}
+		return nil
 	case *tree.TypeApplication:
 		if err := c.UnifySubtype(sub, c.TypeApplication(super), subst); err != nil {
 			return fmt.Errorf("when unifying %v <: %v:\n%w", sub, super, err)
@@ -351,6 +350,8 @@ func (c *Checker) UnifySubtype(sub, super tree.Type, subst Subst) error {
 
 func (c *Checker) UnifySatisfies(sub tree.Type, inter *tree.InterfaceType, subst Subst) error {
 	sub = c.ResolveType(sub)
+
+	UnifyPrintf("? %v sat %v\n", sub, inter)
 
 	switch sub.(type) {
 	case *tree.FreeTypeVar:
