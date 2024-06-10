@@ -215,13 +215,24 @@
                 tab.addEventListener('dragstart', ev => {
                     // ev.dataTransfer.allowEffect = 'move';
                     ev.dataTransfer.setData('text/plain', '');
+                    tab.classList.add('dragging');
                     this.dragSelectedTab = tab;
                 });
 
                 tab.addEventListener('dragover', ev => {
                     ev.preventDefault();
+                    if (tab === this.dragSelectedTab) {
+                        return;
+                    }
                     let i = this.indexOfTab(this.dragSelectedTab);
                     let j = this.indexOfTab(tab);
+                    {
+                        let mx = ev.clientX - tab.getBoundingClientRect().left;
+                        let cx = this.dragSelectedTab.clientWidth;
+                        if (mx >= cx / 2) {
+                            return;
+                        }
+                    }
                     if (i < j) {
                         this.tabs.insertBefore(this.dragSelectedTab, tab.nextSibling);
                     } else {
@@ -231,6 +242,7 @@
                 });
 
                 tab.addEventListener('dragend', () => {
+                    tab.classList.remove('dragging');
                     this.dragSelectedTab = null;
                 });
 
@@ -580,6 +592,10 @@
             height: 100%;
 
             background: rgb(20, 20, 20);
+            box-shadow: inset -1px 1px 0 rgb(30, 30, 30);
+        }
+        .tab.dragging {
+            opacity: 0.1;
         }
         .tab>input[type="radio"] {
             display: none;
