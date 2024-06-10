@@ -52,7 +52,7 @@
                 'sat',
             ],
             operators: [
-                '=', '<:', '?'
+                '=', '<:', '?', '->'
             ],
             symbols:  /[=><!~?:&|+\-*\/\^%]+/,
             tokenizer: {
@@ -60,6 +60,7 @@
                     [/===/, 'number', '@section'],
                     [/DEFINING( TYPE)?/, 'comment'],
                     [/ERROR/, 'invalid'],
+                    [/@[A-Za-z-_0-9]+/, 'annotation'],
                     [/[a-z_$][\w$]*/, {
                         cases: {
                             '@goTypeKeywords': 'keyword',
