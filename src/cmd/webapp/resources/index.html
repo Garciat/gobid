@@ -29,7 +29,65 @@
     </script>
 
     <script id="main" type="text/tsx">
-        let monaco = window['monaco'] as {editor: any};
+        let monaco = window['monaco'] as {editor: any, languages: any};
+
+        monaco.languages.register({ id: 'gobid-output' });
+
+        monaco.languages.setMonarchTokensProvider('gobid-output', {
+            goTypeKeywords: [
+                'type', 'interface', 'struct', 'func',
+            ],
+            goTypes: [
+                'string',
+                'bool',
+                'int', 'int8', 'int16', 'int32', 'int64',
+                'uint', 'uint8', 'uint16', 'uint32', 'uint64',
+                'float32', 'float64',
+                'complex64', 'complex128',
+                'byte', 'rune',
+                'uintptr',
+                'any',
+            ],
+            gobidKeywords: [
+                'sat',
+            ],
+            operators: [
+                '=', '<:', '?'
+            ],
+            symbols:  /[=><!~?:&|+\-*\/\^%]+/,
+            tokenizer: {
+                root: [
+                    [/===/, 'number', '@section'],
+                    [/DEFINING( TYPE)?/, 'comment'],
+                    [/ERROR/, 'invalid'],
+                    [/[a-z_$][\w$]*/, {
+                        cases: {
+                            '@goTypeKeywords': 'keyword',
+                            '@goTypes': 'type',
+                            '@gobidKeywords': 'regexp',
+                            '@default': 'identifier'
+                        }
+                    }],
+                    [/[{}()\[\]]/, '@brackets'],
+                    [/[<>](?!@symbols)/, '@brackets'],
+                    [/@symbols/, {
+                        cases: {
+                            '@operators': 'regexp',
+                            '@default'  : ''
+                        }
+                    }],
+                ],
+                section: [
+                    [/===/, 'number', '@pop'],
+                    [/[(]/, 'string', '@sectionTitle'],
+                    [/./, 'string']
+                ],
+                sectionTitle: [
+                    [/[)]/, 'string', '@pop'],
+                    [/./, 'namespace']
+                ]
+            }
+        });
 
         async function compile(name, source) {
             let data = new FormData();
@@ -414,7 +472,7 @@
             });
 
             let editorOutput = monaco.editor.create(document.querySelector('#output'), {
-                language: 'plaintext',
+                language: 'gobid-output',
                 automaticLayout: true,
                 readOnly: true
             });
