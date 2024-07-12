@@ -2,14 +2,18 @@ package main
 
 import (
 	"fmt"
-	"github.com/garciat/gobid/common"
-	"github.com/garciat/gobid/compile"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/garciat/gobid/check"
+	"github.com/garciat/gobid/common"
+	"github.com/garciat/gobid/compile"
 )
 
 func main() {
+	*check.DebugAll = false
+
 	var testsPath = "../tests"
 	entries, err := os.ReadDir(testsPath)
 	if err != nil {
@@ -23,6 +27,7 @@ func main() {
 		default:
 			testSingleFile(testsPath, entry.Name())
 		}
+		fmt.Printf("OK %s\n", entry.Name())
 	}
 
 	testSingleFile("../examples", "vec.go")
