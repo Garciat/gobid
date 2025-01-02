@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"fmt"
 	"github.com/garciat/gobid/check"
 	"github.com/garciat/gobid/common"
@@ -15,12 +16,15 @@ import (
 )
 
 var (
+	//go:embed resources/*
+	resources embed.FS
+
 	defaultContent string
 	compilerMux    sync.Mutex
 )
 
 func init() {
-	data, err := os.ReadFile("cmd/webapp/resources/default.go")
+	data, err := resources.ReadFile("resources/default.go")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -58,7 +62,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 		DefaultContent string
 	}
 
-	t, _ := template.ParseFiles("cmd/webapp/resources/index.html")
+	t, _ := template.ParseFS(resources, "resources/index.html")
 	err := t.Execute(w, Page{DefaultContent: defaultContent})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
