@@ -3,11 +3,11 @@
 ## Running tests
 
 ```sh
-cd src; go run github.com/garciat/gobid/cmd/tests
+go run ./src/cmd/tests ./tests
 ```
 
 ## Running web demo
 
 ```sh
-cd src; go run github.com/garciat/gobid/cmd/webapp
+go run ./src/cmd/webapp
 ```
