@@ -21,7 +21,7 @@ jobs:
       with:
         go-version: '1.22'
 
-    - name: Run
+    - name: Run tests
       run: |
-        cd src
-        go run "github.com/garciat/gobid/cmd/tests"
+        go run ./src/cmd/tests ./examples
+        go run ./src/cmd/tests ./tests

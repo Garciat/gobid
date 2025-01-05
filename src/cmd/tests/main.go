@@ -14,7 +14,12 @@ import (
 func main() {
 	*check.DebugAll = false
 
-	var testsPath = "../tests"
+	if len(os.Args) < 2 {
+		fmt.Println("first argument must be the path to the tests directory")
+		os.Exit(1)
+	}
+
+	var testsPath = os.Args[1]
 	entries, err := os.ReadDir(testsPath)
 	if err != nil {
 		panic(err)
@@ -29,8 +34,6 @@ func main() {
 		}
 		fmt.Printf("OK %s\n", entry.Name())
 	}
-
-	testSingleFile("../examples", "vec.go")
 }
 
 func testDir(parent, name string) {
