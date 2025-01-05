@@ -1,0 +1,9 @@
+{
+    "gopls": {
+        "build.directoryFilters": [
+            "-examples",
+            "-tests/**",
+            "-**/cmd/**/resources/**",
+        ]
+    }
+}
