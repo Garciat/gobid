@@ -3,8 +3,11 @@ import {
   ErrnoError,
   File,
   FileSystem,
+  FileSystemMetadata,
   flagToString,
-  InMemory,
+  InMemoryStore,
+  Store,
+  StoreFS,
 } from "npm:@zenfs/core";
 import * as constants from "npm:@zenfs/core/emulation/constants.js";
 import {
@@ -168,8 +171,21 @@ class GoFileSystemAdapter implements GoFileSystemFFI {
   }
 }
 
+class CustomStoreFS extends StoreFS {
+  constructor(store: Store) {
+    super(store);
+  }
+
+  override metadata(): FileSystemMetadata {
+    return {
+      ...super.metadata(),
+      noResizableBuffers: true, // causes errors in Safari
+    };
+  }
+}
+
 export async function createFS(): Promise<GoFileSystemAdapter> {
-  const fs = InMemory.create({});
+  const fs = new CustomStoreFS(new InMemoryStore());
   await fs.ready();
   return new GoFileSystemAdapter(fs);
 }
