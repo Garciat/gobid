@@ -2,8 +2,28 @@
     "gopls": {
         "build.directoryFilters": [
             "-examples",
+            "-gh-pages/**",
             "-tests/**",
             "-**/cmd/**/resources/**",
         ]
+    },
+    "editor.formatOnSave": true,
+    "deno.enable": true,
+    "deno.lint": true,
+    "[typescript]": {
+        "editor.tabSize": 2,
+        "editor.defaultFormatter": "denoland.vscode-deno",
+    },
+    "[typescriptreact]": {
+        "editor.tabSize": 2,
+        "editor.defaultFormatter": "denoland.vscode-deno",
+    },
+    "[javascript]": {
+        "editor.tabSize": 2,
+        "editor.defaultFormatter": "denoland.vscode-deno",
+    },
+    "[json]": {
+        "editor.tabSize": 2,
+        "editor.defaultFormatter": "denoland.vscode-deno",
     }
 }
