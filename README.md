@@ -1,4 +1,4 @@
-# A bidirectional type checker for Golang
+# A type checker for Golang with better inference
 
 ## Running tests
 
