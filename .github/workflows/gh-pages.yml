@@ -42,10 +42,9 @@ jobs:
           deno task build --dest=_site --location=$${{ steps.setup-pages.outputs.base_url }}
 
       - name: Upload site artifact
-        working-directory: gh-pages
         uses: actions/upload-pages-artifact@v3
         with:
-          path: "_site"
+          path: "gh-pages/_site"
 
       - name: Deploy to GitHub Pages
         id: deployment
