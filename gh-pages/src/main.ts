@@ -604,8 +604,6 @@ async function main() {
   const debouncedRefresh = debounce(200, refresh);
   editorInput.onDidChangeModelContent(() => save(tabs.getSelectedTabId()));
   editorInput.onDidChangeModelContent(() => debouncedRefresh());
-
-  await refresh();
 }
 
 await main();
