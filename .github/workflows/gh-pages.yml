@@ -39,7 +39,7 @@ jobs:
       - name: Build site
         working-directory: gh-pages
         run: |
-          deno task build --dest=_site --location=$${{ steps.setup-pages.outputs.base_url }}
+          deno task build --dest=_site --location="${{ steps.setup-pages.outputs.base_url }}"
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
