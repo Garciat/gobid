@@ -78,7 +78,7 @@ monaco.languages.setMonarchTokensProvider("gobid-output", {
 });
 
 async function compile(name: string, source: string): Promise<string> {
-  return await gobid({ "/main.go": source });
+  return await gobid({ [`/${name}`]: source });
 }
 
 const DefaultContent = await fetch(import.meta.resolve("./default.go")).then((
