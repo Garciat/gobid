@@ -6,6 +6,7 @@ import {
   FileSystemMetadata,
   flagToString,
   InMemoryStore,
+  normalizeTime,
   Store,
   StoreFS,
 } from "npm:@zenfs/core";
@@ -95,7 +96,8 @@ class GoFileSystemAdapter implements GoFileSystemFFI {
     callback: GoFileSystemCallback<number>,
   ) {
     handle(
-      (async () => {
+      callback,
+      async () => {
         const file = this.#fdToFile(fd);
         const written = await file.write(
           buf,
@@ -104,8 +106,7 @@ class GoFileSystemAdapter implements GoFileSystemFFI {
           position ?? undefined,
         );
         return written;
-      })(),
-      callback,
+      },
     );
   }
 
@@ -116,13 +117,13 @@ class GoFileSystemAdapter implements GoFileSystemFFI {
     callback: GoFileSystemCallback<number>,
   ) {
     handle(
-      (async () => {
+      callback,
+      async () => {
         const file = await this.#fs.openFile(path, flagToString(flags));
         const fd = this.#nextFd++;
         this.#fdMap.set(fd, file);
         return fd;
-      })(),
-      callback,
+      },
     );
   }
 
@@ -131,8 +132,12 @@ class GoFileSystemAdapter implements GoFileSystemFFI {
     callback: GoFileSystemCallback<GoFileSystemFileStats>,
   ) {
     handle(
-      this.#fdToFile(fd).stat(),
       callback,
+      async () => {
+        const file = this.#fdToFile(fd);
+        const stat = await file.stat();
+        return stat;
+      },
     );
   }
 
@@ -148,25 +153,253 @@ class GoFileSystemAdapter implements GoFileSystemFFI {
     ) => void,
   ) {
     handle(
-      this.#fdToFile(fd)
-        .read(buffer, offset, length, position).then((result) => {
-          return result.bytesRead;
-        }),
       callback,
+      async () => {
+        const file = this.#fdToFile(fd);
+        const result = await file.read(buffer, offset, length, position);
+        return result.bytesRead;
+      },
     );
   }
 
   close(fd: number, callback: GoFileSystemCallback<void>) {
     handle(
-      (async () => {
+      callback,
+      async () => {
         const file = this.#fdMap.get(fd);
         if (!file) {
           throw new ErrnoError(Errno.EBADF);
         }
-        await file.close();
-        this.#fdMap.delete(fd);
-      })(),
+        try {
+          await file.close();
+        } finally {
+          this.#fdMap.delete(fd);
+        }
+      },
+    );
+  }
+
+  chmod(
+    path: string,
+    mode: number,
+    callback: GoFileSystemCallback<void>,
+  ): void {
+    handle(
       callback,
+      async () => {
+        const file = await this.#fs.openFile(path, "r+");
+        await file.chmod(mode);
+      },
+    );
+  }
+
+  chown(
+    path: string,
+    uid: number,
+    gid: number,
+    callback: GoFileSystemCallback<void>,
+  ): void {
+    handle(
+      callback,
+      async () => {
+        const file = await this.#fs.openFile(path, "r+");
+        await file.chown(uid, gid);
+      },
+    );
+  }
+
+  fchmod(fd: number, mode: number, callback: GoFileSystemCallback<void>): void {
+    handle(
+      callback,
+      async () => {
+        const file = this.#fdToFile(fd);
+        await file.chmod(mode);
+      },
+    );
+  }
+
+  fchown(
+    fd: number,
+    uid: number,
+    gid: number,
+    callback: GoFileSystemCallback<void>,
+  ): void {
+    handle(
+      callback,
+      async () => {
+        const file = this.#fdToFile(fd);
+        await file.chown(uid, gid);
+      },
+    );
+  }
+
+  fsync(fd: number, callback: GoFileSystemCallback<void>): void {
+    handle(
+      callback,
+      async () => {
+        const file = this.#fdToFile(fd);
+        await file.sync();
+      },
+    );
+  }
+
+  ftruncate(
+    fd: number,
+    length: number,
+    callback: GoFileSystemCallback<void>,
+  ): void {
+    handle(
+      callback,
+      async () => {
+        const file = this.#fdToFile(fd);
+        await file.truncate(length);
+      },
+    );
+  }
+
+  lchown(
+    path: string,
+    uid: number,
+    gid: number,
+    callback: GoFileSystemCallback<void>,
+  ): void {
+    handle(
+      callback,
+      async () => {
+        const file = await this.#fs.openFile(path, "r+");
+        await file.chown(uid, gid);
+      },
+    );
+  }
+
+  link(path: string, link: string, callback: GoFileSystemCallback<void>): void {
+    handle(
+      callback,
+      async () => {
+        await this.#fs.link(path, link);
+      },
+    );
+  }
+
+  lstat(
+    path: string,
+    callback: GoFileSystemCallback<GoFileSystemFileStats>,
+  ): void {
+    handle(
+      callback,
+      async () => {
+        const stat = await this.#fs.stat(path);
+        return stat;
+      },
+    );
+  }
+
+  mkdir(
+    path: string,
+    perm: number,
+    callback: GoFileSystemCallback<void>,
+  ): void {
+    handle(
+      callback,
+      async () => {
+        await this.#fs.mkdir(path, perm);
+      },
+    );
+  }
+
+  readdir(path: string, callback: GoFileSystemCallback<string[]>): void {
+    handle(
+      callback,
+      async () => {
+        const entries = await this.#fs.readdir(path);
+        return entries;
+      },
+    );
+  }
+
+  readlink(_path: string, callback: GoFileSystemCallback<string>): void {
+    callback(new ErrnoError(Errno.ENOSYS, "not implemented"));
+  }
+
+  rename(from: string, to: string, callback: GoFileSystemCallback<void>): void {
+    handle(
+      callback,
+      async () => {
+        await this.#fs.rename(from, to);
+      },
+    );
+  }
+
+  rmdir(path: string, callback: GoFileSystemCallback<void>): void {
+    handle(
+      callback,
+      async () => {
+        await this.#fs.rmdir(path);
+      },
+    );
+  }
+
+  stat(
+    path: string,
+    callback: GoFileSystemCallback<GoFileSystemFileStats>,
+  ): void {
+    handle(
+      callback,
+      async () => {
+        const stat = await this.#fs.stat(path);
+        return stat;
+      },
+    );
+  }
+
+  symlink(
+    path: string,
+    link: string,
+    callback: GoFileSystemCallback<void>,
+  ): void {
+    handle(
+      callback,
+      async () => {
+        await this.#fs.link(path, link);
+      },
+    );
+  }
+
+  truncate(
+    path: string,
+    length: number,
+    callback: GoFileSystemCallback<void>,
+  ): void {
+    handle(
+      callback,
+      async () => {
+        const file = await this.#fs.openFile(path, "r+");
+        await file.truncate(length);
+      },
+    );
+  }
+
+  unlink(path: string, callback: GoFileSystemCallback<void>): void {
+    handle(
+      callback,
+      async () => {
+        await this.#fs.unlink(path);
+      },
+    );
+  }
+
+  utimes(
+    path: string,
+    atime: number,
+    mtime: number,
+    callback: GoFileSystemCallback<void>,
+  ): void {
+    handle(
+      callback,
+      async () => {
+        const file = await this.#fs.openFile(path, "r+");
+        await file.utimes(normalizeTime(atime), normalizeTime(mtime));
+      },
     );
   }
 }
@@ -191,11 +424,11 @@ export async function createFS(): Promise<GoFileSystemAdapter> {
 }
 
 async function handle<T>(
-  promise: Promise<T>,
   cb: (error: GoFileSystemError | null, value: T | undefined) => void,
+  task: () => Promise<T>,
 ): Promise<void> {
   try {
-    const value = await promise;
+    const value = await task();
     cb(null, value);
   } catch (error) {
     if (error instanceof ErrnoError) {
