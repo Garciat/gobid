@@ -1,4 +1,4 @@
-import * as monaco from "https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/+esm";
+import monaco from "./monaco.ts";
 import { gobid } from "./lib/gobid.ts";
 
 monaco.languages.register({ id: "gobid-output" });
