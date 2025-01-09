@@ -9,8 +9,8 @@ import {
   normalizeTime,
   Store,
   StoreFS,
-} from "npm:@zenfs/core";
-import * as constants from "npm:@zenfs/core/emulation/constants.js";
+} from "npm:@zenfs/core@1.7.2";
+import * as constants from "npm:@zenfs/core@1.7.2/vfs/constants.js";
 import {
   GoFileSystemCallback,
   GoFileSystemError,
@@ -28,9 +28,9 @@ class GoFileSystemAdapter implements GoFileSystemFFI {
 
   constructor(fs: FileSystem) {
     this.#fs = fs;
-    fs.mkdirSync("/dev", 0o660);
-    fs.createFileSync("/dev/stdout", "w", 0o660);
-    fs.createFileSync("/dev/stderr", "w", 0o660);
+    fs.mkdirSync("/dev", 0o660, { uid: 0, gid: 0 });
+    fs.createFileSync("/dev/stdout", "w", 0o660, { uid: 0, gid: 0 });
+    fs.createFileSync("/dev/stderr", "w", 0o660, { uid: 0, gid: 0 });
     this.#stdout = fs.openFileSync("/dev/stdout", "w");
     this.#stderr = fs.openFileSync("/dev/stderr", "w");
   }
@@ -53,7 +53,7 @@ class GoFileSystemAdapter implements GoFileSystemFFI {
   }
 
   writeFileSync(path: string, content: string): void {
-    const file = this.#fs.createFileSync(path, "w", 0o660);
+    const file = this.#fs.createFileSync(path, "w", 0o660, { uid: 0, gid: 0 });
     const data = new TextEncoder().encode(content);
     file.writeSync(data, 0, data.length);
     file.syncSync();
@@ -302,7 +302,7 @@ class GoFileSystemAdapter implements GoFileSystemFFI {
     handle(
       callback,
       async () => {
-        await this.#fs.mkdir(path, perm);
+        await this.#fs.mkdir(path, perm, { uid: 0, gid: 0 });
       },
     );
   }
