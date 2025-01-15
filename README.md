@@ -12,10 +12,8 @@ make test
 go run ./src/cmd/webapp
 ```
 
-## Build GitHub Pages
+## Running GitHub Pages locally
 
 ```sh
-GOOS=js GOARCH=wasm go build -o gh-pages/src/build/main.wasm github.com/garciat/gobid/cmd/main
-cd gh-pages
-deno task build
+make gh-pages-dev
 ```
