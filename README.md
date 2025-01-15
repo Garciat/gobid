@@ -3,7 +3,7 @@
 ## Running tests
 
 ```sh
-go run ./src/cmd/tests ./tests
+make test
 ```
 
 ## Running web demo

@@ -1,6 +1,3 @@
-# This workflow will build a golang project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
-
 name: Go
 
 on:
@@ -20,5 +17,14 @@ jobs:
 
       - name: Run tests
         run: |
-          go run ./src/cmd/tests ./examples
-          go run ./src/cmd/tests ./tests
+          make test
+
+      - name: Build main.wasm
+        run: |
+          make main.wasm
+
+      - name: Upload main.wasm
+        uses: actions/upload-artifact@v4
+        with:
+          name: main.wasm
+          path: main.wasm
