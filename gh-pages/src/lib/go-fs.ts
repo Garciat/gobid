@@ -9,10 +9,10 @@ import {
   flagToString,
   normalizeTime,
   Store,
-} from "https://esm.sh/@zenfs/core@1.8.0/dist/index";
-import { StoreFS } from "https://esm.sh/@zenfs/core@1.8.0/dist/backends/index.js";
-import { InMemoryStore } from "https://esm.sh/@zenfs/core@1.8.0/dist/backends/memory.js";
-import * as constants from "https://esm.sh/@zenfs/core@1.8.0/dist/vfs/constants";
+} from "https://esm.sh/@zenfs/core@1.8.0/dist/index?target=esnext";
+import { StoreFS } from "https://esm.sh/@zenfs/core@1.8.0/dist/backends/index?target=esnext";
+import { InMemoryStore } from "https://esm.sh/@zenfs/core@1.8.0/dist/backends/memory?target=esnext";
+import * as constants from "https://esm.sh/@zenfs/core@1.8.0/dist/vfs/constants?target=esnext";
 import {
   GoFileSystemCallback,
   GoFileSystemError,
