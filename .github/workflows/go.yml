@@ -26,13 +26,13 @@ jobs:
 
       - name: Build main.wasm
         run: |
-          make main.wasm
+          make build/main.wasm
 
       - name: Upload main.wasm
         uses: actions/upload-artifact@v4
         with:
           name: main.wasm
-          path: main.wasm
+          path: build/main.wasm
 
   gh-pages:
     needs: build
