@@ -1,3 +1,5 @@
+// TODO: go back to regular npm:@zenfs/core import
+// https://github.com/esm-dev/esm.sh/pull/990
 import {
   Errno,
   ErrnoError,
@@ -5,12 +7,12 @@ import {
   FileSystem,
   FileSystemMetadata,
   flagToString,
-  InMemoryStore,
   normalizeTime,
   Store,
-  StoreFS,
-} from "npm:@zenfs/core@1.7.2";
-import * as constants from "npm:@zenfs/core@1.7.2/vfs/constants.js";
+} from "https://esm.sh/@zenfs/core@1.8.0/dist/index";
+import { StoreFS } from "https://esm.sh/@zenfs/core@1.8.0/dist/backends/index.js";
+import { InMemoryStore } from "https://esm.sh/@zenfs/core@1.8.0/dist/backends/memory.js";
+import * as constants from "https://esm.sh/@zenfs/core@1.8.0/dist/vfs/constants";
 import {
   GoFileSystemCallback,
   GoFileSystemError,
