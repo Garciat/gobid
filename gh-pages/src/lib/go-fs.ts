@@ -20,6 +20,25 @@ import {
   GoFileSystemFileStats,
 } from "./wasm_exec@1.23.4.ts";
 
+export async function createFS(): Promise<GoFileSystemAdapter> {
+  const fs = new CustomStoreFS(new InMemoryStore());
+  await fs.ready();
+  return new GoFileSystemAdapter(fs);
+}
+
+class CustomStoreFS extends StoreFS {
+  constructor(store: Store) {
+    super(store);
+  }
+
+  override metadata(): FileSystemMetadata {
+    return {
+      ...super.metadata(),
+      noResizableBuffers: true, // causes errors in Safari
+    };
+  }
+}
+
 class GoFileSystemAdapter implements GoFileSystemFFI {
   #fs: FileSystem;
   #fdMap = new Map<number, File>();
@@ -404,25 +423,6 @@ class GoFileSystemAdapter implements GoFileSystemFFI {
       },
     );
   }
-}
-
-class CustomStoreFS extends StoreFS {
-  constructor(store: Store) {
-    super(store);
-  }
-
-  override metadata(): FileSystemMetadata {
-    return {
-      ...super.metadata(),
-      noResizableBuffers: true, // causes errors in Safari
-    };
-  }
-}
-
-export async function createFS(): Promise<GoFileSystemAdapter> {
-  const fs = new CustomStoreFS(new InMemoryStore());
-  await fs.ready();
-  return new GoFileSystemAdapter(fs);
 }
 
 async function handle<T>(
