@@ -9,10 +9,10 @@ import {
   flagToString,
   normalizeTime,
   Store,
-} from "https://esm.sh/@zenfs/core@1.8.0/dist/index?target=esnext";
-import { StoreFS } from "https://esm.sh/@zenfs/core@1.8.0/dist/backends/index?target=esnext";
-import { InMemoryStore } from "https://esm.sh/@zenfs/core@1.8.0/dist/backends/memory?target=esnext";
-import * as constants from "https://esm.sh/@zenfs/core@1.8.0/dist/vfs/constants?target=esnext";
+} from "https://esm.sh/@zenfs/core@1.8.0/dist/index?target=esnext&deps=utilium@1.2.3";
+import { StoreFS } from "https://esm.sh/@zenfs/core@1.8.0/dist/backends/index?target=esnext&deps=utilium@1.2.3";
+import { InMemoryStore } from "https://esm.sh/@zenfs/core@1.8.0/dist/backends/memory?target=esnext&deps=utilium@1.2.3";
+import * as constants from "https://esm.sh/@zenfs/core@1.8.0/dist/vfs/constants?target=esnext&deps=utilium@1.2.3";
 import {
   GoFileSystemCallback,
   GoFileSystemError,
