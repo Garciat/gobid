@@ -1,3 +1,5 @@
-.idea/
-_obj/
-build/
+.DS_Store
+
+/.idea/
+/_obj/
+/build/
