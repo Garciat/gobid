@@ -1,4 +1,6 @@
-# A type checker for Golang with better inference
+# Gobid
+
+A type checker for Golang with better inference
 
 ## Running tests
 
